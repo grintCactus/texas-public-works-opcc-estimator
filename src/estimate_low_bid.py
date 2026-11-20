@@ -129,8 +129,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import comparables  # noqa: E402
+import coverage as coverage_rule  # noqa: E402  (src/coverage.py, the 未覆盖 rule)
 import item_tokens  # noqa: E402
 import qty_shape  # noqa: E402
+
+assert hasattr(coverage_rule, "uncovered_class"), (
+    "src/coverage.py is shadowed by another module named 'coverage'")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLEAN = os.path.join(ROOT, "data", "clean")
@@ -271,22 +275,361 @@ D1_MIN = 10                        # D1 cell: >= 10 earlier scored lettings
 D1_SIZE_EDGES = (250e3, 1e6, 5e6)
 T1_FILE = "estimator_t1_txdot.csv"  # D1 records + model totals (calibrate_forward)
 
+# COVERAGE SCOPE (user decision 2026-11-20; the line rule is src/coverage.py,
+# md5 5d14769b..., fixed before any scoring under it).  The user:
+# "如果遇到泵、发动机、预制桥这些我们几乎没有什么可比的类型，我们就说是未覆盖，并且在
+# 给报价的时候把这块标识出来……未覆盖的话，我们就给一个价加上未覆盖，因为未覆盖你的任何
+# 报价都是不合理的……judge 的时候……刨去未覆盖的这一部分，看看标价的准确度如何。"
+# With COVERAGE_SCOPE on, a line coverage.uncovered_class() names is NOT priced:
+#   * no line price; it is out of the line total, the bid part, V2's
+#     comparables match (the schedule's own lines) and T1's mobilization
+#     share (the schedule's base, and the bids MobRatio fits the ratio on);
+#   * estimate() lists it under `uncovered` (item no, description, class,
+#     quantity, unit, "未覆盖 -- 需另行询价"), with uncovered_share_lines and a
+#     warning put first; P50/P80 cover the other lines only;
+#   * an amount the user gives for it (a vendor quote: `quote`, or `amount`
+#     as owner_fixed_amount reads it) is taken at face value, outside the
+#     discount and the centring; once every uncovered line has one, a
+#     COMPLETE total (covered P50/P80 + the quotes) is shown beside them;
+#   * an allowance-like line whose amount is given stays owner-set money
+#     whatever its words (nobody bids it, so it needs no comparable).
+# Back-tests (calibrate_forward, holdout_eval) score the covered estimate
+# against the low bid minus the LOW BIDDER's own amounts on the uncovered
+# lines (actual_low; the per-line median bidder amount is kept as
+# actual_low_med for a sensitivity replay); the 90%-priced rule counts the
+# covered lines; centring, P80 divisor and guard are fitted on those covered
+# records; a not_covered letting is neither scored nor calibrated on.
+#
+# NOT COVERED AS A WHOLE -- one rule, fixed 2026-11-20 from the line
+# descriptions alone, before any scoring under it.  The estimate is
+# not_covered (no P50/P80 at all, only the warning) when
+#   (a) the uncovered lines are MORE than half of the schedule's lines, or
+#   (b) an uncovered line priced per LS IS the facility: its description
+#       names a pump / lift / booster station, a treatment plant or a
+#       storage tank (WHOLE_FACILITY_RE), and every other word in it is a
+#       completeness or filler word (WHOLE_FACILITY_WORDS: "complete",
+#       "in place", "construct", "new", "rehabilitation", "improvements",
+#       "upgrade", "and substructure", numbers, ...).  "Lift station
+#       complete in place", "complete pump station", "lift station
+#       rehabilitation", "ground storage tank 1.0 mg" are the facility;
+#       "lift station odor control", "pump station control and scada",
+#       "lift station site work", "paint ... elevated storage tank" are not.
+# Why: then the covered lines are only the periphery (mobilization, site
+# work, bypass pumping) of a job whose core has no comparable, and a P50/P80
+# of the periphery would be read as the price of the job -- the quote the
+# user calls unreasonable.  (b) is kept narrow on purpose: a miss still
+# leaves the covered estimate under the 未覆盖 list and the warning, while a
+# false not_covered withholds a usable estimate; so a line that adds any
+# other word (a component, a station's proper name, "site work") is not the
+# facility, and specialty BUILDINGS are left out of (b) -- a restroom or an
+# electrical building is one structure on a larger site.  On the snapshot-5
+# descriptions (prices not read): 19 municipal and 5 TxDOT lettings carry
+# uncovered lines; (a) catches none of them, (b) two municipal ones ("lift
+# station complete in place", one LS line of 248; "lift station and
+# substructure").  The rule counts lines, not dollars (no bid is known when
+# a schedule is estimated), so a schedule whose few uncovered lines are most
+# of its money stays covered -- with the 未覆盖 list and the warning.
+COVERAGE_SCOPE = True
+COVERAGE_STATUS = "未覆盖 -- 需另行询价"
+LS_UNITS_COVERAGE = ("LS", "L.S.", "LUMP SUM")
+WHOLE_FACILITY_RE = re.compile(
+    r"\b(?:(?:pump|lift|booster(?:\s+pump)?)\s+stations?|"
+    r"(?:water\s+|wastewater\s+)?treatment\s+plants?|wwtp|wtp|"
+    r"(?:(?:elevated|ground)\s+(?:storage\s+)?|storage\s+)tanks?)\b")
+WHOLE_FACILITY_WORDS = frozenset((
+    "complete", "completed", "in", "place", "turnkey", "turn", "key", "all",
+    "and", "the", "a", "an", "of", "for", "at", "to", "with", "including",
+    "incl", "new", "construct", "construction", "constructed", "install",
+    "installed", "installation", "furnish", "furnished", "rehabilitate",
+    "rehabilitation", "rehab", "improvement", "improvements", "replace",
+    "replacement", "upgrade", "upgrades", "existing", "proposed", "no",
+    "number", "structure", "substructure", "appurtenances", "appurtenance",
+    "mg", "mgd", "gal", "gallon", "gallons", "ls", "lump", "sum"))
+
+
+def _fold_desc(d):
+    """A description folded as the parser's desc_norm ends (lower case,
+    a-z 0-9 / only, single spaces); desc_norm itself comes back unchanged."""
+    s = re.sub(r"[^a-z0-9 /]", " ", str(d or "").lower())
+    return re.sub(r"\s+", " ", s).strip()
+
+
+_COV_MEMO = {}
+
+
+def line_coverage(desc, family="", unit=""):
+    """coverage.uncovered_class() on a line (its description folded), or
+    None when the line is covered or COVERAGE_SCOPE is off.  Memoised."""
+    if not COVERAGE_SCOPE:
+        return None
+    k = (desc or "", family or "", unit or "")
+    c = _COV_MEMO.get(k, 0)
+    if c == 0:
+        c = _COV_MEMO[k] = coverage_rule.uncovered_class(
+            _fold_desc(desc), family or "", unit or "")
+    return c
+
+
+# Rule (b) is OFF (main session, 2026-11-20 ~11:00, before the round-10 re-run
+# under this scope): in the integration review it voided Mesquite 25-8014 --
+# 248 lines, $34M -- for its single "lift station complete in place" line.  The
+# user's principle -- price what can be priced, list the uncovered lines, judge
+# the covered part -- holds for a facility-centred job too: its covered lines
+# are priced, its station is listed as 未覆盖 with the warning on top.  Rule (a)
+# (uncovered lines are more than half the schedule) stays.  is_whole_facility()
+# is kept, and reported per uncovered line as `whole_facility`.
+WHOLE_FACILITY_RULE = False
+
+
+def is_whole_facility(desc, unit=""):
+    """Rule (b) of NOT COVERED AS A WHOLE, for an uncovered line: priced
+    per LS, names a station / plant / tank, and nothing else but
+    completeness and filler words."""
+    if (unit or "").upper().strip() not in LS_UNITS_COVERAGE:
+        return False
+    d = _fold_desc(desc).replace("/", " ")
+    if not WHOLE_FACILITY_RE.search(d):
+        return False
+    rest = WHOLE_FACILITY_RE.sub(" ", d).split()
+    return all(w in WHOLE_FACILITY_WORDS or w.isdigit() for w in rest)
+
+
+def uncovered_quote(item):
+    """A user's amount for an uncovered line (a vendor quote): `quote`, else
+    what owner_fixed_amount() reads (`amount`, or a unit price on a line
+    marked owner_fixed).  None when not given."""
+    v = _f(item.get("quote"))
+    if v and v > 0:
+        return float(v)
+    return owner_fixed_amount(item)
+
+
+# MC, MUNICIPAL REFERENCE CELLS (municipal lines only).  The reference tables
+# pool both markets, and per cell the median of per-letting medians follows
+# whichever market has more lettings -- usually TxDOT -- so municipal lines
+# were priced at TxDOT levels (reports/diag_worst_municipal_2026-11-20.md,
+# section 0: seeding SY $0.30 vs municipal $2.50, backfill CY $318 vs $86,
+# mobilization LS $120k vs $60k).  A municipal line now walks the same tiers
+# in the same order, but wherever a cell is read it takes that key's
+# MUNICIPAL-ONLY cell when it has >= MUNI_CELLS_NMIN municipal lettings
+# (forward: before the letting's date), else the pooled cell as before.
+# Which key a tier uses is still decided on the pooled table; the whole row
+# (price, quantity median, vintage, counts) is the municipal one.  F1's
+# size_ref and slope stay pooled.  TxDOT lines are untouched.
+#
+# ROUND 10 "CORE" = MC + E + F1P + T2 + D (municipal lines only; TxDOT
+# untouched).  Pre-registered in handoff/scratchpad/p50fix/
+# PREREGISTRATION_ROUND10.md (md5 0eccbdc5...); re-run as registered
+# (Registration 5) on data snapshot 6 (master_panel ed742d89...) under the
+# coverage scope (round10b/): MC, CORE and CORE+LS all passed (a)(b)(c) and
+# the tie-break chose CORE.  Forward, municipal 2024-26 (142 lettings both
+# score): median P80 overshoot 49.0% -> 42.0%, P80 under 18.3% -> 18.3%,
+# P50 median error 24.1% -> 19.8%, mean |ln| -0.029 (90% interval -0.048 to
+# -0.011); TxDOT identical.  EVERY SWITCH IS OFF until the locked-set
+# confirmation (Registration 5, holdout_eval --compare-switch round10_core)
+# passes; pricing_rule(round10_core=True) turns on exactly these five:
+#   MC   MUNI_CELLS               municipal-only reference cells (above)
+#   E    comparables.MUNI_REMOVAL_IDENTITY  the municipal comparables pool
+#        and the municipal schedules carry F2's removal flag: a removal-only
+#        line only matches removal lines, and no other line matches one
+#   F1P  F1_PIPE_ONLY             on a municipal line F1's size fallback runs
+#        only for pipe-like families (F1P_FAMILIES; pipe_fittings only when
+#        its size is a diameter, _f1p_diameter); other lines are priced as
+#        before F1 existed
+#   T2   FAMILY_CELL_T2           on a municipal line a tier-2 family-table
+#        cell backed by < T2_MIN lettings is not used (direct cell, unsized
+#        fallback, F1 candidates); the line falls through, else stays unpriced
+#   D    IDENTICAL_BID_OWNER_SET  back-tests only: a municipal schedule line
+#        is owner-set money also when >= D_MIN_BIDDERS distinct bidders quote
+#        one identical unit price (max - min <= 0.01) on an LS / allowance-like
+#        line (identical_bid_owner_set)
+MUNI_CELLS = False                 # MC: OFF until the confirmation passes
+MUNI_CELLS_NMIN = 3                # municipal cell: >= 3 municipal lettings
+F1_PIPE_ONLY = False               # F1P: OFF until the confirmation passes
+F1P_FAMILIES = ("storm_pipe", "water_pipe", "sanitary_pipe", "encasement")
+F1P_FITTINGS = "pipe_fittings"
+F1P_DIAM_RE = re.compile(r"(?<![\d/.])(\d+(?:\.\d+)?)\s*(?:in\b|inch|\")")
+F1P_PIPE_RE = re.compile(r"\b(?:pipe|main|tee|bend|elbow|reducer|cap|plug|"
+                         r"cross|wye|sleeve|coupling|fittings?|dia|diameter)\b")
+FAMILY_CELL_T2 = False             # T2: OFF until the confirmation passes
+T2_MIN = 2                         # a family-table cell needs >= 2 lettings
+IDENTICAL_BID_OWNER_SET = False    # D: OFF until the confirmation passes
+D_MIN_BIDDERS = 3
+# the preset: pricing_rule(round10_core=True) = these five switches on
+ROUND10_CORE = ("muni_cells", "cmp_removal_identity", "f1_pipe_only",
+                "family_cell_t2", "identical_bid_owner_set")
+# ROUND 11 (handoff/scratchpad/p50fix/PREREGISTRATION_ROUND11.md, md5
+# 2ffee091...): one multi-arm batch on data snapshot 7 (master_panel
+# 9b7523eb...) selected P_CORE_noT2/own = round10_core WITHOUT T2 (MC + E +
+# F1P + D) with its own forward P80 calibration (the production path).
+# Forward, municipal 2024-26, 169 lettings both score: median P80 overshoot
+# 51.4% -> 38.2% (90% interval -16.7 to -8.8 points), P80 under 16.6% ->
+# 16.6% (2026: 19.0%, limit 20.2%), P50 median error 23.0% -> 19.4%; TxDOT
+# identical.  NOT confirmed: the locked set is not reopened; the registered
+# prospective check (>= 40 new DFW municipal lettings dated after
+# 2026-11-20: P80 under <= 20% and median overshoot below B's on them)
+# decides.  Until then the switches stay OFF; pricing_rule(
+# round11_core_not2=True) turns on exactly these four
+# (holdout_eval --compare-switch round11_core_not2).
+ROUND11_CORE_NOT2 = ("muni_cells", "cmp_removal_identity", "f1_pipe_only",
+                     "identical_bid_owner_set")
+
+
+def _municipal(market):
+    return (market or "").strip().lower() == "municipal"
+
+
+def _f1p_diameter(description, size_in):
+    """F1P: pipe_fittings' size is a diameter -- an inch dimension equal to
+    the line's parsed size (within 0.01) and a pipe / fitting word."""
+    d = (description or "").lower()
+    if size_in is None or not F1P_PIPE_RE.search(d):
+        return False
+    for m in F1P_DIAM_RE.finditer(d):
+        try:
+            if abs(float(m.group(1)) - size_in) <= 0.01:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _f1p_ok(family, description, size_in):
+    """F1P: may F1 price this (municipal) line?"""
+    if (family or "") in F1P_FAMILIES:
+        return True
+    return (family or "") == F1P_FITTINGS and _f1p_diameter(description,
+                                                             size_in)
+
+
+def identical_bid_owner_set(prices, n_bidders, family, unit, description=""):
+    """D: owner-set money recognised from >= D_MIN_BIDDERS distinct bidders
+    quoting one identical unit price (max - min <= 0.01) on an LS /
+    allowance-like line: unit LS or an allowance unit, allowance_like()
+    wording or family, or an identical price of exactly 1.00 (a line whose
+    quantity is dollars)."""
+    ps = [p for p in prices if p]
+    if n_bidders < D_MIN_BIDDERS or not ps or max(ps) - min(ps) > 0.01:
+        return False
+    un = (unit or "").strip().upper()
+    return (un == "LS" or un in ALLOWANCE_UNITS
+            or allowance_like(family, unit, description)
+            or abs(min(ps) - 1.0) <= 0.005)
+
+
+def schedule_owner_set(d, k):
+    """(owner-set, by D) for schedule key k = (family, unit, size, band,
+    description) of a back-test letting `d` as calibrate_forward and
+    holdout_eval build it: production's is_owner_fixed, plus D's identical
+    bids on a municipal letting when IDENTICAL_BID_OWNER_SET is on (d["nb"]:
+    the distinct bidders per key, collected only then)."""
+    fam, un, sz, bd, dn = k
+    ps = d["prices"].get(k, ())
+    if is_owner_fixed(ps, fam, un, dn):
+        return True, False
+    if IDENTICAL_BID_OWNER_SET and d.get("mk") == "municipal" and \
+            identical_bid_owner_set(ps, len(d.get("nb", {}).get(k, ())), fam,
+                                    un, dn):
+        return True, True
+    return False, False
+
+
+class _MktMap:
+    """MC: one reference table as a municipal line reads it -- the
+    municipal-only cell when it qualifies (its own .get(): >=
+    MUNI_CELLS_NMIN lettings), else the pooled cell.  items() is the pooled
+    table's, so the tier logic chooses keys exactly as before (a qualifying
+    municipal cell exists only where the pooled one does)."""
+
+    def __init__(self, muni, pooled):
+        self.muni, self.pooled = muni, pooled
+
+    def get(self, k, default=None):
+        r = self.muni.get(k)
+        if r is not None:
+            return r
+        return self.pooled.get(k, default)
+
+    def __getitem__(self, k):
+        r = self.muni.get(k)
+        if r is not None:
+            return r
+        return self.pooled[k]
+
+    def items(self):
+        return self.pooled.items()
+
+    def __bool__(self):
+        return bool(self.pooled)
+
+
+class _MuniView:
+    """MC: the tables a municipal line reads -- every attribute is the
+    underlying tables' except the three reference tables."""
+
+    def __init__(self, tab):
+        self._tab = tab
+        self.ref_tok = _MktMap(tab.ref_tok_m, tab.ref_tok)
+        self.ref_band = _MktMap(tab.ref_band_m, tab.ref_band)
+        self.ref = _MktMap(tab.ref_m, tab.ref)
+
+    def __getattr__(self, a):
+        return getattr(self._tab, a)
+
+
+def muni_forward_kinds(pool, avail):
+    """MC: the municipal-only reference cells of a price pool (the rows that
+    may train), read forward like the pooled ones; None when MUNI_CELLS is
+    off.  Returns (kinds, cells)."""
+    if not MUNI_CELLS:
+        return None, None
+    cm = _reference_cells([r for r in pool if r[0] == "municipal"])
+    return ({kd: _FwdKind(cm[kd], kd, MUNI_CELLS_NMIN, avail,
+                          market="municipal") for kd in ("tok", "band", "fam")},
+            cm)
+
 
 @contextlib.contextmanager
 def pricing_rule(size_fallback=True, removal_identity=True, comparables=True,
-                 txdot_c4d1=True):
-    """Run a block under another combination of the switches."""
+                 txdot_c4d1=True, coverage_scope=True, muni_cells=False,
+                 cmp_removal_identity=False, f1_pipe_only=False,
+                 family_cell_t2=False, identical_bid_owner_set=False,
+                 round10_core=False, round11_core_not2=False):
+    """Run a block under another combination of the switches; the defaults
+    are production's.
+    coverage_scope=False: the full-total scope before 2026-11-20 (every line
+    priced, back-tests scored against the whole low bid).
+    muni_cells, cmp_removal_identity, f1_pipe_only, family_cell_t2,
+    identical_bid_owner_set: round 10's MC, E, F1P, T2, D (default OFF);
+    round10_core=True is the preset that turns on exactly those five
+    (ROUND10_CORE) -- holdout_eval --compare-switch round10_core.
+    round11_core_not2=True: round 11's selected arm, the same without
+    family_cell_t2 (ROUND11_CORE_NOT2)."""
     g = globals()
+    cmp_mod = g["comparables"]          # the module (the argument shadows it)
     old = (g["SIZE_FALLBACK"], item_tokens.REMOVAL_IDENTITY,
-           g["COMPARABLES_BLEND"], g["TXDOT_C4D1"])
+           g["COMPARABLES_BLEND"], g["TXDOT_C4D1"], g["COVERAGE_SCOPE"],
+           g["MUNI_CELLS"], cmp_mod.MUNI_REMOVAL_IDENTITY, g["F1_PIPE_ONLY"],
+           g["FAMILY_CELL_T2"], g["IDENTICAL_BID_OWNER_SET"])
+    core = bool(round10_core)
+    c11 = bool(round11_core_not2)       # round 11: round10_core without T2
     g["SIZE_FALLBACK"], g["COMPARABLES_BLEND"] = size_fallback, comparables
     g["TXDOT_C4D1"] = txdot_c4d1
+    g["COVERAGE_SCOPE"] = coverage_scope
+    g["MUNI_CELLS"] = bool(muni_cells) or core or c11
+    cmp_mod.MUNI_REMOVAL_IDENTITY = bool(cmp_removal_identity) or core or c11
+    g["F1_PIPE_ONLY"] = bool(f1_pipe_only) or core or c11
+    g["FAMILY_CELL_T2"] = bool(family_cell_t2) or core
+    g["IDENTICAL_BID_OWNER_SET"] = bool(identical_bid_owner_set) or core or c11
     item_tokens.REMOVAL_IDENTITY = removal_identity
     try:
         yield
     finally:
         g["SIZE_FALLBACK"], item_tokens.REMOVAL_IDENTITY, \
-            g["COMPARABLES_BLEND"], g["TXDOT_C4D1"] = old
+            g["COMPARABLES_BLEND"], g["TXDOT_C4D1"], g["COVERAGE_SCOPE"], \
+            g["MUNI_CELLS"], cmp_mod.MUNI_REMOVAL_IDENTITY, \
+            g["F1_PIPE_ONLY"], g["FAMILY_CELL_T2"], \
+            g["IDENTICAL_BID_OWNER_SET"] = old
 
 
 class SizeCells:
@@ -458,13 +801,176 @@ def d1_s_class(x):
     return bisect.bisect_right(D1_SIZE_EDGES, x)
 
 
+# LOW-CONFIDENCE LINES -- 低把握 (user, 2026-11-20 ~14:2x: "动员费本来就是个有
+# 点玄学的东西，如果估算不好可以表示出来").  PRESENTATION ONLY: nothing here moves
+# market_total, bid_part, expected_low, the P80 or any fitted constant.
+# estimate() adds a `low_confidence` block after the estimate is complete,
+# run_schedule() prints it, and calibrate_forward() records five report-only
+# fields per letting for the "mobilization set aside" scoring view
+# (handoff/scratchpad/diag_mob/mob_aside_report.py).
+# Lines: mobilization (any unit), and the general-condition LS lines --
+# traffic control, site / right-of-way preparation, SWPPP / erosion control,
+# bonds / insurance (lowconf_class).  Each class is one line marked 低把握,
+# with: our amount at the P50 level (line amount x (P50 - owner-set money) /
+# market total, so the lines of a schedule add up to its P50); the share of
+# their own bid the LOW bidders of earlier lettings of the same market gave
+# that class (p25 / median / p75 over lettings dated strictly before the
+# schedule's bid date; size class = the rest of the bid, < $0.5M / $0.5-2M /
+# > $2M, all sizes when that class has < LOWCONF_MIN_LETTINGS); and the
+# dollar range those shares imply for this schedule's rest.
+# Why (handoff/scratchpad/diag_mob, 2026-11-20; municipal 2024-26 forward,
+# production): a mobilization line's own price is nearly size-blind (median
+# $77k / $80k / $84k on jobs < $0.5M / $0.5-2M / > $2M where the low bidders
+# gave $13.5k / $38k / $193k), so ours runs a median 4.5x the low bidder's on
+# small jobs and 0.43x on large ones; yet the low bidders' share of their own
+# bid is steady (median 4.8%, p25-p75 3.6-5.8%), and inside one letting the
+# bidders' mobilization amounts vary about as much as any other line (CV
+# 0.43 vs 0.45).  Forward, the implied median for mobilization is off the
+# low bidder's own amount by a median factor of ~1.5 (|ln| 0.40) against
+# ~2.9 (1.06) for our line price, and the low bidder's amount falls inside
+# the implied p25-p75 range in about a third of lettings: a guide, not a
+# band.  Nothing is priced from it (a share rule did not lower the total
+# error: diag_mob decomp.txt).
+LOWCONF = True
+LOWCONF_LABEL = "低把握 (low confidence)"
+LOWCONF_MIN_LETTINGS = 15          # a history cell needs >= 15 earlier lettings
+LOWCONF_SIZE_EDGES = (5e5, 2e6)    # size of the REST of the bid
+LOWCONF_SIZE_LABELS = ("< $0.5M", "$0.5-2M", "> $2M")
+LOWCONF_CLASSES = (
+    ("mobilization", "动员费 mobilization"),
+    ("traffic_control", "交通管制 traffic control (LS)"),
+    ("site_prep", "场地/路权准备 site / ROW prep (LS)"),
+    ("swppp_erosion", "SWPPP / 水土保持 erosion control (LS)"),
+    ("bonds_insurance", "保函保险 bonds / insurance (LS)"))
+_LC_LS = ("LS", "L.S.", "LUMP SUM")
+_LC_MOB = re.compile(r"\bmobili[sz]", re.I)
+_LC_GC = (
+    ("traffic_control", re.compile(
+        r"\btraffic\s+(?:control|handling)|\bbarricad|\bmaintenance\s+of\s+"
+        r"traffic", re.I)),
+    ("site_prep", re.compile(
+        r"\bsite\s+prep|\bright\s+of\s+way\s*(?:/\s*easement\s+|and\s+"
+        r"easement\s+)?prep|\brow\s+prep|\bclearing\s+and\s+grubbing", re.I)),
+    ("swppp_erosion", re.compile(
+        r"\bswppp|\bstorm\s*water\s+pollution|\berosion|\bsediment|"
+        r"\bpollution\s+prevent", re.I)),
+    ("bonds_insurance", re.compile(r"\bbonds?\b|\bbonding|\binsurance",
+                                   re.I)))
+_LC_FAMS = {"traffic_control": "traffic_control",
+            "site_prep_clearing": "site_prep",
+            "erosion_control": "swppp_erosion",
+            "bonds_insurance": "bonds_insurance"}
+
+
+def lowconf_class(family, unit, description=""):
+    """A line's 低把握 class, or None: "mobilization" (the mobilization
+    family, or an unclassified LS line worded mobiliz-), else a general-
+    condition LS line by its family or, unclassified, by its words."""
+    fam = family or ""
+    u = (unit or "").strip().upper()
+    d = description or ""
+    if fam == "mobilization" or (fam in ("other", "needs_review", "")
+                                 and u in _LC_LS and _LC_MOB.search(d)):
+        return "mobilization"
+    if u not in _LC_LS:
+        return None
+    if fam in _LC_FAMS:
+        return _LC_FAMS[fam]
+    if fam in ("other", "needs_review", ""):
+        for name, rx in _LC_GC:
+            if rx.search(d):
+                return name
+    return None
+
+
+def lowconf_size_class(x):
+    return bisect.bisect_right(LOWCONF_SIZE_EDGES, x)
+
+
+class LowConfShare:
+    """The history behind the 低把握 ranges: for every letting of the pool
+    with one identified low bidder, two or more bidders and >=
+    MIN_SCHEDULE_ITEMS lines, the LOW bidder's amount on each low-confidence
+    class as a share of its own total -- owner-set lines (is_owner_fixed on
+    the letting's bids) and uncovered lines (line_coverage) out of both, as
+    the P50 leaves them out -- keyed by market, class, the letting's
+    available date and the size class of the rest of that bid.  at() reads
+    only lettings dated strictly before D.  Fitted on the pool handed in (the
+    external price pool), like MobRatio; it prices nothing."""
+
+    def __init__(self, pool, avail):
+        per = collections.defaultdict(
+            lambda: {"mk": "", "prices": collections.defaultdict(list),
+                     "low": collections.defaultdict(float), "win": set(),
+                     "bidders": set()})
+        for mk, pk, fam, un, sz, q, u, w, b, dn, ow, yr in pool:
+            if q is None or q <= 0:
+                continue
+            d = per[pk]
+            d["mk"] = mk
+            k = (fam, un, sz, qty_shape.band_of(q), dn)
+            d["prices"][k].append(u)
+            d["bidders"].add(b)
+            if w:
+                d["win"].add(b)
+                d["low"][k] += q * u
+        hist = collections.defaultdict(list)
+        for pk, d in per.items():
+            D = avail.get(pk, NEVER)
+            if (D == NEVER or len(d["win"]) != 1 or len(d["bidders"]) < 2
+                    or len(d["low"]) < MIN_SCHEDULE_ITEMS):
+                continue
+            tot = 0.0
+            cls = collections.defaultdict(float)
+            for k, a in d["low"].items():
+                if is_owner_fixed(d["prices"][k], k[0], k[1], k[4]):
+                    continue
+                if COVERAGE_SCOPE and line_coverage(k[4], k[0], k[1]):
+                    continue
+                tot += a
+                c = lowconf_class(k[0], k[1], k[4])
+                if c:
+                    cls[c] += a
+            for c, a in cls.items():
+                if 0 < a < tot:
+                    hist[(d["mk"], c)].append(
+                        (D, lowconf_size_class(tot - a), a / tot))
+        self.hist = {}
+        for key, v in hist.items():
+            v.sort(key=lambda t: t[0])
+            self.hist[key] = ([t[0] for t in v], [(t[1], t[2]) for t in v])
+
+    def at(self, market, cls, rest, D=None):
+        """{p25, median, p75, n, size_class, scope, before} of the low
+        bidders' share for `cls` in lettings before D whose rest is in the
+        size class of `rest` (all sizes when that class has fewer than
+        LOWCONF_MIN_LETTINGS), or None when even all sizes have fewer."""
+        h = self.hist.get((market, cls))
+        if not h:
+            return None
+        dates, vals = h
+        k = len(dates) if D is None else bisect.bisect_left(dates, D)
+        sc = lowconf_size_class(rest)
+        v = sorted(s for c, s in vals[:k] if c == sc)
+        scope = "size"
+        if len(v) < LOWCONF_MIN_LETTINGS:
+            v, scope = sorted(s for _, s in vals[:k]), "all_sizes"
+            if len(v) < LOWCONF_MIN_LETTINGS:
+                return None
+        qq = lambda p: v[int(round(p * (len(v) - 1)))]  # noqa: E731
+        return {"p25": qq(.25), "median": qq(.5), "p75": qq(.75),
+                "n": len(v), "size_class": sc, "scope": scope, "before": D}
+
+
 class MobRatio:
     """T1's mobilization ratio for one market: r(D) = the median, over every
     bid of every letting available strictly before D, of (that bid's
     mobilization amount / the same bid's amount on every other line), bids
     with both > 0, owner-set lines (is_owner_fixed on the letting's bids)
     out of both; with the number of such lettings.  Ported from p50fix
-    p50_variants.ForwardRatios (round 1, spec "c1", no size classes)."""
+    p50_variants.ForwardRatios (round 1, spec "c1", no size classes).
+    Coverage scope: uncovered lines (line_coverage) are out of both too, as
+    estimate() leaves them out of the base the ratio multiplies."""
 
     def __init__(self, pool, avail, market="txdot"):
         per = collections.defaultdict(
@@ -487,6 +993,8 @@ class MobRatio:
                 lambda: collections.defaultdict(float))
             for b, k, a in d["rows"]:
                 if k in fixed:
+                    continue
+                if COVERAGE_SCOPE and line_coverage(k[4], k[0], k[1]):
                     continue
                 acc[b]["mob" if k[0] == "mobilization" else "base"] += a
             rs = [v["mob"] / v["base"] for v in acc.values()
@@ -774,6 +1282,8 @@ class Tables:
         self.comparables = None
         self.t1 = None
         self.D = None
+        # MC for a NEW schedule: attach_v2f1f2() builds the municipal cells
+        self.ref_tok_m = self.ref_band_m = self.ref_m = None
 
     def attach_v2f1f2(self):
         """F1's size cells and V2's comparables pools for pricing a NEW
@@ -792,6 +1302,17 @@ class Tables:
         # totals from the last calibrate_forward(write=True)
         self.t1 = (T1State(pool, avail).load(os.path.join(CLEAN, T1_FILE))
                    if TXDOT_C4D1 else None)
+        # MC: municipal-only cells over every letting, as the published
+        # tables are (a cell counts with >= MUNI_CELLS_NMIN lettings)
+        self.ref_tok_m = self.ref_band_m = self.ref_m = None
+        if MUNI_CELLS:
+            cm = _reference_cells([r for r in pool if r[0] == "municipal"])
+            self.ref_tok_m = _MuniMap(cm["tok"], None, MUNI_CELLS_NMIN, "tok", {})
+            self.ref_band_m = _MuniMap(cm["band"], None, MUNI_CELLS_NMIN,
+                                       "band", {})
+            self.ref_m = _MuniMap(cm["fam"], None, MUNI_CELLS_NMIN, "fam", {})
+        # 低把握: the earlier low bidders' share per class (display only)
+        self.lowconf = LowConfShare(pool, avail) if LOWCONF else None
         return self
 
     # -- the basis check, run rather than asserted in a comment -------------
@@ -1058,6 +1579,8 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
                     out["token_exact_rule"] = True
                 p = pick[1]
                 row = pick[2]
+                if row.get("cell_market") == "municipal":
+                    out["muni_cell"] = True        # MC
                 out["price_key"] = "token_jaccard"
                 out["token_match_jaccard"] = round(pick[0], 4)
                 out["token_candidates"] = len(hits)
@@ -1096,8 +1619,12 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
     if si is not None and size_bucket and unit and family:
         if size_in is not None and size_in > 0 \
                 and not _band_has_size(tab, fk, unit, size_bucket):
-            f1 = True
-            out["f1"] = {"size": size_in}
+            if F1_PIPE_ONLY and _municipal(market) \
+                    and not _f1p_ok(family, description, size_in):
+                out["f1p_blocked"] = True           # F1P: not pipe-like
+            else:
+                f1 = True
+                out["f1"] = {"size": size_in}
     qb = qty_shape.band_of(quantity) if quantity and quantity > 0 else ""
     rb_row = None
     if qb and tab.ref_band:
@@ -1109,6 +1636,8 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
     if rb_row is not None:
         p = _f(rb_row.get("price_median"))
         if p and p > 0:
+            if rb_row.get("cell_market") == "municipal":
+                out["muni_cell"] = True            # MC
             out["price_key"] = "family+unit+size+band"
             out["usable"] = rb_row.get("usable")
             out["n_projects"] = _f(rb_row.get("n_projects"))
@@ -1153,9 +1682,13 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
         # scaled by (size / size_ref) ** k; then quantity shape and
         # escalation exactly as below.
         D = getattr(tab, "D", None)
-        cands = []
+        # chosen on the pooled table; MC takes the chosen cell's municipal
+        # row below when it qualifies; T2 drops cells under T2_MIN lettings
+        sel = getattr(tab.ref, "pooled", tab.ref)
+        t2 = FAMILY_CELL_T2 and _municipal(market)
+        cands, t2_drop = [], []
         for key in si.sized.get((fk, unit), ()):
-            r_ = tab.ref.get(key)
+            r_ = sel.get(key)
             if r_ is None:
                 continue
             sr = si.size_ref(key, D)
@@ -1164,8 +1697,14 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
             pm = _f(r_.get("price_median"))
             if not pm or pm <= 0:
                 continue
-            cands.append((abs(math.log(size_in / sr)),
-                          -(_f(r_.get("n_projects")) or 0), key[2], key, r_, sr))
+            c_ = (abs(math.log(size_in / sr)),
+                  -(_f(r_.get("n_projects")) or 0), key[2], key, r_, sr)
+            if t2 and (_f(r_.get("n_projects")) or 0) < T2_MIN:
+                t2_drop.append(c_)                  # T2: under 2 lettings
+                continue
+            cands.append(c_)
+        if t2_drop and (not cands or min(t2_drop) < min(cands)):
+            out["t2_skipped"] = True
         if not cands:
             # no sized cell: the unsized cell is not used, and the token tier
             # (tried first) found nothing -- the line stays unpriced
@@ -1178,6 +1717,7 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
             return out
         c = min(cands)
         row, sr = c[4], c[5]
+        row = tab.ref.get(c[3], row)          # MC: municipal row if it qualifies
         k, kinfo = si.k_at(fk, unit, D)
         f1_factor = (size_in / sr) ** k
         out["f1"].update({"ref_key": c[3], "size_ref": sr, "k": k,
@@ -1190,6 +1730,10 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
                               size_in, c[3][2], sr, size_in, sr, k))
     else:
         row = tab.ref.get((fk, unit, size_bucket))
+        if row is not None and FAMILY_CELL_T2 and _municipal(market) \
+                and (_f(row.get("n_projects")) or 0) < T2_MIN:
+            row = None                              # T2: fall through
+            out["t2_skipped"] = True
     if row is None and not f1:
         # "" is not a neutral bucket, it is the leftovers: rows whose size was
         # not parsed. Prefer the best-evidenced vetted bucket for this
@@ -1200,13 +1744,17 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
                   if (v.get("usable") == "yes" and k[2])]
         pick = max(vetted, key=lambda kv: _f(kv[1].get("n_projects")) or 0)             if vetted else None
         if pick is not None:
-            row = pick[1]
+            row = tab.ref.get(pick[0], pick[1])   # MC: municipal row if it qualifies
             out["why"].append("size_bucket %r not in the reference; "
                               "substituted the best-evidenced bucket %r (%s "
                               "projects)" % (size_bucket, pick[0][2],
                                              pick[1].get("n_projects")))
         else:
             row = tab.ref.get((fk, unit, ""))
+            if row is not None and FAMILY_CELL_T2 and _municipal(market) \
+                    and (_f(row.get("n_projects")) or 0) < T2_MIN:
+                row = None                          # T2: fall through
+                out["t2_skipped"] = True
             if row is not None:
                 out["why"].append(
                     "size_bucket %r not in the reference; fell back to the "
@@ -1220,6 +1768,8 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
             out["removal_no_cell"] = True
         return out
     out["price_key"] = "f1_nearest_size" if f1 else "family+unit+size"
+    if row.get("cell_market") == "municipal":
+        out["muni_cell"] = True                    # MC
     base = _f(row.get("price_median"))
     if not base or base <= 0:
         out["why"].append("price_median missing")
@@ -1287,6 +1837,11 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
     Returns the market total, the discount actually used, the point estimate
     and a calibrated interval -- plus a per-item trace, because an estimate
     nobody can take apart is an estimate nobody can defend in a bid review.
+
+    Coverage scope (COVERAGE_SCOPE): lines coverage.py names are not priced
+    and come back under `uncovered`; P50/P80 cover the rest; not_covered
+    (the rule above COVERAGE_SCOPE) gives no estimate at all.  An item may
+    carry `desc_norm` (else its description is folded) and `quote`.
     """
     # The market argument picks the discount table, so a typo in it silently
     # swaps DFW municipal work onto the statewide highway discount.  Validate
@@ -1298,13 +1853,65 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
             "competition discount table and a wrong value changes the "
             "estimate" % (market,))
     market = mk
+    # MC: a municipal line reads the municipal-only cells first
+    ptab = (_MuniView(tab) if (MUNI_CELLS and market == "municipal"
+                               and getattr(tab, "ref_m", None) is not None)
+            else tab)
+
+    # coverage: which lines are not covered (an allowance-like line whose
+    # amount is given stays owner-set money), and is the whole schedule?
+    ucls = [None] * len(items)
+    if COVERAGE_SCOPE:
+        for i, it in enumerate(items):
+            dn = it.get("desc_norm")
+            c = line_coverage(it.get("description") if dn is None else dn,
+                              it.get("family"), it.get("unit"))
+            if c and owner_fixed_amount(it) and allowance_like(
+                    it.get("family"), it.get("unit"),
+                    it.get("description") or ""):
+                c = None
+            ucls[i] = c
+    n_unc = sum(1 for c in ucls if c)
+    whole = [i for i, c in enumerate(ucls) if c and is_whole_facility(
+        items[i].get("description") if items[i].get("desc_norm") is None
+        else items[i].get("desc_norm"), items[i].get("unit"))]
+    not_covered = bool(n_unc) and (n_unc > len(items) / 2.0
+                                   or (WHOLE_FACILITY_RULE and bool(whole)))
+    uncov, uidx, quoted = [], {}, 0.0
+    for i, it in enumerate(items):
+        if not ucls[i]:
+            continue
+        qa = uncovered_quote(it)
+        uidx[i] = {"item": it.get("item_no") or "",
+                   "description": it.get("description") or "",
+                   "class": ucls[i], "quantity": _f(it.get("quantity")),
+                   "unit": it.get("unit") or "", "status": COVERAGE_STATUS,
+                   "quote": qa, "whole_facility": i in whole}
+        uncov.append(uidx[i])
+        quoted += qa or 0.0
 
     trace = []
     total = 0.0
     fixed_total = 0.0
     priced = unpriced = n_fixed = 0
-    for it in items:
+    for i, it in enumerate(items):
         q = _f(it.get("quantity"), 0.0) or 0.0
+        if ucls[i] or not_covered:
+            u = uidx.get(i)
+            trace.append({
+                "item": it.get("item_no") or it.get("description") or "",
+                "family": it.get("family") or "", "unit": it.get("unit") or "",
+                "quantity": q, "price": None,
+                "price_key": "uncovered" if ucls[i] else "not_covered",
+                "uncovered": ucls[i], "quote": u["quote"] if u else None,
+                "usable": "uncovered", "allowance_like": False,
+                "why": [("%s (%s): no comparable history, not priced%s"
+                         % (COVERAGE_STATUS, ucls[i],
+                            "; quote %.2f at face value" % u["quote"]
+                            if u and u["quote"] else ""))
+                        if ucls[i] else
+                        "not priced: the schedule as a whole is not covered"]})
+            continue
         fx = owner_fixed_amount(it)
         if fx:
             # Owner-set money is copied into every bid, not bid: face value,
@@ -1317,11 +1924,13 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
                 "allowance_like": True,
                 "why": ["owner-set amount %.2f taken at face value; not "
                         "estimated and not discounted" % fx]})
+            if it.get("identical_bids"):
+                trace[-1]["identical_bids"] = True  # D (back-tests)
             fixed_total += fx
             priced += 1
             n_fixed += 1
             continue
-        r = item_market_price(tab, it["family"], it["unit"], q,
+        r = item_market_price(ptab, it["family"], it["unit"], q,
                               it.get("size_bucket") or "", to_year, market,
                               it.get("description") or "",
                               _f(it.get("size_in")))
@@ -1340,6 +1949,8 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
     # directly priced, non-LS, non-owner-set lines (the rule registered with
     # the removal identity; see family_key).  Pre-bid: it uses only this
     # schedule's own estimated lines.
+    if not_covered:
+        return _not_covered_out(items, trace, uncov, quoted, n_unc, whole)
     todo = [t for t in trace if t.get("removal_no_cell") and not t.get("price")
             and (t.get("quantity") or 0) > 0]
     if todo:
@@ -1379,7 +1990,7 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
     if t1 is not None:
         S, mob = 0.0, []
         for i, (it, t) in enumerate(zip(items, trace)):
-            if t.get("fixed_amount"):
+            if t.get("fixed_amount") or t.get("uncovered"):
                 continue
             if it.get("family") == "mobilization":
                 mob.append(i)
@@ -1419,6 +2030,13 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
            "n_fixed": n_fixed, "n_items": len(items), "priced": priced,
            "unpriced": unpriced, "trace": trace, "expected_low": None,
            "warnings": []}
+    if COVERAGE_SCOPE:
+        out.update({"not_covered": False, "uncovered": uncov,
+                    "uncovered_share_lines": (n_unc / len(items)
+                                              if items else 0.0),
+                    "uncovered_quoted_total": quoted})
+        if uncov:
+            out["warnings"].append(_uncovered_warning(uncov, len(items)))
     # Nothing priced is a refusal, not a bid of zero.  A total of 0.00 printed
     # under "EXPECTED LOW BID" is the worst possible failure mode here.  Owner-
     # set amounts alone are not an estimate either: nobody bid them.
@@ -1431,8 +2049,9 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
         return out
     if unpriced:
         out["warnings"].append(
-            "%d of %d items could not be priced; the total covers only the "
-            "rest and is NOT a project estimate" % (unpriced, len(items)))
+            "%d of %d %sitems could not be priced; the total covers only the "
+            "rest and is NOT a project estimate"
+            % (unpriced, len(items) - n_unc, "covered " if n_unc else ""))
 
     # EVERY per-item degradation has to reach the caller.  `usable` was being
     # recorded in the trace and never checked, and the trace's own `why` notes
@@ -1532,8 +2151,14 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
     # and the line-priced bid part; owner-set money still goes on last.
     out["bid_part_lines"] = total * d["f"]
     out["bid_part"] = out["bid_part_lines"]
-    cm = _comparables_price(tab, items, trace, n_bidders, market, to_year, d,
-                            target)
+    if n_unc:                  # coverage: the uncovered lines stay out of V2
+        keep = [i for i, t in enumerate(trace) if not t.get("uncovered")]
+        cm = _comparables_price(tab, [items[i] for i in keep],
+                                [trace[i] for i in keep], n_bidders, market,
+                                to_year, d, target)
+    else:
+        cm = _comparables_price(tab, items, trace, n_bidders, market, to_year,
+                                d, target)
     if cm is not None:
         out["comparables"] = cm
         out["bid_part"] = math.sqrt(cm["cmp"] * out["bid_part_lines"])
@@ -1596,7 +2221,129 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
     else:
         out["warnings"].append("no calibration for market %r; point estimate "
                                "only, no interval" % market)
+    if uncov and out.get("expected_low") is not None:
+        # the uncovered lines' quotes, at face value, beside the covered
+        # P50/P80 -- a complete total only when every one of them has one
+        n_q = sum(1 for u in uncov if u["quote"])
+        out["uncovered_quoted_n"] = n_q
+        if n_q == len(uncov):
+            out["complete_total"] = out["expected_low"] + quoted
+            if out.get("expected_low_p80"):
+                out["complete_total_p80"] = out["expected_low_p80"] + quoted
+        elif n_q:
+            out["warnings"].append(
+                "only %d of %d uncovered lines have a quote (%.2f) -- no "
+                "complete total until every one has" % (n_q, len(uncov),
+                                                        quoted))
+    if LOWCONF:                # 低把握: presentation only, reads `out`
+        _attach_low_confidence(out, tab, items, market, target)
     return out
+
+
+def _attach_low_confidence(out, tab, items, market, target):
+    """estimate()'s 低把握 block (LOWCONF).  Presentation only: it reads the
+    finished estimate and writes out["low_confidence"], never a figure the
+    estimate already has.  One entry per low-confidence class present in the
+    covered, non-owner-set lines: our amount (market level, P50 level = x
+    (P50 - owner-set) / market total, P80 level), its share of the P50, the
+    earlier low bidders' share of contract for that class (tab.lowconf, a
+    LowConfShare; absent on bare Tables, then no range) and the dollar range
+    it implies for the rest of this schedule's P50, with where ours sits."""
+    trace = out.get("trace") or []
+    tot = out.get("market_total") or 0.0
+    el = out.get("expected_low")
+    fx = out.get("fixed_total") or 0.0
+    labels = dict(LOWCONF_CLASSES)
+    groups = collections.OrderedDict()
+    for it, t in zip(items, trace):
+        if (t.get("uncovered") or t.get("fixed_amount")
+                or t.get("price_key") == "not_covered"):
+            continue
+        dn = it.get("desc_norm")
+        c = lowconf_class(it.get("family"), it.get("unit"),
+                          it.get("description") if dn is None else dn)
+        if not c:
+            continue
+        q = t.get("quantity_effective") or (_f(it.get("quantity"), 0.0)
+                                            or 0.0)
+        g = groups.setdefault(c, {
+            "class": c, "label": labels[c], "status": LOWCONF_LABEL,
+            "items": [], "descriptions": [], "ours_market": 0.0,
+            "unpriced": 0})
+        g["items"].append(it.get("item_no") or "")
+        g["descriptions"].append(it.get("description") or "")
+        if t.get("price") and q > 0:
+            g["ours_market"] += t["price"] * q
+        else:
+            g["unpriced"] += 1
+    s50 = (el - fx) / tot if (el is not None and tot > 0) else None
+    m80 = out.get("p80_multiplier")
+    hist = getattr(tab, "lowconf", None)
+    D = ((target or {}).get("date") or getattr(tab, "D", None)
+         or _dt.date.today().isoformat())
+    for g in groups.values():
+        if s50 is None:
+            continue
+        g["ours_p50"] = g["ours_market"] * s50
+        g["ours_p80"] = g["ours_p50"] * m80 if m80 else None
+        g["share_of_p50"] = g["ours_p50"] / el if el else None
+        rest = el - fx - g["ours_p50"]
+        g["rest_p50"] = rest
+        h = (hist.at(market, g["class"], rest, D)
+             if (hist is not None and rest > 0) else None)
+        g["history"] = h
+        if h:
+            rng = tuple(rest * x / (1.0 - x)
+                        for x in (h["p25"], h["median"], h["p75"]))
+            g["implied_p50_range"] = (rng[0], rng[2])
+            g["implied_p50_median"] = rng[1]
+            g["position"] = ("above" if g["ours_p50"] > rng[2] else
+                             "below" if g["ours_p50"] < rng[0] else "within")
+    out["low_confidence"] = {
+        "label": LOWCONF_LABEL, "headline_unchanged": True,
+        "history": ("low bidders of %s lettings before %s"
+                    % (market, D)) if hist is not None else None,
+        "lines": list(groups.values())}
+
+
+def _uncovered_warning(uncov, n_items):
+    """The warning an estimate with uncovered lines leads with."""
+    cls = sorted({u["class"] for u in uncov})
+    q = sum(u["quote"] or 0.0 for u in uncov)
+    return ("%s: %d of %d lines (%s) are specialty items with almost no "
+            "comparable bid history -- NOT priced and NOT in P50/P80, which "
+            "cover the other lines only; price them separately (vendor "
+            "quotes) and add them: %s%s"
+            % (COVERAGE_STATUS, len(uncov), n_items, ", ".join(cls),
+               "; ".join("%s %s" % (u["item"] or "-", u["description"][:60])
+                         for u in uncov[:8])
+               + (" ..." if len(uncov) > 8 else ""),
+               ("  [quotes given: %.2f]" % q) if q else ""))
+
+
+def _not_covered_out(items, trace, uncov, quoted, n_unc, whole):
+    """estimate()'s answer for a schedule that is not covered as a whole:
+    no market total, no P50/P80 -- the uncovered list and the warning."""
+    why = []
+    if n_unc > len(items) / 2.0:
+        why.append("%d of its %d lines are uncovered (more than half)"
+                   % (n_unc, len(items)))
+    if whole:
+        why.append("line %s describes the whole facility (%r, LS)"
+                   % (items[whole[0]].get("item_no") or whole[0] + 1,
+                      (items[whole[0]].get("description") or "")[:60]))
+    w = ("%s AS A WHOLE (not_covered): %s -- the covered lines are only the "
+         "periphery of a job we have no comparable for, so NO P50/P80 is "
+         "given; price the job from vendor / specialty quotes. Uncovered: %s"
+         % (COVERAGE_STATUS, " and ".join(why),
+            "; ".join("%s %s" % (u["item"] or "-", u["description"][:60])
+                      for u in uncov[:8]) + (" ..." if len(uncov) > 8 else "")))
+    return {"market_total": 0.0, "fixed_total": 0.0, "n_fixed": 0,
+            "n_items": len(items), "priced": 0, "unpriced": 0, "trace": trace,
+            "expected_low": None, "warnings": [w], "not_covered": True,
+            "not_covered_why": why, "uncovered": uncov,
+            "uncovered_share_lines": n_unc / len(items) if items else 0.0,
+            "uncovered_quoted_total": quoted}
 
 
 def _comparables_price(tab, items, trace, n_bidders, market, to_year, d,
@@ -2133,6 +2880,16 @@ class _HeldOutMap:
         return bool(self._c)
 
 
+class _MuniMap(_HeldOutMap):
+    """MC on the published tables (Tables.attach_v2f1f2): a municipal-only
+    table over every letting, rows marked as municipal."""
+
+    def __getitem__(self, k):
+        r = _HeldOutMap.__getitem__(self, k)
+        r["cell_market"] = "municipal"
+        return r
+
+
 class HeldOutTables:
     """Tables, with one letting left out of every reference cell.  estimate()
     and item_market_price() run on it UNCHANGED, so the calibration prices
@@ -2505,9 +3262,10 @@ class _FwdKind:
     availability date, so the cell at D is a prefix (the last prefix per
     cell is memoised; cutoffs are visited in date order)."""
 
-    def __init__(self, cells_kind, kind, minn, avail):
+    def __init__(self, cells_kind, kind, minn, avail, market=None):
         self.c, self.kind, self.minn, self.av = cells_kind, kind, minn, avail
         self.order, self.last = {}, {}
+        self.market = market        # MC: "municipal" marks its rows
 
     def row(self, k, D):
         by = self.c.get(k)
@@ -2530,6 +3288,8 @@ class _FwdKind:
                      "usable": ("unclassified" if fam in _UNCLASSIFIED
                                 else "yes" if L >= 5 else "thin" if L >= 3
                                 else "no")}
+            if self.market:
+                cheap["cell_market"] = self.market
             r = _LazyRow(cheap, (lambda by=by, o=o, L=L:
                                  _fwd_heavy(by, o[1][:L])))
         self.last[k] = (L, r)
@@ -2587,7 +3347,8 @@ class ForwardTables:
     on it unchanged."""
 
     def __init__(self, tab, kinds, tok_inv, D, index, disc_pooled,
-                 disc_muni, size_cells=None, comparables=None, t1=None):
+                 disc_muni, size_cells=None, comparables=None, t1=None,
+                 muni_kinds=None):
         self.missing, self.notes = [], []
         self.shape = getattr(tab, "shape", None) or {}
         self.borrow_sigma = getattr(tab, "borrow_sigma", None) or {}
@@ -2604,6 +3365,12 @@ class ForwardTables:
         self.size_cells = size_cells      # F1 (SizeCells), read at D
         self.comparables = comparables    # V2: {market: comparables.Pool}
         self.t1 = t1                      # T1 (T1State), fed by the pass
+        # MC: the municipal-only cells at D (muni_forward_kinds)
+        self.ref_tok_m = self.ref_band_m = self.ref_m = None
+        if muni_kinds is not None:
+            self.ref_tok_m = _FwdMap(muni_kinds["tok"], D)
+            self.ref_band_m = _FwdMap(muni_kinds["band"], D)
+            self.ref_m = _FwdMap(muni_kinds["fam"], D)
 
 
 def _guard_step(alpha, errs, gamma, target=GUARD_TARGET,
@@ -2673,8 +3440,21 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
     is the comparables blend (estimate(), from the lettings before it), and
     the centring, quantiles and guard are fitted on those blended records.
     per_letting also gets each letting's forward P50/P80 (forward_scores).
-    fitted (a dict): receives F1's size cells and the comparables pools, for
-    the leak guards."""
+    fitted (a dict): receives F1's size cells, the comparables pools, T1's
+    state (its mobilization ratio) and MC's municipal-only cells, for the
+    leak guards.
+
+    MC: municipal lines read the municipal-only cells (muni_forward_kinds)
+    where they have >= MUNI_CELLS_NMIN earlier municipal lettings.
+
+    Coverage scope (COVERAGE_SCOPE): estimate() leaves the uncovered lines
+    unpriced; the record's actual_low is the low bid minus the low bidder's
+    own amounts on them (actual_low_full keeps the whole low bid,
+    actual_low_med deducts each line's median bidder amount instead -- the
+    sensitivity version); >= 90% of the COVERED lines must be priced; a
+    not_covered letting is not scored and the constants never see it.  T1's
+    D1 records keep the whole low / median bid (the competition discount is
+    the bids' order statistic, not a scope)."""
     tab = Tables()
     avail = _letting_dates()
     findex = _ForwardIndex(avail)
@@ -2685,8 +3465,15 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
     lsz = _line_sizes(pool, sizes) if sizes is not None else {}
     pools = comparables_pools(pool, avail)
     t1 = T1State(pool, avail) if TXDOT_C4D1 else None
+    kinds_m, cells_m = muni_forward_kinds(pool, avail)      # MC
+    lch = LowConfShare(pool, avail) if LOWCONF else None   # 低把握 (display)
     if fitted is not None:
-        fitted.update({"size_cells": cells["size"], "comparables": pools})
+        if cells_m is None:
+            # the leak guards check MC's cells even while MUNI_CELLS is off
+            # (nothing is priced from them then)
+            cells_m = _reference_cells([r for r in pool if r[0] == "municipal"])
+        fitted.update({"size_cells": cells["size"], "comparables": pools,
+                       "t1": t1, "muni_cells": cells_m})
     cov = collections.Counter()
     cov["reference_rebuild_mismatch"] = _check_reference_cells(tab, cells)
     kinds = _forward_kinds(cells, avail)
@@ -2694,7 +3481,8 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
         lambda: {"bt": collections.defaultdict(float), "win": set(),
                  "sched": {}, "mk": "", "rows": collections.defaultdict(list),
                  "prices": collections.defaultdict(list), "wamt": {},
-                 "yr": collections.Counter()})
+                 "yr": collections.Counter(), "bamt": {},
+                 "nb": collections.defaultdict(set)})
     for mk, pk, fam, un, sz, q, u, w, b, dn, ow, yr in pool:
         if q is None or q <= 0:
             continue
@@ -2703,6 +3491,11 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
         d["bt"][b] += q * u
         k = (fam, un, sz, qty_shape.band_of(q), dn)
         d["prices"][k].append(u)
+        if IDENTICAL_BID_OWNER_SET:
+            d["nb"][k].add(b)                  # D: distinct bidders per key
+        if COVERAGE_SCOPE and line_coverage(dn, fam, un):
+            ba = d["bamt"].setdefault(k, collections.defaultdict(float))
+            ba[b] += q * u                 # every bidder's amount (sensitivity)
         if w:
             d["win"].add(b)
             d["sched"][k] = d["sched"].get(k, 0.0) + q
@@ -2723,6 +3516,7 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
         todo.append(pk)
     todo.sort(key=lambda pk: (avail.get(pk, NEVER), pk))
     trips = collections.defaultdict(list)
+    unc_mk, nc_mk = collections.Counter(), collections.Counter()  # coverage
     ft_d, ft = None, None
     for pk in todo:
         D = avail.get(pk, NEVER)
@@ -2735,10 +3529,13 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
         items, keys = [], []
         for k in sched:
             fam, un, sz, bd, dn = k
-            if is_owner_fixed(d["prices"].get(k, ()), fam, un, dn):
+            fx_k, by_d = schedule_owner_set(d, k)
+            if fx_k:
                 items.append({"family": fam, "unit": un, "size_bucket": sz,
                               "quantity": sched[k], "description": dn,
                               "amount": d["wamt"].get(k, 0.0), "key": k})
+                if by_d:
+                    items[-1]["identical_bids"] = True
                 keys.append(k)
                 continue
             for qr in d["rows"][k]:
@@ -2751,39 +3548,82 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
             pooled, muni = fdisc.at(D)
             ft_d, ft = D, ForwardTables(tab, kinds, cells["tok_inv"], D,
                                         findex.at(D), pooled, muni,
-                                        cells["size"], pools, t1)
+                                        cells["size"], pools, t1,
+                                        muni_kinds=kinds_m)
+            ft.lowconf = lch
         r = estimate(ft, items, n, mk, yr or None, target={"key": pk})
+        if r.get("not_covered"):
+            cov["not_covered"] += 1
+            nc_mk[mk] += 1
+            continue
         if r.get("expected_low") is None:
             cov["no_estimate"] += 1
             continue
         if t1 is not None and mk == "txdot":
             t1.note_priced(pk, r["market_total"])
         ok = collections.defaultdict(lambda: True)
+        unc = set()
         for k, t in zip(keys, r["trace"]):
+            if t.get("uncovered"):
+                unc.add(k)
+                continue
             if not (t.get("fixed_amount") or t.get("price")):
                 ok[k] = False
-        pr = sum(1 for k in sched if ok[k])
+        ck = [k for k in sched if k not in unc]      # the covered lines
+        pr = sum(1 for k in ck if ok[k])
         tot, fixed = r["market_total"], r["fixed_total"]
-        if pr < 0.9 * len(sched) or tot <= 0:
+        if pr < 0.9 * len(ck) or tot <= 0:
             cov["under_90pct_priced"] += 1
+            continue
+        cv = covered_actual(d, unc, wt)
+        if cv is None:
+            cov["no_covered_low"] += 1
             continue
         fa = r["discount"]["f"]
         bp = r["bid_part"]                 # V2: the blend (= tot * fa without it)
         cov["scored"] += 1
+        if unc:
+            cov["scored_with_uncovered"] += 1
+            unc_mk[mk] += 1
         if t1 is not None and mk == "txdot":
             t1.note_scored(D, n, tot, wt, statistics.median(d["bt"].values()))
-        trips[mk].append((D, bp, fixed, wt))
-        trips["all"].append((D, bp, fixed, wt))
+        trips[mk].append((D, bp, fixed, cv["actual_low"]))
+        trips["all"].append((D, bp, fixed, cv["actual_low"]))
         if per_letting is not None:
             cm = r.get("comparables") or {}
-            per_letting.append({"project_key": pk, "market": mk, "date": D,
-                                "n_bidders": n, "bid_part": bp,
-                                "owner_fixed": fixed, "actual_low": wt,
-                                "n_items": len(sched),
-                                "bid_part_lines": tot * fa,
-                                "cmp": cm.get("cmp"),
-                                "n_comps": cm.get("n_comps"),
-                                "comps": cm.get("comps")})
+            rec = {"project_key": pk, "market": mk, "date": D,
+                   "n_bidders": n, "bid_part": bp,
+                   "owner_fixed": fixed, "actual_low": cv["actual_low"],
+                   "n_items": len(sched),
+                   "bid_part_lines": tot * fa,
+                   "cmp": cm.get("cmp"),
+                   "n_comps": cm.get("n_comps"),
+                   "comps": cm.get("comps")}
+            if LOWCONF:
+                # report-only (the "mobilization set aside" view): our
+                # market-level amounts and the low bidder's own amounts on
+                # the covered, non-owner-set low-confidence lines
+                lcl = (r.get("low_confidence") or {}).get("lines") or []
+                fk = {k for k, it in zip(keys, items) if it.get("amount")}
+                ml = gl = 0.0
+                for k in sched:
+                    if k in unc or k in fk:
+                        continue
+                    c = lowconf_class(k[0], k[1], k[4])
+                    if c == "mobilization":
+                        ml += d["wamt"].get(k, 0.0)
+                    elif c:
+                        gl += d["wamt"].get(k, 0.0)
+                rec.update({
+                    "market_total": tot,
+                    "mob_market": sum(g["ours_market"] for g in lcl
+                                      if g["class"] == "mobilization"),
+                    "gc_ls_market": sum(g["ours_market"] for g in lcl
+                                        if g["class"] != "mobilization"),
+                    "mob_low": ml, "gc_ls_low": gl})
+            if COVERAGE_SCOPE:
+                rec.update(cv)
+            per_letting.append(rec)
 
     rows_out = []
     for mk, trip in sorted(trips.items()):
@@ -2827,6 +3667,15 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
                          "discount_table": "forward_refit",
                          "mode": "forward_production_path",
                          "train_scope": "public_external_only"})
+        if COVERAGE_SCOPE:
+            # the actual is the covered low bid (COVERAGE_SCOPE); how many
+            # lettings it moved and how many it dropped as not covered
+            rows_out[-1].update({
+                "scope": "covered_lines",
+                "lettings_with_uncovered": (sum(unc_mk.values())
+                                            if mk == "all" else unc_mk[mk]),
+                "lettings_not_covered": (sum(nc_mk.values())
+                                         if mk == "all" else nc_mk[mk])})
     if per_letting is not None:
         forward_scores(per_letting)
     if write and t1 is not None:
@@ -2838,6 +3687,28 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
             wr.writeheader()
             wr.writerows(rows_out)
     return rows_out, cov
+
+
+def covered_actual(d, unc, low):
+    """The covered actual of one letting (`d` as calibrate_forward builds
+    it, `unc` its uncovered schedule keys, `low` its low bid): low minus the
+    low bidder's own amounts on those keys; the sensitivity version deducts
+    each key's median amount over the bidders who priced it.  With
+    COVERAGE_SCOPE off (or nothing uncovered) the actual is the low bid.
+    None when nothing positive is left."""
+    if not COVERAGE_SCOPE:
+        return {"actual_low": low}
+    ded = sum(d["wamt"].get(k, 0.0) for k in unc)
+    med = 0.0
+    for k in unc:
+        v = [a for a in d.get("bamt", {}).get(k, {}).values() if a > 0]
+        med += statistics.median(v) if v else d["wamt"].get(k, 0.0)
+    if low - ded <= 0:
+        return None
+    return {"actual_low": low - ded, "actual_low_full": low,
+            "uncovered_low": ded, "uncovered_med": med,
+            "actual_low_med": (low - med) if low - med > 0 else None,
+            "n_uncovered_lines": len(unc)}
 
 
 def comparables_pools(pool, avail, markets=("municipal", "txdot")):
@@ -3547,6 +4418,417 @@ def _selftest():
         (0.8, None, 0.9, None))
     chk("22 the switch is restored", TXDOT_C4D1, True)
 
+    # 23 coverage scope: an uncovered line is not priced, out of the total,
+    # listed with its class; a quote is face value outside P50/P80 and gives
+    # the complete total; an allowance with its amount stays owner-set;
+    # not_covered by majority and by a whole-facility LS line; the switch
+    # off prices every line; MobRatio and covered_actual
+    t23 = Tables.__new__(Tables)
+    t23.__dict__.update({k: v for k, v in t22.__dict__.items()})
+    t23.t1, t23.comparables = None, None
+    t23.calib = {"municipal": {"level_correction": "1", "quantiles_basis":
+                               "centred", "p10": "0.8", "p90": "1.2",
+                               "p25": "0.9", "p75": "1.1", "p20": "0.85"}}
+    base23 = [{"family": "water_pipe", "unit": "LF", "quantity": 100.0,
+               "description": "8 in water line", "item_no": "1"},
+              {"family": "mobilization", "unit": "LS", "quantity": 1.0,
+               "description": "mobilization", "item_no": "2"}]
+    pump23 = {"family": "other", "unit": "EA", "quantity": 2.0, "item_no": "3",
+              "description": "furnish and install 250 hp vertical turbine pumps"}
+    r23 = estimate(t23, base23 + [pump23], 4, "municipal")
+    with pricing_rule(coverage_scope=False):
+        r23o = estimate(t23, base23 + [pump23], 4, "municipal")
+    r23b = estimate(t23, base23, 4, "municipal")
+    chk("23 the uncovered pump line: not priced, listed, outside the total",
+        (r23["trace"][2]["price"], r23["trace"][2]["uncovered"],
+         [(u["item"], u["class"], u["status"]) for u in r23["uncovered"]],
+         round(r23["uncovered_share_lines"], 6), r23["market_total"]
+         == r23b["market_total"], round(r23["expected_low"], 9)
+         == round(r23b["expected_low"], 9),
+         r23["unpriced"] == r23b["unpriced"],
+         r23["warnings"][0].startswith(COVERAGE_STATUS), r23["not_covered"]),
+        (None, "pump_equipment", [("3", "pump_equipment", COVERAGE_STATUS)],
+         round(1 / 3, 6), True, True, True, True, False))
+    chk("23 switched off: the pump line is priced (or counted unpriced) as "
+        "before, nothing uncovered",
+        (r23o["trace"][2].get("uncovered"), "uncovered" in r23o,
+         r23o["trace"][2]["price_key"] != "uncovered"), (None, False, True))
+    q23 = dict(pump23, quote=900000.0)
+    r23q = estimate(t23, base23 + [q23], 4, "municipal")
+    chk("23 a vendor quote: face value outside P50/P80, complete total",
+        (round(r23q["expected_low"], 6) == round(r23["expected_low"], 6),
+         round(r23q["complete_total"] - r23q["expected_low"], 6),
+         round(r23q["complete_total_p80"] - r23q["expected_low_p80"], 6),
+         r23q["uncovered"][0]["quote"]), (True, 900000.0, 900000.0, 900000.0))
+    al23 = {"family": "contingency", "unit": "LS", "quantity": 1.0,
+            "description": "lift station contingency", "amount": 50000.0}
+    r23a = estimate(t23, base23 + [al23], 4, "municipal")
+    chk("23 an allowance-like uncovered line with its amount stays owner-set",
+        (r23a["trace"][2].get("fixed_amount"), r23a["uncovered"]),
+        (50000.0, []))
+    r23w = estimate(t23, base23 + [{"family": "other", "unit": "LS",
+                                    "quantity": 1.0, "item_no": "9",
+                                    "description": "Lift Station - Complete "
+                                                   "in Place"}],
+                    4, "municipal")
+    r23m = estimate(t23, [base23[0], pump23, dict(pump23, item_no="4")], 4,
+                    "municipal")
+    if WHOLE_FACILITY_RULE:
+        chk("23 not_covered: a whole-facility LS line; uncovered lines > half; "
+            "no P50/P80, only the warning",
+            (r23w["not_covered"], r23w["expected_low"], len(r23w["warnings"]),
+             r23m["not_covered"], r23m["expected_low"], r23m.get("expected_low_p80"),
+             r23["not_covered"]), (True, None, 1, True, None, None, False))
+    else:
+        chk("23 not_covered: uncovered lines > half (rule (a)); a whole-facility "
+            "LS line alone is listed, flagged, and does not void the estimate",
+            (r23w["not_covered"], r23w["expected_low"] is not None,
+             [u["whole_facility"] for u in r23w["uncovered"]],
+             r23m["not_covered"], r23m["expected_low"], r23m.get("expected_low_p80"),
+             r23["not_covered"]), (False, True, [True], True, None, None, False))
+    chk("23 the whole-facility rule (b) reads the description only",
+        [is_whole_facility(d, u) for d, u in (
+            ("lift station complete in place", "LS"),
+            ("complete pump station", "LS"),
+            ("lift station rehabilitation", "L.S."),
+            ("ground storage tank 1 0 mg", "LS"),
+            ("lift station complete in place", "EA"),
+            ("lift station odor control", "LS"),
+            ("lift station site work", "LS"),
+            ("electrical building", "LS"),
+            ("paint interior wet coating system for 1 500 000 gallon "
+             "elevated storage tank", "LS"))],
+        [True, True, True, True, False, False, False, False, False])
+    pool23 = []
+    for b, (mob_, pmp_) in enumerate(((10.0, 1000.0), (20.0, 3000.0))):
+        for fam_, un_, q_, u_, dn_ in (
+                ("mobilization", "LS", 1.0, mob_, "mobilization"),
+                ("excavation", "CY", 10.0, 10.0, "excavation"),
+                ("other", "EA", 1.0, pmp_, "furnish and install pumps")):
+            pool23.append(("txdot", "TP", fam_, un_, "", q_, u_, b == 0,
+                           "b%d" % b, dn_, "o", "2024"))
+    av23 = {"TP": "2024-01-10"}
+    with pricing_rule(coverage_scope=False):
+        mr23o = MobRatio(pool23, av23, "txdot").at(None)
+    mr23 = MobRatio(pool23, av23, "txdot").at(None)
+    chk("23 MobRatio: uncovered lines out of the base under the coverage scope",
+        (mr23, mr23o), ((statistics.median([0.1, 0.2]), 1),
+                        (statistics.median([10.0 / 1100.0, 20.0 / 3100.0]),
+                         1)))
+    k23 = ("other", "EA", "", "0-10", "furnish and install pumps")
+    d23 = {"wamt": {k23: 1000.0}, "bamt": {k23: {"b0": 1000.0, "b1": 3000.0,
+                                                 "b2": 2000.0}}}
+    cv23 = covered_actual(d23, {k23}, 5000.0)
+    with pricing_rule(coverage_scope=False):
+        cv23o = covered_actual(d23, {k23}, 5000.0)
+    chk("23 covered actual: low minus the low bidder's own uncovered amount; "
+        "the median bidder's for the sensitivity; the whole low bid when off",
+        (cv23["actual_low"], cv23["actual_low_med"], cv23["actual_low_full"],
+         cv23o), (4000.0, 3000.0, 5000.0, {"actual_low": 5000.0}))
+    chk("23 the switch is restored", COVERAGE_SCOPE, True)
+
+    # 24 MC: a municipal line reads the municipal-only cell of the same key
+    # (token, band and family tiers) when it has >= MUNI_CELLS_NMIN lettings,
+    # else the pooled cell; TxDOT lines and the switch off read the pooled
+    # cell; forward, a letting dated D and later ones never count.  MC is OFF
+    # by default (round 10 CORE), so these run under pricing_rule(muni_cells=
+    # True)
+    chk("24 MC is off in production", MUNI_CELLS, False)
+    pool23, av23 = [], {}
+    n_mu = MUNI_CELLS_NMIN
+    for i in range(n_mu + 7):                      # TxDOT first, then municipal
+        mk23 = "txdot" if i < 7 else "municipal"
+        pk = "%s%d" % (mk23[0].upper(), i)
+        av23[pk] = ("2023-%02d-01" % (i + 1)) if i < 7 else (
+            "2024-%02d-01" % (i - 6))
+        u23 = 6.0 if mk23 == "municipal" else 2.0
+        for b in range(2):
+            pool23.append((mk23, pk, "zz_test", "CY", "", 50.0, u23, b == 0,
+                           "b%d" % b, "special widget fill", "o", "2024"))
+            pool23.append((mk23, pk, "zz_band", "CY", "", 50.0, u23 * 10, b == 0,
+                           "b%d" % b, "", "o", "2024"))
+    cells23 = _reference_cells(pool23)
+    t23 = Tables.__new__(Tables)
+    t23.__dict__.update({k: v for k, v in t19.__dict__.items()})
+    t23.ref_tok = _HeldOutMap(cells23["tok"], None, 2, "tok", {})
+    t23.ref_band = _HeldOutMap(cells23["band"], None, 2, "band", {})
+    t23.ref = _HeldOutMap(cells23["fam"], None, 1, "fam", {})
+    t23.tok_inv = cells23["tok_inv"]
+    t23.size_cells, t23.D, t23.comparables, t23.t1 = None, None, None, None
+    t23.disc = {4: {"f": 0.9, "p25": 0.8, "p75": 1.0, "lettings": 40}}
+    t23.disc_muni = dict(t23.disc)
+    with pricing_rule(muni_cells=True):
+        kinds23, cm23 = muni_forward_kinds(pool23, av23)
+    chk("24 MC off: no municipal cells are built",
+        muni_forward_kinds(pool23, av23), (None, None))
+    t23.ref_tok_m = _MuniMap(cm23["tok"], None, MUNI_CELLS_NMIN, "tok", {})
+    t23.ref_band_m = _MuniMap(cm23["band"], None, MUNI_CELLS_NMIN, "band", {})
+    t23.ref_m = _MuniMap(cm23["fam"], None, MUNI_CELLS_NMIN, "fam", {})
+    it23 = [{"family": "zz_test", "unit": "CY", "quantity": 50.0,
+             "description": "special widget fill"},              # token tier
+            {"family": "zz_band", "unit": "CY", "quantity": 50.0,
+             "description": ""},                                 # band tier
+            {"family": "zz_band", "unit": "CY", "quantity": 5000.0,
+             "description": ""}]                                 # family tier
+    pr23 = lambda r: [(t["price"], t["price_key"], bool(t.get("muni_cell")))  # noqa: E731
+                      for t in r["trace"]]
+    with pricing_rule(muni_cells=True):
+        r23m = estimate(t23, it23, 4, "municipal")
+        r23t = estimate(t23, it23, 4, "txdot")
+    with pricing_rule(muni_cells=False):
+        r23o = estimate(t23, it23, 4, "municipal")
+    pooled23 = statistics.median([6.0] * n_mu + [2.0] * 7)
+    chk("24 MC: municipal line -> municipal cells (token, band, family)",
+        pr23(r23m), [(6.0, "token_jaccard", True),
+                     (60.0, "family+unit+size+band", True),
+                     (60.0, "family+unit+size", True)])
+    chk("24 MC: TxDOT and switched off -> the pooled cells",
+        (pr23(r23t), pr23(r23o)),
+        ([(pooled23, "token_jaccard", False),
+          (pooled23 * 10, "family+unit+size+band", False),
+          (pooled23 * 10, "family+unit+size", False)],) * 2)
+    t23.ref_tok_m = _MuniMap(cm23["tok"], None, n_mu + 1, "tok", {})
+    with pricing_rule(muni_cells=True):
+        r23n = estimate(t23, it23[:1], 4, "municipal")
+    chk("24 MC: a municipal cell under the minimum is not used",
+        pr23(r23n), [(pooled23, "token_jaccard", False)])
+    last_m = max(d for k, d in av23.items() if k.startswith("M"))
+    ft23 = ForwardTables(t23, _forward_kinds(cells23, av23),
+                         cells23["tok_inv"], last_m, {}, t23.disc,
+                         t23.disc_muni, muni_kinds=kinds23)
+    ft23b = ForwardTables(t23, _forward_kinds(cells23, av23),
+                          cells23["tok_inv"], "2025-01-01", {}, t23.disc,
+                          t23.disc_muni, muni_kinds=kinds23)
+    with pricing_rule(muni_cells=True):
+        f23 = (estimate(ft23, it23[:1], 4, "municipal")["trace"][0]["price"],
+               estimate(ft23b, it23[:1], 4, "municipal")["trace"][0]["price"])
+    chk("24 MC forward: on the last municipal letting's own date only the "
+        "earlier ones count (pooled cell); after it, the municipal cell",
+        f23, (statistics.median([2.0] * 7 + [6.0] * (n_mu - 1)), 6.0))
+    chk("24 the switch is restored (off)", MUNI_CELLS, False)
+
+    # 25 round 10 CORE = MC + E + F1P + T2 + D, every switch OFF by default:
+    # the preset round10_core turns on exactly those five and is undone after
+    # its block; F1P's pipe-like rule; T2 on a municipal family cell backed by
+    # one letting; D's identical-bid rule and its back-test schedule hook;
+    # E's municipal removal identity on the comparables side
+    cmp25 = globals()["comparables"]
+    sw25 = lambda: (MUNI_CELLS, cmp25.MUNI_REMOVAL_IDENTITY,  # noqa: E731
+                    F1_PIPE_ONLY, FAMILY_CELL_T2, IDENTICAL_BID_OWNER_SET)
+    off25 = sw25()
+    with pricing_rule(round10_core=True):
+        on25 = sw25()
+    with pricing_rule(muni_cells=True):
+        mc25 = sw25()
+    chk("25 production: the five off; round10_core turns on exactly the five; "
+        "muni_cells alone only MC; restored after",
+        (off25, on25, mc25, sw25(), len(ROUND10_CORE)),
+        ((False,) * 5, (True,) * 5, (True, False, False, False, False),
+         (False,) * 5, 5))
+    chk("25 F1P: pipe-like families; pipe_fittings only when its size is a "
+        "diameter (not the 4 of '2 1/4 in')",
+        [_f1p_ok(f, d, z) for f, d, z in (
+            ("storm_pipe", "24 in rcp", 24.0),
+            ("curb_gutter", "6 in curb", 6.0),
+            ("pipe_fittings", "12 in gate valve tee", 12.0),
+            ("pipe_fittings", "anchor sleeve 2 1/4 in", 4.0),
+            ("pipe_fittings", "ductile iron fittings", 8.0))],
+        [True, False, True, False, False])
+    pool25 = [("municipal", "M25", "zz_one", "CY", "", 50.0, 7.0, b == 0,
+               "b%d" % b, "", "o", "2024") for b in range(2)]
+    cells25 = _reference_cells(pool25)
+    t25 = Tables.__new__(Tables)
+    t25.__dict__.update({k: v for k, v in t23.__dict__.items()})
+    t25.ref_tok = _HeldOutMap(cells25["tok"], None, 2, "tok", {})
+    t25.ref_band = _HeldOutMap(cells25["band"], None, 2, "band", {})
+    t25.ref = _HeldOutMap(cells25["fam"], None, 1, "fam", {})
+    t25.tok_inv = cells25["tok_inv"]
+    t25.ref_tok_m = t25.ref_band_m = t25.ref_m = None
+    it25 = [{"family": "zz_one", "unit": "CY", "quantity": 50.0,
+             "description": ""}]
+    with pricing_rule(family_cell_t2=True):
+        r25m = estimate(t25, it25, 4, "municipal")
+        r25t = estimate(t25, it25, 4, "txdot")
+    r25o = estimate(t25, it25, 4, "municipal")
+    chk("25 T2: a municipal family cell backed by one letting is not used; "
+        "TxDOT and the switch off use it",
+        (r25m["trace"][0]["price"], bool(r25m["trace"][0].get("t2_skipped")),
+         r25t["trace"][0]["price"] is not None,
+         r25o["trace"][0]["price"] == r25t["trace"][0]["price"]),
+        (None, True, True, True))
+    chk("25 D: >= 3 distinct bidders, one identical price, LS or "
+        "allowance-like (or exactly 1.00)",
+        [identical_bid_owner_set(ps, n, f, u, d) for ps, n, f, u, d in (
+            ([5000.0] * 3, 3, "traffic_control", "LS", "traffic control"),
+            ([5000.0] * 2, 2, "traffic_control", "LS", "traffic control"),
+            ([5000.0, 5000.0, 5100.0], 3, "traffic_control", "LS",
+             "traffic control"),
+            ([12.0] * 4, 4, "excavation", "CY", "excavation"),
+            ([1.0] * 3, 3, "other", "EA", "testing"),
+            ([250.0] * 3, 3, "other", "ALLOW", "material testing"))],
+        [True, False, False, False, True, True])
+    k25 = ("traffic_control", "LS", "", "0-10", "traffic control")
+    d25 = {"mk": "municipal", "prices": {k25: [5000.0] * 3},
+           "nb": {k25: {"a", "b", "c"}}}
+    sos_off = schedule_owner_set(d25, k25)
+    with pricing_rule(identical_bid_owner_set=True):
+        sos_on = schedule_owner_set(d25, k25)
+        sos_tx = schedule_owner_set(dict(d25, mk="txdot"), k25)
+    chk("25 D in the back-test schedule: municipal lettings, switch on only",
+        (sos_off, sos_on, sos_tx), ((False, False), (True, True),
+                                    (False, False)))
+    rm25 = "remove existing sanitary sewer pipe"
+    rr25 = "remove and replace 6 in concrete pavement"
+    e_off = item_tokens.RM_FLAG in cmp25.tokens(rm25, "municipal")
+    with pricing_rule(cmp_removal_identity=True):
+        e_on = (item_tokens.RM_FLAG in cmp25.tokens(rm25, "municipal"),
+                item_tokens.RM_FLAG in cmp25.tokens(rm25, "txdot"),
+                item_tokens.RM_FLAG in cmp25.tokens(rr25, "municipal"))
+    chk("25 E: the municipal comparables identity carries the removal flag "
+        "(not TxDOT, not remove-and-replace, not with the switch off)",
+        (e_off,) + e_on, (False, True, False, False))
+    chk("25 the switches are restored (off)", sw25(), (False,) * 5)
+
+    # 26 round 11's selected arm: the preset round11_core_not2 turns on
+    # exactly MC, E, F1P and D (not T2), and is undone after its block
+    with pricing_rule(round11_core_not2=True):
+        on26 = sw25()
+    chk("26 round11_core_not2 = round10_core without T2; restored after",
+        (on26, sw25(), ROUND11_CORE_NOT2,
+         tuple(s for s in ROUND10_CORE if s != "family_cell_t2")),
+        ((True, True, True, False, True), (False,) * 5, ROUND11_CORE_NOT2,
+         ROUND11_CORE_NOT2))
+
+    # 27 低把握 (LOWCONF): classes, the forward history, and the block is
+    # presentation only -- the same schedule gives the same P50/P80 with it
+    # on and off
+    chk("27 low-confidence classes",
+        [lowconf_class(f, u, dsc) for f, u, dsc in (
+            ("mobilization", "LS", "mobilization"),
+            ("mobilization", "EA", "mobilization bonds"),
+            ("other", "LS", "mobilizaton and demobilization"),
+            ("other", "LS", "Mobilization (5% max)"),
+            ("bonds_insurance", "LS", "bonds and insurance"),
+            ("traffic_control", "LS", "traffic control"),
+            ("traffic_control", "MO", "traffic control"),
+            ("erosion_control", "LS", "swppp"),
+            ("erosion_control", "LF", "silt fence"),
+            ("site_prep_clearing", "LS", "general site preparation"),
+            ("other", "LS", "right of way/easement preparation"),
+            ("other", "LS", "general site preperation"),
+            ("other", "LS", "storm water pollution prevention plan"),
+            ("other", "LS", "scada"),
+            ("needs_review", "LS", "mobilization max 5 of total bid"),
+            ("storm_pipe", "LF", "24 in rcp"))],
+        ["mobilization", "mobilization", "mobilization", "mobilization",
+         "bonds_insurance", "traffic_control", None, "swppp_erosion", None,
+         "site_prep", "site_prep", "site_prep", "swppp_erosion", None,
+         "mobilization", None])
+    # a pool of 20 + 20 small lettings (rest $100k, mobilization 5% / 3%
+    # of the low bid) dated 2024, and 20 large ones (rest $5M, 4%)
+    pool27, avail27 = [], {}
+    for i in range(60):
+        pk = "lc27_%02d" % i
+        big = i >= 40
+        rest = 5e6 if big else 1e5
+        sh = 0.04 if big else (0.05 if i < 20 else 0.03)
+        mob = rest * sh / (1 - sh)
+        avail27[pk] = "2024-%02d-%02d" % (1 + i // 28, 1 + i % 28)
+        for b, mult, w in (("A", 1.0, True), ("B", 1.2, False)):
+            for fam, un, q, u, dn in (
+                    ("mobilization", "LS", 1.0, mob * mult, "mobilization"),
+                    ("storm_pipe", "LF", 100.0, rest / 300 * mult, "24 rcp"),
+                    ("excavation", "CY", 100.0, rest / 300 * mult, "exc"),
+                    ("sidewalk", "SY", 100.0, rest / 300 * mult, "walk")):
+                pool27.append(("municipal", pk, fam, un, "", q, u, w, b, dn,
+                               "own", "2024"))
+    lch27 = LowConfShare(pool27, avail27)
+    h_small = lch27.at("municipal", "mobilization", 1e5, "2025-01-01")
+    h_early = lch27.at("municipal", "mobilization", 1e5, "2024-01-10")
+    h_big = lch27.at("municipal", "mobilization", 4e6, "2025-01-01")
+    h_mid = lch27.at("municipal", "mobilization", 1e6, "2025-01-01")
+    chk("27 history: same size class, forward in time, all sizes when thin",
+        (h_small["n"], h_small["scope"], round(h_small["p25"], 4),
+         round(h_small["p75"], 4), h_early, h_big["n"],
+         round(h_big["median"], 4), h_mid["scope"], h_mid["n"],
+         lch27.at("municipal", "traffic_control", 1e5, "2025-01-01"),
+         lch27.at("txdot", "mobilization", 1e5, "2025-01-01")),
+        (40, "size", 0.03, 0.05, None, 20, 0.04, "all_sizes", 60, None,
+         None))
+    # presentation only: estimate() with the block on vs off
+    t27 = Tables.__new__(Tables)
+    t27.__dict__.update(t.__dict__)
+    t27.ref = dict(t.ref)
+    t27.ref[("mobilization", "LS", "")] = {
+        "price_median": "80000", "qty_median": "1", "vintage_year": "2025",
+        "usable": "yes", "n_projects": "30", "n_owners": "9"}
+    t27.calib = {"municipal": {"market": "municipal", "n": "155",
+                               "p10": "0.85", "p25": "0.928", "p75": "1.053",
+                               "p90": "1.15", "quantiles_basis": "centred",
+                               "level_correction": "1.02",
+                               "p_not_under": "0.80"}}
+    t27.lowconf = lch27
+    s27 = [{"item_no": "1", "family": "mobilization", "unit": "LS",
+            "quantity": 1, "description": "Mobilization (5% max)"},
+           {"item_no": "2", "family": "gabion_wall", "unit": "CY",
+            "quantity": 300, "description": "gabion"},
+           {"item_no": "3", "family": "contingency", "unit": "LS",
+            "quantity": 1, "amount": 10000.0,
+            "description": "construction contingency"}]
+    with pricing_rule(comparables=False):
+        on27 = estimate(t27, s27, 4, "municipal", "2025",
+                        target={"date": "2025-06-01"})
+        g = globals()
+        g["LOWCONF"] = False
+        try:
+            off27 = estimate(t27, s27, 4, "municipal", "2025",
+                             target={"date": "2025-06-01"})
+        finally:
+            g["LOWCONF"] = True
+    lc27 = (on27.get("low_confidence") or {}).get("lines") or [{}]
+    m27 = lc27[0]
+    pm27 = sum(tt["price"] * tt["quantity"] for tt in on27["trace"]
+               if tt.get("price"))
+    chk("27 P50/P80 identical with the block on and off; no block when off",
+        (on27["expected_low"] == off27["expected_low"],
+         on27["expected_low_p80"] == off27["expected_low_p80"],
+         on27["market_total"] == off27["market_total"],
+         "low_confidence" in off27, len(lc27)),
+        (True, True, True, False, 1))
+    rest27 = on27["expected_low"] - 10000.0 - m27.get("ours_p50", 0)
+    chk("27 the block: ours at the P50 level, the size class of the rest, "
+        "the implied range and where ours sits",
+        (m27.get("class"), m27.get("status"), m27.get("items"),
+         round(m27.get("ours_p50", 0), 2),
+         round(m27.get("ours_p80", 0), 2),
+         (m27.get("history") or {}).get("scope"),
+         (m27.get("history") or {}).get("size_class"),
+         tuple(round(x, 2) for x in m27.get("implied_p50_range", ())),
+         m27.get("position")),
+        ("mobilization", LOWCONF_LABEL, ["1"],
+         round(80000.0 * (on27["expected_low"] - 10000.0) / pm27, 2),
+         round(80000.0 * (on27["expected_low"] - 10000.0) / pm27
+               / 0.80, 2),
+         "size" if rest27 < 5e5 else "all_sizes",
+         lowconf_size_class(rest27),
+         tuple(round(rest27 * x / (1 - x), 2) for x in (
+             lch27.at("municipal", "mobilization", rest27,
+                      "2025-06-01")["p25"],
+             lch27.at("municipal", "mobilization", rest27,
+                      "2025-06-01")["p75"])),
+         "above"))
+    t27b = Tables.__new__(Tables)
+    t27b.__dict__.update(t27.__dict__)
+    del t27b.__dict__["lowconf"]
+    with pricing_rule(comparables=False):
+        nb27 = estimate(t27b, s27, 4, "municipal", "2025",
+                        target={"date": "2025-06-01"})
+    nl27 = nb27["low_confidence"]["lines"][0]
+    chk("27 bare tables (no history): ours shown, no range, same P50",
+        (nl27.get("history"), "implied_p50_range" in nl27,
+         nb27["expected_low"] == on27["expected_low"]),
+        (None, False, True))
+
     print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
     return ok
 
@@ -3581,18 +4863,25 @@ def main():
     show("discount only, price level held exact (NOT the estimator's error)",
          d_only)
 
-    fp, cov = calibrate_full_path(write=False)
-    show("FULL PATH, in-sample (reads the reference it helped build)", fp)
+    # these two score against the WHOLE low bid, so they run in the
+    # full-total scope (pricing_rule(coverage_scope=False)); the forward
+    # calibration below is the coverage scope's
+    with pricing_rule(coverage_scope=False):
+        fp, cov = calibrate_full_path(write=False)
+    show("FULL PATH, in-sample (reads the reference it helped build; "
+         "full-total scope)", fp)
     print("scoring coverage:", dict(cov))
     print()
-    rows, cov2 = calibrate_out_of_fold(write=False)
+    with pricing_rule(coverage_scope=False):
+        rows, cov2 = calibrate_out_of_fold(write=False)
     show("OUT OF FOLD (leave-one-out; NOT written -- later lettings inform "
-         "each price)", rows)
+         "each price; full-total scope)", rows)
     print("scoring coverage:", dict(cov2))
     print()
     rows_f, cov3 = calibrate_forward()
     show("FORWARD (written): every letting priced only from lettings dated "
-         "before it", rows_f)
+         "before it%s" % ("; COVERED lines vs the covered low bid"
+                          if COVERAGE_SCOPE else ""), rows_f)
     print("scoring coverage:", dict(cov3))
     for r in rows_f:
         if r.get("not_under_rule") == "guard":
@@ -3641,19 +4930,33 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
     An estimate nobody can take apart is an estimate nobody can defend in a bid
     review, so every item prints what happened to it, including the items that
     could not be priced and why.
+
+    Coverage scope: lines src/coverage.py calls 未覆盖 (pumps, generators,
+    prefab bridges, ...) are listed FIRST, are not priced and are not in
+    P50/P80; a `quote` column (or `amount`) gives a line's vendor quote, and
+    once every such line has one a complete total is printed too.  The
+    description is folded as the parser's desc_norm (or give `desc_norm`).
     """
+    try:
+        from parse_bidtabs import norm_desc as _norm_desc
+    except Exception:                                     # noqa: BLE001
+        _norm_desc = _fold_desc
     with open(path, encoding="utf-8-sig", newline="") as f:
         items = []
         for r in csv.DictReader(f):
+            desc = (r.get("description") or "").strip()
             items.append({
                 "item_no": (r.get("item_no") or "").strip(),
-                "description": (r.get("description") or "").strip(),
+                "description": desc,
+                "desc_norm": ((r.get("desc_norm") or "").strip()
+                              or _norm_desc(desc)),
                 "family": (r.get("item_family") or "").strip(),
                 "unit": (r.get("unit") or "").strip(),
                 "quantity": _f(r.get("quantity"), 0.0),
                 "size_bucket": (r.get("size_bucket") or "").strip(),
                 "size_in": _f(r.get("size_in")),
                 "amount": _f(r.get("amount")),
+                "quote": _f(r.get("quote") or r.get("vendor_quote")),
                 "unit_price": _f(r.get("unit_price")),
                 "owner_fixed": (r.get("owner_fixed") or "").strip().lower()
                 in ("1", "true", "yes", "y")})
@@ -3663,6 +4966,7 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
     tab.attach_v2f1f2()
     target = {"date": bid_date, "owner": owner, "work_type": work_type or ""}
     r = estimate(tab, items, n_bidders, market, to_year, target)
+    print_uncovered(r)
 
     print("%-5s %-26s %-8s %12s %12s %14s  %s"
           % ("item", "family", "unit", "quantity", "unit price", "extended",
@@ -3670,6 +4974,9 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
     for t in r["trace"]:
         if t.get("fixed_amount"):
             ext, ps = t["fixed_amount"], "OWNER-SET"
+        elif t.get("uncovered") or t.get("price_key") == "not_covered":
+            ext = t.get("quote")
+            ps = "未覆盖" if t.get("uncovered") else "NOT PRICED"
         else:
             ext = ((t["price"] * t["quantity"])
                    if t["price"] and t["quantity"] else None)
@@ -3681,8 +4988,9 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
                  "; ".join(t["why"])[:72]))
     print()
     print("items priced %d of %d" % (r["priced"], r["n_items"]))
-    print("market total (all-bids level, NO discount)   %18.2f"
-          % r["market_total"])
+    if not r.get("not_covered"):
+        print("market total (all-bids level, NO discount)   %18.2f"
+              % r["market_total"])
     if r.get("fixed_total"):
         print("owner-set amounts (face value, no discount)  %18.2f   [%d items]"
               % (r["fixed_total"], r.get("n_fixed", 0)))
@@ -3691,13 +4999,15 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
         print("competition discount  f(%s) = %.4f   [%s table, %d-bidder bin, "
               "%d lettings]"
               % (n_bidders, d["f"], d["table"], d["bin"], d["lettings"]))
+    cov_note = ("   [COVERED LINES ONLY -- %d 未覆盖 line(s) not in it]"
+                % len(r["uncovered"]) if r.get("uncovered") else "")
     if r["expected_low"] is not None:
-        print("EXPECTED LOW BID                             %18.2f"
-              % r["expected_low"])
+        print("EXPECTED LOW BID                             %18.2f%s"
+              % (r["expected_low"], cov_note))
         if r.get("expected_low_p80"):
             print("NOT-UNDER ESTIMATE (low bid at or below it in 80%% of "
-                  "lettings)  %12.2f   [x%.3f]"
-                  % (r["expected_low_p80"], r["p80_multiplier"]))
+                  "lettings)  %12.2f   [x%.3f]%s"
+                  % (r["expected_low_p80"], r["p80_multiplier"], cov_note))
         for k, lab in (("p50_band", "50% of lettings land in"),
                        ("p80_band", "80% of lettings land in")):
             if r.get(k):
@@ -3705,9 +5015,107 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
         if r.get("calibration_n"):
             print("  interval calibrated on %d real lettings (%s market)"
                   % (r["calibration_n"], r.get("calibration_market")))
+        if r.get("complete_total") is not None:
+            print("COMPLETE TOTAL = covered P50 + quotes %.2f      %18.2f"
+                  % (r["uncovered_quoted_total"], r["complete_total"]))
+            if r.get("complete_total_p80") is not None:
+                print("COMPLETE TOTAL = covered P80 + quotes          %18.2f"
+                      % r["complete_total_p80"])
+    elif r.get("not_covered"):
+        print("NO ESTIMATE: 整体未覆盖 / NOT COVERED AS A WHOLE -- %s"
+              % "; ".join(r.get("not_covered_why") or ()))
+    print_low_confidence(r)
     for w in r["warnings"]:
         print("WARNING: %s" % w)
     return r
+
+
+def print_uncovered(r):
+    """The 未覆盖 block a quote printout opens with (coverage scope)."""
+    unc = r.get("uncovered") or []
+    if not unc:
+        return
+    bar = "=" * 78
+    print(bar)
+    if r.get("not_covered"):
+        print("整体未覆盖 / NOT COVERED AS A WHOLE -- NO P50/P80 IS GIVEN")
+        for w in r.get("not_covered_why") or ():
+            print("  because %s" % w)
+    print("未覆盖 / NOT COVERED: %d of %d lines (%.0f%% of the lines) -- "
+          "需另行询价 (price separately)"
+          % (len(unc), r["n_items"], 100 * r.get("uncovered_share_lines", 0)))
+    print("These are specialty items with almost no comparable bid history. "
+          "They are NOT priced\nand NOT in P50/P80%s."
+          % ("" if r.get("not_covered") else
+             ", which cover the other lines only"))
+    print("  %-6s %-46s %-26s %10s %-5s %14s"
+          % ("item", "description", "class", "quantity", "unit", "quote"))
+    for u in unc:
+        print("  %-6s %-46s %-26s %10s %-5s %14s"
+              % (str(u["item"] or "-")[:6], (u["description"] or "")[:46],
+                 u["class"][:26],
+                 ("%.2f" % u["quantity"]) if u["quantity"] else "-",
+                 (u["unit"] or "")[:5],
+                 ("%.2f" % u["quote"]) if u["quote"] else "需另行询价"))
+    print(bar)
+    print()
+
+
+def print_low_confidence(r):
+    """The 低把握 block of a quote printout (LOWCONF): mobilization and the
+    general-condition LS lines, each with our amount, its share of the P50,
+    the earlier low bidders' share range and the dollar range it implies.
+    The P50/P80 above are not changed by it."""
+    lc = r.get("low_confidence") or {}
+    lines = lc.get("lines") or []
+    if not lines:
+        return
+    bar = "-" * 78
+    print(bar)
+    print("%s -- 动员费 / 一般条件 LS 行，单列显示；上面的 P50/P80 不因此改变"
+          % LOWCONF_LABEL)
+    print("这些行各家报价差别大、我们的单价又不随工程规模变化，金额只作参考；"
+          "下面给出更早开标里\n最低价投标人在这一类上的占比（p25-p75，同规模）"
+          "和它对本单意味着的金额区间。\n区间是参考，不是保证：回测里实际金额"
+          "落在区间内的约三分之一。")
+    for g in lines:
+        print("  [%s] %s  -- items %s"
+              % (g["status"], g["label"],
+                 ", ".join(str(x) for x in g["items"][:6] if x) or "-"))
+        if g.get("ours_p50") is None:
+            print("      ours: market level %.2f (no P50 to place it in)"
+                  % g["ours_market"])
+            continue
+        print("      ours in P50  %14.2f   (%.1f%% of P50; P80 level %s; "
+              "market level %.2f%s)"
+              % (g["ours_p50"], 100 * (g.get("share_of_p50") or 0),
+                 ("%.2f" % g["ours_p80"]) if g.get("ours_p80") else "-",
+                 g["ours_market"],
+                 "; %d line(s) NOT PRICED" % g["unpriced"]
+                 if g["unpriced"] else ""))
+        h = g.get("history")
+        if not h:
+            print("      history: fewer than %d earlier lettings with this "
+                  "class -- no range" % LOWCONF_MIN_LETTINGS)
+            continue
+        lo, hi = g["implied_p50_range"]
+        print("      history      share of contract p25-p75 %.1f%%-%.1f%% "
+              "(median %.1f%%), %d earlier lettings, %s"
+              % (100 * h["p25"], 100 * h["p75"], 100 * h["median"], h["n"],
+                 ("rest of job %s" % LOWCONF_SIZE_LABELS[h["size_class"]])
+                 if h["scope"] == "size" else "all job sizes"))
+        print("      implied      %14.2f  ~ %.2f   (median %.2f)"
+              % (lo, hi, g["implied_p50_median"]))
+        print("      -> %s"
+              % {"above": "ours is ABOVE the historical range (%.1fx its "
+                          "median): the P50 is likely on the high side"
+                          % (g["ours_p50"] / g["implied_p50_median"]),
+                 "below": "ours is BELOW the historical range (%.1fx its "
+                          "median): the P50 is likely on the low side"
+                          % (g["ours_p50"] / g["implied_p50_median"]),
+                 "within": "ours is within the historical range"}[
+                     g["position"]])
+    print(bar)
 
 
 if __name__ == "__main__":
@@ -3720,7 +5128,11 @@ if __name__ == "__main__":
         mk = a[a.index("--market") + 1] if "--market" in a else "municipal"
         yr = a[a.index("--year") + 1] if "--year" in a else None
         bd = a[a.index("--bid-date") + 1] if "--bid-date" in a else None
-        run_schedule(sched, nb, mk, yr, bd)
+        if "--full-scope" in a:
+            with pricing_rule(coverage_scope=False):
+                run_schedule(sched, nb, mk, yr, bd)
+        else:
+            run_schedule(sched, nb, mk, yr, bd)
         sys.exit(0)
     if not _selftest():
         print("\nself-tests failed -- not calibrating")

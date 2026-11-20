@@ -83,10 +83,34 @@ One known non-forward input, as in production's calibrate_forward: the
 quantity-shape table (price_by_quantity_band_family.csv) is the published one.
 The run reports how many test items it touched.
 
+COVERAGE SCOPE (estimate_low_bid.COVERAGE_SCOPE, user decision 2026-11-20).
+  Lines src/coverage.py calls 未覆盖 are not priced; a letting is scored on
+  its covered part: P50 against the low bid minus the low bidder's own
+  amounts on those lines, the 90%-priced rule over the covered lines, the
+  constants fitted on covered training records, and a letting estimate()
+  calls not_covered is not scored ("整体未覆盖").  A sensitivity line
+  deducts each uncovered line's median bidder amount instead (constants
+  refitted on those actuals).  --full-scope scores the old way (every line
+  priced, the whole low bid).
+
+PAIRED MODE  --compare-switch NAME  (NAME = any estimate_low_bid.pricing_rule
+  switch, or the preset round10_core = round 10's MC + E + F1P + T2 + D, all
+  five OFF in production until Registration 5 confirms them).  B = the switch
+  OFF, the variant = the switch ON, every other switch as production runs
+  it; both scored on the SAME held-out lettings (the decoy, or with
+  --confirm the locked set) and compared paired: each metric with its own
+  90% interval and the difference (variant - B) with a 90% interval from
+  resampling file groups; overall, erosion/drainage, other work, and by
+  year (the output of the retired p50fix/confirm/v2d1w36_eval.py).  With
+  --decoy it is the rehearsal (no log line); with --confirm it logs before
+  and after scoring exactly as a single --confirm does.
+
 Usage:
     .venv/bin/python src/holdout_eval.py --selftest
     .venv/bin/python src/holdout_eval.py --decoy 7
+    .venv/bin/python src/holdout_eval.py --decoy 7 --compare-switch round10_core
     .venv/bin/python src/holdout_eval.py --confirm "确认 <决定>（登记在 reports/<file>.md）"
+    .venv/bin/python src/holdout_eval.py --compare-switch round10_core --confirm "确认 <决定>（登记在 ...）"
 """
 import argparse
 import bisect
@@ -95,6 +119,7 @@ import contextlib
 import csv
 import datetime
 import hashlib
+import inspect
 import io
 import json
 import math
@@ -358,7 +383,8 @@ def build_lettings(pool, keep):
         lambda: {"bt": collections.defaultdict(float), "win": set(),
                  "sched": {}, "mk": "", "rows": collections.defaultdict(list),
                  "prices": collections.defaultdict(list), "wamt": {},
-                 "yr": collections.Counter()})
+                 "yr": collections.Counter(), "bamt": {},
+                 "nb": collections.defaultdict(set)})
     for mk, pk, fam, un, sz, q, u, w, b, dn, ow, yr in pool:
         if q is None or q <= 0:
             continue
@@ -369,6 +395,11 @@ def build_lettings(pool, keep):
         d["bt"][b] += q * u
         k = (fam, un, sz, e.qty_shape.band_of(q), dn)
         d["prices"][k].append(u)
+        if e.IDENTICAL_BID_OWNER_SET:
+            d["nb"][k].add(b)                  # round 10 D: distinct bidders
+        if e.COVERAGE_SCOPE and e.line_coverage(dn, fam, un):
+            ba = d["bamt"].setdefault(k, collections.defaultdict(float))
+            ba[b] += q * u                 # every bidder's amount (sensitivity)
         if w:
             d["win"].add(b)
             d["sched"][k] = d["sched"].get(k, 0.0) + q
@@ -392,15 +423,19 @@ def population_reason(d):
 
 def schedule_of(d, pk=None, lsz=None):
     """calibrate_forward's items for one letting (owner-set money at face
-    value), each with its schedule key and its own size (F1)."""
+    value -- estimate_low_bid.schedule_owner_set, round 10's D included when
+    its switch is on), each with its schedule key and its own size (F1)."""
     items, keys = [], []
     lsz = lsz or {}
     for k in d["sched"]:
         fam, un, sz, bd, dn = k
-        if e.is_owner_fixed(d["prices"].get(k, ()), fam, un, dn):
+        fx_k, by_d = e.schedule_owner_set(d, k)
+        if fx_k:
             items.append({"family": fam, "unit": un, "size_bucket": sz,
                           "quantity": d["sched"][k], "description": dn,
                           "amount": d["wamt"].get(k, 0.0), "key": k})
+            if by_d:
+                items[-1]["identical_bids"] = True
             keys.append(k)
             continue
         for qr in d["rows"][k]:
@@ -412,11 +447,12 @@ def schedule_of(d, pk=None, lsz=None):
 
 
 def price_forward(pks, lets, avail, tab, kinds, tok_inv, findex, fdisc, cov, audit=None,
-                  lsz=None, size_cells=None, pools=None, targets=None):
+                  lsz=None, size_cells=None, pools=None, targets=None, muni_kinds=None):
     """estimate() on ForwardTables at each letting's own date, calibrate_forward's
     loop line for line.  Returns {key: record} for the lettings that pass.
     lsz / size_cells: F1's line sizes and size cells; pools: V2's comparables
-    pools; targets: a held-out letting's own owner and work type."""
+    pools; targets: a held-out letting's own owner and work type; muni_kinds:
+    MC's municipal-only cells (training rows only)."""
     out = {}
     ft_d, ft = None, None
     for pk in sorted(pks, key=lambda k: (avail.get(k, e.NEVER), k)):
@@ -434,20 +470,33 @@ def price_forward(pks, lets, avail, tab, kinds, tok_inv, findex, fdisc, cov, aud
         if D != ft_d:
             pooled, muni = fdisc.at(D)
             ft_d, ft = D, e.ForwardTables(tab, kinds, tok_inv, D, findex.at(D),
-                                          pooled, muni, size_cells, pools)
+                                          pooled, muni, size_cells, pools,
+                                          muni_kinds=muni_kinds)
         tgt = (targets or {}).get(pk) or {"key": pk}
         r = e.estimate(ft, items, n, mk, yr or None, target=tgt)
+        if r.get("not_covered"):
+            cov[pk] = "not_covered"
+            continue
         if r.get("expected_low") is None:
             cov[pk] = "no_estimate"
             continue
         ok = collections.defaultdict(lambda: True)
+        unc = set()
         for k, t in zip(keys, r["trace"]):
+            if t.get("uncovered"):
+                unc.add(k)
+                continue
             if not (t.get("fixed_amount") or t.get("price")):
                 ok[k] = False
-        pr = sum(1 for k in sched if ok[k])
+        ck = [k for k in sched if k not in unc]          # the covered lines
+        pr = sum(1 for k in ck if ok[k])
         tot, fixed = r["market_total"], r["fixed_total"]
-        if pr < 0.9 * len(sched) or tot <= 0:
+        if pr < 0.9 * len(ck) or tot <= 0:
             cov[pk] = "under_90pct_priced"
+            continue
+        cv = e.covered_actual(d, unc, wt)
+        if cv is None:
+            cov[pk] = "no_covered_low"
             continue
         fa = r["discount"]["f"]
         cov[pk] = "scored"
@@ -455,12 +504,15 @@ def price_forward(pks, lets, avail, tab, kinds, tok_inv, findex, fdisc, cov, aud
         if audit is not None:
             audit.priced(pk, D, r, size_cells)
         out[pk] = {"project_key": pk, "market": mk, "date": D, "n_bidders": n,
-                   "bid_part": r["bid_part"], "owner_fixed": fixed, "actual_low": wt,
+                   "bid_part": r["bid_part"], "owner_fixed": fixed,
+                   "actual_low": cv["actual_low"],
                    "n_items": len(sched), "bid_part_lines": tot * fa,
                    "cmp": cm.get("cmp"), "n_comps": cm.get("n_comps"),
                    "shape_items": sum(1 for t in r["trace"] if t.get("qty_factor")),
                    "shape_dollars": sum((t.get("price") or 0) * (t.get("quantity") or 0)
                                         for t in r["trace"] if t.get("qty_factor"))}
+        if e.COVERAGE_SCOPE:
+            out[pk].update(cv)
     if audit is not None:
         audit.cur_D = None
     return out
@@ -529,6 +581,13 @@ def evaluate(panel, tab, base_index, excluded, test_keys, meta, audit=None):
     out["train_pool_rows"] = len(train_pool)
     step("训练参考格：%d 行价格（已去掉留出文件）" % len(train_pool))
     cells = e._reference_cells(train_pool, train_sizes, avail)
+    # MC: municipal-only cells from the training rows only
+    muni_kinds, muni_cells = e.muni_forward_kinds(train_pool, avail)
+    if audit is not None and muni_cells is not None:
+        muni_kinds = {kd: _AuditKindMuni(muni_cells[kd], kd, e.MUNI_CELLS_NMIN, avail, audit)
+                      for kd in ("tok", "band", "fam")}
+        audit.static_cells(muni_cells)
+    out["muni_cells"] = muni_cells
     # V2: the comparables pool from the training rows only
     pools = ({MARKET: e.comparables.Pool(train_pool, avail, MARKET, e.CLEAN, e)}
              if e.COMPARABLES_BLEND else None)
@@ -577,7 +636,8 @@ def evaluate(panel, tab, base_index, excluded, test_keys, meta, audit=None):
                     "work_type": wt_t.get(pk, "")} for pk in test_ids}
     cov = {}
     recs = price_forward(train_ids + test_ids, lets, avail, tab, kinds, cells["tok_inv"],
-                         findex, fdisc, cov, audit, lsz, cells["size"], pools, targets)
+                         findex, fdisc, cov, audit, lsz, cells["size"], pools, targets,
+                         muni_kinds)
     for pk in train_ids:
         out["cov_train"][cov[pk]] += 1
     train_recs = sorted((recs[pk] for pk in train_ids if pk in recs),
@@ -605,6 +665,29 @@ def evaluate(panel, tab, base_index, excluded, test_keys, meta, audit=None):
     out.update({"train_recs": train_recs, "tests": tests, "const": const,
                 "n_train_lettings": len(train_ids), "n_test_lettings": len(test_ids),
                 "train_scored": len(train_recs)})
+    out["tests_med"] = sensitivity_tests(train_recs, tests) if e.COVERAGE_SCOPE else None
+    return out
+
+
+def sensitivity_tests(train_recs, tests):
+    """Coverage scope, sensitivity version: every actual deducts each
+    uncovered line's MEDIAN bidder amount (actual_low_med) instead of the low
+    bidder's own; constants refitted on the training records so deducted.
+    Lettings without a positive actual_low_med drop out of both sides."""
+    def med(r):
+        return dict(r, actual_low=r["actual_low_med"])
+    tr = [med(r) for r in train_recs if r.get("actual_low_med")]
+    const = Constants(tr, e.GUARD_GAMMA[MARKET])
+    out = []
+    for r in tests:
+        if not r.get("actual_low_med"):
+            continue
+        c = const.at(r["date"])
+        if c["p"] is None:
+            continue
+        p50 = (r["bid_part"] * c["lc"] + r["owner_fixed"]) / r["actual_low_med"]
+        out.append(dict(r, actual_low=r["actual_low_med"], centring=c["lc"],
+                        alpha=c["alpha"], divisor=c["p"], p50=p50, p80=p50 / c["p"]))
     return out
 
 
@@ -751,7 +834,9 @@ def coverage_text(cov):
              "under_90pct_priced": "能定价的清单项不足 90%",
              "under_%d_prior_lettings" % e.FORWARD_MIN_PRIOR:
                  "之前的训练招标不足 %d 个，没有常数" % e.FORWARD_MIN_PRIOR,
-             "no_priced_rows": "面板里没有可用价格行"}
+             "no_priced_rows": "面板里没有可用价格行",
+             "not_covered": "整体未覆盖（不打分）",
+             "no_covered_low": "扣掉未覆盖子目后低价不为正"}
     return "，".join("%s %d" % (names.get(k, k), v) for k, v in
                     sorted(cov.items(), key=lambda kv: (kv[0] != "scored", kv[0])))
 
@@ -831,8 +916,12 @@ def draw_population(panel, tab, base):
     way keeps a seed naming the same decoy files across pricing changes, so
     decoy runs before and after a change score the same lettings (F1's
     no-sized-cell rule and F2's typical line move a few lettings in or out of
-    the scored set, which would otherwise reshuffle every year's draw)."""
-    with e.pricing_rule(size_fallback=False, removal_identity=False, comparables=False):
+    the scored set, which would otherwise reshuffle every year's draw).
+    EVERY pricing_rule switch is off here -- the coverage scope (2026-11-20)
+    and any switch added later included -- so the population stays that
+    rule's (T1 acts on TxDOT only and never reaches a municipal letting)."""
+    off = {p: False for p in inspect.signature(e.pricing_rule).parameters}
+    with e.pricing_rule(**off):
         st0 = evaluate(panel, tab, base, make_excluded(panel), set(), lambda pk: (pk, False))
     return st0["train_recs"]
 
@@ -869,6 +958,7 @@ def run_decoy_core(seed, panel, tab, base, decoy=None):
 
 def run_decoy(seed, json_path=None):
     say("【演练 · 诱饵集，种子 %d】这不是锁定的测试集；不写访问日志。" % seed)
+    say(scope_text())
     fp0 = fingerprint()
     step("读取 master_panel（锁定测试集的行读到就丢掉）")
     panel = Panel()
@@ -890,11 +980,15 @@ def run_decoy(seed, json_path=None):
     say("训练：%d 个市政招标向前打出分（不留诱饵时 %d 个）。"
         % (st2["train_scored"], st1["train_scored"]))
     say("诱饵招标：%s。" % coverage_text(st2["cov_test"]))
+    if e.COVERAGE_SCOPE:
+        say("覆盖口径：%s。" % scope_counts(st2["tests"], st2["cov_test"]))
     say(shape_text(st2["tests"], "诱饵"))
     say()
     say(table(summary))
     say()
     say("总述（诱饵集）：" + headline(summary))
+    if sensitivity_line(st2):
+        say(sensitivity_line(st2))
     say()
     say(GLOSSARY)
     if changed:
@@ -908,9 +1002,331 @@ def run_decoy(seed, json_path=None):
                    "coverage_train": dict(st2["cov_train"]),
                    "train_scored": st2["train_scored"],
                    "summary": summary, "per_letting": st2["tests"],
+                   "coverage_scope": bool(e.COVERAGE_SCOPE),
+                   "sensitivity_per_letting": st2.get("tests_med"),
                    "data_changed_during_run": changed}, f, ensure_ascii=False, indent=1,
                   default=str)
     say("\n逐个诱饵招标的结果已写入 %s" % os.path.relpath(json_path, ROOT))
+    return 0 if not changed else 1
+
+
+# ---------------------------------------------------------------------------
+# paired mode: B = one pricing_rule switch OFF, the variant = it ON
+def switch_names():
+    """The switches estimate_low_bid.pricing_rule() takes."""
+    return list(inspect.signature(e.pricing_rule).parameters)
+
+
+def rule_kwargs(switch=None, on=True, full_scope=False):
+    """pricing_rule() keywords: the compared switch set, the coverage scope
+    off with --full-scope; every other switch as production runs it."""
+    kw = {}
+    if full_scope:
+        kw["coverage_scope"] = False
+    if switch is not None:
+        kw[switch] = on
+    return kw
+
+
+def scope_text(full_scope=False):
+    if full_scope or not e.COVERAGE_SCOPE:
+        return "评分范围：全部子目、整张标的最低价（旧口径，--full-scope）"
+    return ("评分范围：覆盖部分——未覆盖子目不定价，实际值 = 最低价 − 中标人自己在未覆盖子目上的金额；"
+            "整体未覆盖的招标不打分")
+
+
+def scope_counts(tests, cov):
+    n_u = sum(1 for r in tests if r.get("n_uncovered_lines"))
+    return "含未覆盖子目而照常打分 %d 个，整体未覆盖不打分 %d 个" % (n_u, cov.get("not_covered", 0))
+
+
+def mult(recs):
+    return statistics.median([r["p80"] / r["p50"] for r in recs]) if recs else None
+
+
+# judged first (P80 under, median overshoot), then the reported metrics
+PMETRICS = (("under", "P80 低于低价", "p"), ("overshoot", "高估时中位超出", "p"),
+            ("mean_abs_log", "平均 \\|ln\\|", "r"), ("p50_abs", "P50 误差中位", "p"),
+            ("in_band", "P80 在[1.00,1.13]", "p"), ("mult", "P80 乘数中位", "r"),
+            ("p50_ratio", "P50 中位比", "r"))
+SPLITS = (("全部", lambda r: True), ("侵蚀/排水", lambda r: r["erosion_drainage"]),
+          ("其他工程", lambda r: not r["erosion_drainage"]))
+
+
+def _file_groups(recs):
+    g = collections.defaultdict(list)
+    for r in recs:
+        g[r["group"]].append(r)
+    return [g[k] for k in sorted(g)]
+
+
+def level_ci(recs, label):
+    """One method's own 90% intervals: bootstrap() (file groups, its seed and
+    label: B's equal what a single run prints), plus the P80 multiplier."""
+    ci = dict(bootstrap(recs, label))
+    gl = _file_groups(recs)
+    rng = random.Random("%d:mult:%s" % (BOOT_SEED, label))
+    draws = []
+    for _ in range(BOOT_N):
+        s = []
+        for _ in range(len(gl)):
+            s.extend(gl[rng.randrange(len(gl))])
+        draws.append(mult(s))
+    a = (1 - CI_LEVEL) / 2
+    ci["mult"] = (_pct(draws, a), _pct(draws, 1 - a))
+    return ci
+
+
+def paired(b_tests, v_tests, label):
+    """variant - B on the same lettings; 90% intervals resampling FILE GROUPS
+    (pairs stay together)."""
+    bv = {r["project_key"]: r for r in b_tests}
+    pairs = [(bv[r["project_key"]], r) for r in v_tests]
+    groups = collections.defaultdict(list)
+    for b, v in pairs:
+        groups[b["group"]].append((b, v))
+    gl = [groups[g] for g in sorted(groups)]
+
+    def stat(ps):
+        mb, mv = metrics([b for b, _ in ps]), metrics([v for _, v in ps])
+        d = {k: mv[k] - mb[k] for k in ("under", "in_band", "mean_abs_log", "p50_abs",
+                                          "p50_ratio")}
+        d["mult"] = mult([v for _, v in ps]) - mult([b for b, _ in ps])
+        d["overshoot"] = (mv["overshoot"] - mb["overshoot"]
+                          if mv["overshoot"] is not None and mb["overshoot"] is not None
+                          else None)
+        return d
+    point = stat(pairs)
+    rng = random.Random("%d:paired:%s" % (BOOT_SEED, label))
+    draws = collections.defaultdict(list)
+    for _ in range(BOOT_N):
+        s = []
+        for _ in range(len(gl)):
+            s.extend(gl[rng.randrange(len(gl))])
+        for k, v in stat(s).items():
+            if v is not None:
+                draws[k].append(v)
+    a = (1 - CI_LEVEL) / 2
+    return {k: {"diff": point[k], "lo": _pct(draws[k], a), "hi": _pct(draws[k], 1 - a)}
+            for k in point}
+
+
+def side_by_side(b_tests, v_tests, label="全部"):
+    if not b_tests:
+        return None
+    mb, mv = metrics(b_tests), metrics(v_tests)
+    mb["mult"], mv["mult"] = mult(b_tests), mult(v_tests)
+    return {"label": label, "n": mb["n"], "B": mb, "V": mv,
+            "ci_B": level_ci(b_tests, label), "ci_V": level_ci(v_tests, label),
+            "paired": paired(b_tests, v_tests, label)}
+
+
+def splits(b_tests, v_tests):
+    """全部, erosion/drainage, other: B and the variant on the lettings BOTH
+    score (paired); lettings only one of them scores are counted."""
+    vv = {r["project_key"]: r for r in v_tests}
+    bk = {r["project_key"] for r in b_tests}
+    common = [r for r in b_tests if r["project_key"] in vv]
+    out = {}
+    for label, keep in SPLITS:
+        bt = [r for r in common if keep(r)]
+        out[label] = side_by_side(bt, [vv[r["project_key"]] for r in bt], label)
+    out["_sets"] = {"B": len(bk), "V": len(vv), "both": len(common),
+                    "only_B": sorted(bk - set(vv)), "only_V": sorted(set(vv) - bk)}
+    return out
+
+
+def _fmt(v, kind, ci=None):
+    if v is None:
+        return "-"
+    if kind == "p":
+        s = "%.1f%%" % (100 * v)
+        if ci and ci[0] is not None:
+            s += " [%.1f, %.1f]" % (100 * ci[0], 100 * ci[1])
+    else:
+        s = "%.3f" % v
+        if ci and ci[0] is not None:
+            s += " [%.3f, %.3f]" % (ci[0], ci[1])
+    return s
+
+
+def ptable(sbs, vname):
+    if sbs is None:
+        return "（这一组没有打出分的招标）"
+    L = ["| 指标 | B（%s 关）[90%% 区间] | 变体（%s 开）[90%% 区间] | 差（变体 − B） | 差的 90%% 区间 |"
+         % (vname, vname), "|---|---|---|---|---|"]
+    for k, name, kind in PMETRICS:
+        d = sbs["paired"].get(k)
+        b = _fmt(sbs["B"].get(k), kind, sbs["ci_B"].get(k))
+        v = _fmt(sbs["V"].get(k), kind, sbs["ci_V"].get(k))
+        if not d or d["diff"] is None or d["lo"] is None:
+            L.append("| %s | %s | %s | - | - |" % (name, b, v))
+        elif kind == "p":
+            L.append("| %s | %s | %s | %+.1f 点 | %+.1f ~ %+.1f 点 |" % (
+                name, b, v, 100 * d["diff"], 100 * d["lo"], 100 * d["hi"]))
+        else:
+            L.append("| %s | %s | %s | %+.3f | %+.3f ~ %+.3f |" % (
+                name, b, v, d["diff"], d["lo"], d["hi"]))
+    L.append("（%s，n=%d；方括号和差的区间都是 90%% 区间：按文件组有放回重抽 %d 次，配对）"
+             % (sbs.get("label", "全部"), sbs["n"], BOOT_N))
+    return "\n".join(L)
+
+
+def pheadline(sbs, vname):
+    if sbs is None:
+        return "没有两者都打出分的招标"
+    b, v, p = sbs["B"], sbs["V"], sbs["paired"]
+    n = sbs["n"]
+
+    def pc(x):
+        return "-" if x is None else "%.1f%%" % (100 * x)
+
+    def dp(k):
+        d = p.get(k)
+        if not d or d["diff"] is None or d["lo"] is None:
+            return "-"
+        return "%+.1f 点 [%+.1f, %+.1f]" % (100 * d["diff"], 100 * d["lo"], 100 * d["hi"])
+    return ("n=%d；B（%s 关）：P80 低于低价 %d/%d=%.1f%%，高估中位超出 %s，平均|ln| %.3f，"
+            "误差中位 %.1f%%，带内 %.1f%%，乘数 %.3f；变体（%s 开）：低于 %d/%d=%.1f%%，"
+            "高估中位超出 %s，平均|ln| %.3f，误差中位 %.1f%%，带内 %.1f%%，乘数 %.3f；"
+            "低估差 %s，高估中位超出差 %s，平均|ln| 差 %+.3f [%+.3f, %+.3f]，带内差 %s" % (
+                n, vname, round(b["under"] * n), n, 100 * b["under"], pc(b["overshoot"]),
+                b["mean_abs_log"], 100 * b["p50_abs"], 100 * b["in_band"], b["mult"], vname,
+                round(v["under"] * n), n, 100 * v["under"], pc(v["overshoot"]),
+                v["mean_abs_log"], 100 * v["p50_abs"], 100 * v["in_band"], v["mult"],
+                dp("under"), dp("overshoot"), p["mean_abs_log"]["diff"],
+                p["mean_abs_log"]["lo"] if p["mean_abs_log"]["lo"] is not None else 0.0,
+                p["mean_abs_log"]["hi"] if p["mean_abs_log"]["hi"] is not None else 0.0,
+                dp("in_band")))
+
+
+def by_year(b_tests, v_tests):
+    rows = []
+    vv = {r["project_key"]: r for r in v_tests}
+    bt_all = [r for r in b_tests if r["project_key"] in vv]
+    for y in sorted({r["year"] for r in bt_all}):
+        bt = [r for r in bt_all if r["year"] == y]
+        vt = [vv[r["project_key"]] for r in bt]
+        mb, mv = metrics(bt), metrics(vt)
+        rows.append("| %s | %d | %s / %s | %s / %s | %s / %s | %.3f / %.3f | %.3f / %.3f |" % (
+            y, len(bt), _fmt(mb["under"], "p"), _fmt(mv["under"], "p"),
+            _fmt(mb["overshoot"], "p"), _fmt(mv["overshoot"], "p"), _fmt(mb["in_band"], "p"),
+            _fmt(mv["in_band"], "p"), mb["mean_abs_log"], mv["mean_abs_log"], mult(bt),
+            mult(vt)))
+    return "\n".join(["| 年份 | n | P80 低估 B / 变体 | 高估中位超出 B / 变体 | 带内 B / 变体 | "
+                      "平均 \\|ln\\| B / 变体 | 乘数 B / 变体 |",
+                      "|---|---|---|---|---|---|---|"] + rows)
+
+
+def sets_text(S, show_keys):
+    s = S["_sets"]
+    t = ("B 打出分 %d 个，变体打出分 %d 个，两者都打出分 %d 个（表里都是这 %d 个，配对）"
+         % (s["B"], s["V"], s["both"], s["both"]))
+    if s["only_B"] or s["only_V"]:
+        t += "；只有 B 打出分 %d 个，只有变体打出分 %d 个" % (len(s["only_B"]), len(s["only_V"]))
+        if show_keys:
+            t += "（只有 B：%s；只有变体：%s）" % (s["only_B"], s["only_V"])
+    return t + "。"
+
+
+def print_paired(S, b_tests, v_tests, vname):
+    say(ptable(S["全部"], vname))
+    for label, _ in SPLITS[1:]:
+        say("\n%s：" % label)
+        say(ptable(S[label], vname))
+    say()
+    say(by_year(b_tests, v_tests))
+
+
+def sensitivity_line(res, who=""):
+    tm = res.get("tests_med")
+    if tm is None:
+        return ""
+    if not tm:
+        return "敏感性（按中位投标人扣减）%s：没有打出分的招标" % who
+    m = metrics(tm)
+    n_u = sum(1 for r in tm if r.get("n_uncovered_lines"))
+    return ("敏感性（未覆盖子目按每项的中位投标人金额扣减，常数随之重拟合）%s：n=%d（其中含未覆盖子目 %d 个）；"
+            "P80 低于低价 %.1f%%，高估中位超出 %s，P50 误差中位 %.1f%%"
+            % (who, m["n"], n_u, 100 * m["under"],
+               "-" if m["overshoot"] is None else "%.1f%%" % (100 * m["overshoot"]),
+               100 * m["p50_abs"]))
+
+
+def run_compare_core(panel, tab, base, excluded, test_keys, meta, switch, full_scope=False):
+    """B and the variant on the same held-out lettings."""
+    step("B：%s 关（其余开关照生产）" % switch)
+    with e.pricing_rule(**rule_kwargs(switch, False, full_scope)):
+        resB = evaluate(panel, tab, base, excluded, test_keys, meta)
+    step("变体：%s 开" % switch)
+    with e.pricing_rule(**rule_kwargs(switch, True, full_scope)):
+        resV = evaluate(panel, tab, base, excluded, test_keys, meta)
+    return resB, resV, splits(resB["tests"], resV["tests"])
+
+
+def check_switch(switch, full_scope=False):
+    names = switch_names()
+    if switch not in names:
+        say("拒绝运行：--compare-switch %r 不是 estimate_low_bid.pricing_rule() 的开关（现有：%s）。"
+            % (switch, ", ".join(names)))
+        return False
+    if full_scope and switch == "coverage_scope":
+        say("拒绝运行：--full-scope 和 --compare-switch coverage_scope 不能一起用。")
+        return False
+    return True
+
+
+def run_compare_decoy(seed, switch, json_path=None, full_scope=False):
+    if not check_switch(switch, full_scope):
+        return 2
+    say("【演练 · 诱饵集，种子 %d · 配对：B = %s 关，变体 = %s 开】不是锁定的测试集；不写访问日志。"
+        % (seed, switch, switch))
+    say(scope_text(full_scope))
+    fp0 = fingerprint()
+    step("读取 master_panel（锁定测试集的行读到就丢掉）")
+    panel = Panel()
+    tab = e.Tables()
+    base = e._ForwardIndex(panel.avail)
+    step("抽诱饵（固定的抽样池：所有开关关闭时向前打出分的训练招标）")
+    decoy = draw_decoy(seed, panel, draw_population(panel, tab, base))
+    excluded = make_excluded(panel, decoy["files"])
+    test_keys = {pk for pk in panel.avail if _file_of(pk) in decoy["files"]}
+    resB, resV, S = run_compare_core(panel, tab, base, excluded, test_keys,
+                                     decoy_meta(decoy), switch, full_scope)
+    changed = fingerprint() != fp0
+    say("\n=== 诱饵集（种子 %d）：B（%s 关）和变体（%s 开）并排，同一批诱饵招标，配对 ==="
+        % (seed, switch, switch))
+    say("诱饵：%d 组，%d 个文件。B 的诱饵招标：%s；变体：%s。" % (
+        len(decoy["groups"]), len(decoy["files"]), coverage_text(resB["cov_test"]),
+        coverage_text(resV["cov_test"])))
+    say("训练端打出分：B %d 个，变体 %d 个。" % (resB["train_scored"], resV["train_scored"]))
+    if not full_scope and e.COVERAGE_SCOPE:
+        say("覆盖口径：B %s；变体 %s。" % (scope_counts(resB["tests"], resB["cov_test"]),
+                                       scope_counts(resV["tests"], resV["cov_test"])))
+    say(sets_text(S, True))
+    say()
+    print_paired(S, resB["tests"], resV["tests"], switch)
+    say("\n总述（诱饵集）：" + pheadline(S["全部"], switch))
+    for res, who in ((resB, "B"), (resV, "变体")):
+        t = sensitivity_line(res, who)
+        if t:
+            say(t)
+    if changed:
+        say("\n警告：运行期间 data/clean 的输入文件变了，这次结果不可信。")
+    json_path = json_path or os.path.join(SCRATCH, "decoy_compare_%s_%d.json" % (switch, seed))
+    os.makedirs(os.path.dirname(json_path), exist_ok=True)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump({"mode": "decoy_compare", "seed": seed, "switch": switch,
+                   "full_scope": bool(full_scope),
+                   "decoy": {"groups": decoy["groups"], "files": sorted(decoy["files"])},
+                   "coverage_test_B": dict(resB["cov_test"]),
+                   "coverage_test_V": dict(resV["cov_test"]),
+                   "train_scored_B": resB["train_scored"], "train_scored_V": resV["train_scored"],
+                   "splits": S, "per_letting_B": resB["tests"], "per_letting_V": resV["tests"],
+                   "sensitivity_B": resB.get("tests_med"), "sensitivity_V": resV.get("tests_med"),
+                   "data_changed_during_run": changed}, f, ensure_ascii=False, indent=1,
+                  default=str)
+    say("\n逐个诱饵招标（B 和变体）已写入 %s" % os.path.relpath(json_path, ROOT))
     return 0 if not changed else 1
 
 
@@ -996,10 +1412,16 @@ def previous_openings():
                 if "holdout_eval --confirm 开始" in (r.get("action") or "")]
 
 
-def run_confirm(text, allow_pre_rebuild=False, per_letting=False, out_dir=None):
+def run_confirm(text, allow_pre_rebuild=False, per_letting=False, out_dir=None,
+                compare=None, full_scope=False):
     """Score the locked set.  Returns {"code": exit code, "tests": scored
-    lettings or None}; the selftest rehearses it with a decoy standing in."""
+    lettings or None}; the selftest rehearses it with a decoy standing in.
+    compare: a pricing_rule switch -> the paired mode (B = it off, the
+    variant = it on; "vtests" holds the variant's lettings).  full_scope:
+    the old full-total scope."""
     text = (text or "").strip()
+    if compare is not None and not check_switch(compare, full_scope):
+        return {"code": 2, "tests": None}
     regs = registration_files(text)
     if not text or not regs:
         say("拒绝运行：--confirm 必须写清楚这次要确认的决定，以及它事先登记在哪个文件里"
@@ -1011,6 +1433,9 @@ def run_confirm(text, allow_pre_rebuild=False, per_letting=False, out_dir=None):
     prev = previous_openings()
     say("【锁定测试集】这次运行会打开它，并写入 %s。" % os.path.relpath(ph.LOG, ROOT))
     say("要确认的决定：%s" % text)
+    if compare is not None:
+        say("配对模式：B = %s 关，变体 = %s 开（其余开关照生产）。" % (compare, compare))
+    say(scope_text(full_scope))
     for r in regs:
         say("登记文件：%s（md5 %s，修改于 %s）" % (r["path"], r["md5"][:10], r["modified"]))
     say("此前用本脚本打开过 %d 次（日志里的行）。" % len(prev))
@@ -1028,6 +1453,12 @@ def run_confirm(text, allow_pre_rebuild=False, per_letting=False, out_dir=None):
         _md5_short(os.path.abspath(__file__)), _md5_short(os.path.join(ROOT, "src",
                                                                          "estimate_low_bid.py")))
     flags = []
+    if compare is not None:
+        flags.append("配对：B = %s 关 / 变体 = %s 开（--compare-switch）" % (compare, compare))
+    if full_scope:
+        flags.append("旧口径：全部子目、整张最低价（--full-scope）")
+    elif e.COVERAGE_SCOPE:
+        flags.append("覆盖口径（扣掉未覆盖子目）")
     if st["pre_rebuild"]:
         flags.append("重建前的数据（--allow-pre-rebuild）")
     if per_letting:
@@ -1058,14 +1489,25 @@ def run_confirm(text, allow_pre_rebuild=False, per_letting=False, out_dir=None):
             if f in reg:
                 return reg[f]
             return f, bool({panel.work.get(pk, "")} & ED_TYPES)
-        res = evaluate(panel, tab, base, excluded, set(panel.real), meta)
+        resV = S = None
+        if compare is None:
+            with (e.pricing_rule(**rule_kwargs(None, True, True)) if full_scope
+                  else contextlib.nullcontext()):
+                res = evaluate(panel, tab, base, excluded, set(panel.real), meta)
+        else:
+            res, resV, S = run_compare_core(panel, tab, base, excluded, set(panel.real),
+                                            meta, compare, full_scope)
         summary = summarize(res["tests"])
         changed = fingerprint() != fp0
     except BaseException as ex:
         log_row("holdout_eval --confirm 中断", decision, "出错：%s: %s" % (type(ex).__name__, ex))
         raise
-    head = headline(summary)
+    head = headline(summary) if compare is None else pheadline(S["全部"], compare)
     result = head + "；覆盖：" + coverage_text(res["cov_test"])
+    if compare is not None:
+        s_ = S["_sets"]
+        result += "；变体覆盖：%s；两者都打出分 %d 个（只有 B %d，只有变体 %d）" % (
+            coverage_text(resV["cov_test"]), s_["both"], len(s_["only_B"]), len(s_["only_V"]))
     if changed:
         result = "运行中 data/clean 被改动，结果作废。" + result
     log_row("holdout_eval --confirm 完成", decision, result)
@@ -1079,19 +1521,34 @@ def run_confirm(text, allow_pre_rebuild=False, per_letting=False, out_dir=None):
         say("注意：%d 个键标成 public_test 但登记表里没有它们的文件，也按留出处理。"
             % len(panel.stray_public_test))
     say("训练：%d 个市政招标向前打出分。" % res["train_scored"])
+    if compare is not None:
+        say("变体留出招标：%s。变体训练端：%d 个。" % (coverage_text(resV["cov_test"]),
+                                          resV["train_scored"]))
+        say(sets_text(S, per_letting))
+    if e.COVERAGE_SCOPE and not full_scope:
+        say("覆盖口径：%s。" % scope_counts(res["tests"], res["cov_test"]))
     say(shape_text(res["tests"], "留出"))
     say()
-    say(table(summary))
+    if compare is None:
+        say(table(summary))
+    else:
+        print_paired(S, res["tests"], resV["tests"], compare)
     say()
     say("总述：" + head)
+    for rr, who in ((res, "" if compare is None else "B"), (resV, "变体")):
+        if rr is not None and sensitivity_line(rr, who):
+            say(sensitivity_line(rr, who))
     say()
     say(GLOSSARY)
     if per_letting:
         say("\n逐个招标：")
+        vv = {r["project_key"]: r for r in (resV["tests"] if resV else [])}
         for r in sorted(res["tests"], key=lambda r: (r["date"], r["project_key"])):
-            say("  %s  %s  %s  P50/低价 %.3f  P80/低价 %.3f" % (
+            v = vv.get(r["project_key"])
+            say("  %s  %s  %s  P50/低价 %.3f  P80/低价 %.3f%s" % (
                 r["date"], "侵蚀/排水" if r["erosion_drainage"] else "其他",
-                r["project_key"], r["p50"], r["p80"]))
+                r["project_key"], r["p50"], r["p80"],
+                ("  | 变体 %.3f %.3f" % (v["p50"], v["p80"])) if v else ""))
     if changed:
         say("\n警告：运行期间 data/clean 的输入文件变了（可能有人在重建），这次结果作废。")
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1099,14 +1556,24 @@ def run_confirm(text, allow_pre_rebuild=False, per_letting=False, out_dir=None):
     path = os.path.join(out_dir, "confirm_%s.json" % stamp)
     os.makedirs(out_dir, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"mode": "confirm", "confirm": text, "registration": regs,
+        if S is not None and not per_letting:
+            S = dict(S, _sets={k: (v if isinstance(v, int) else len(v))
+                               for k, v in S["_sets"].items()})
+        json.dump({"mode": "confirm" if compare is None else "confirm_compare",
+                   "switch": compare, "full_scope": bool(full_scope),
+                   "confirm": text, "registration": regs,
                    "data_state": st, "coverage_test": dict(res["cov_test"]),
+                   "coverage_test_V": dict(resV["cov_test"]) if resV else None,
                    "train_scored": res["train_scored"], "summary": summary,
-                   "per_letting": res["tests"] if per_letting else "not written",
+                   "splits": S,
+                   "per_letting": ((res["tests"] if resV is None else
+                                    {"B": res["tests"], "V": resV["tests"]})
+                                   if per_letting else "not written"),
                    "data_changed_during_run": changed}, f, ensure_ascii=False, indent=1,
                   default=str)
     say("\n汇总已写入 %s" % os.path.relpath(path, ROOT))
-    return {"code": 0 if not changed else 1, "tests": res["tests"]}
+    return {"code": 0 if not changed else 1, "tests": res["tests"],
+            "vtests": resV["tests"] if resV else None, "splits": S}
 
 
 # ---------------------------------------------------------------------------
@@ -1245,6 +1712,20 @@ class _AuditKind(e._FwdKind):
     def row(self, k, D):
         r = super().row(k, D)
         self.audit.ref_row(self.kind, k, self.c[k], D, r)
+        return r
+
+
+class _AuditKindMuni(_AuditKind):
+    """MC's municipal-only cells under the audit: rows marked municipal, and
+    audited under their own cell keys (apart from the pooled cells')."""
+
+    def __init__(self, cells_kind, kind, minn, avail, audit):
+        super().__init__(cells_kind, kind, minn, avail, audit)
+        self.market = "municipal"
+
+    def row(self, k, D):
+        r = e._FwdKind.row(self, k, D)
+        self.audit.ref_row("muni_" + self.kind, k, self.c[k], D, r)
         return r
 
 
@@ -1647,6 +2128,55 @@ def _selftest(seed):
             n_after = len(list(csv.DictReader(f)))
         chk("8 没写登记文件、或数据还没重建（诱饵在真实数据上仍是 external）时拒绝，不写日志",
             r_none["code"] == 2 and r_pre is not None and r_pre["code"] == 2 and n_after == 2)
+        # ---- 10 the paired mode (--compare-switch) through the same --confirm
+        # path: a switch that never reaches a municipal letting (T1 is TxDOT
+        # only) must give B == variant == the single run, letting by letting
+        buf3 = io.StringIO()
+        step("10 配对模式（--compare-switch txdot_c4d1，对市政是空开关）走 --confirm 流程")
+        try:
+            ph.REG, ph.LOG, ph._cache = reg_path, log_path, None
+            globals()["REAL_CLEAN"] = simC
+            with clean_dir(simC), contextlib.redirect_stdout(buf3):
+                out_p = run_confirm("自检演练：配对模式（登记在 %s）" % reg_path, out_dir=tmp,
+                                    compare="txdot_c4d1")
+                r_bad = run_confirm("自检：未知开关（登记在 %s）" % reg_path, out_dir=tmp,
+                                    compare="no_such_switch")
+        finally:
+            ph.REG, ph.LOG, ph._cache = saved[0], saved[1], saved[2]
+            globals()["REAL_CLEAN"] = saved[3]
+        with open(log_path, encoding="utf-8-sig", newline="") as f:
+            lrows3 = list(csv.DictReader(f))
+        pb = {r["project_key"]: r for r in (out_p["tests"] or [])}
+        pv = {r["project_key"]: r for r in (out_p["vtests"] or [])}
+        same_p = (set(pb) == set(pv) == set(a2) and all(
+            abs(pb[k]["p80"] - a2[k]["p80"]) < 1e-12 and abs(pv[k]["p80"] - a2[k]["p80"]) < 1e-12
+            and abs(pb[k]["p50"] - a2[k]["p50"]) < 1e-12 and abs(pv[k]["p50"] - a2[k]["p50"]) < 1e-12
+            for k in a2))
+        pz = out_p["splits"]["全部"]["paired"] if out_p.get("splits") else {}
+        chk("10 配对模式：空开关下 B = 变体 = 单独打分（逐个招标），配对差全为 0",
+            out_p["code"] == 0 and same_p and all(
+                (d["diff"] or 0.0) == 0.0 for d in pz.values()),
+            "%d 个招标" % len(pb))
+        out3 = buf3.getvalue()
+        chk("10 配对模式写“开始”“完成”两行（动作里写明配对），写完日志才打印配对表；未知开关拒绝且不写日志",
+            len(lrows3) == 4 and "配对" in lrows3[2]["action"] and "开始打分" in lrows3[2]["action"]
+            and "完成" in lrows3[3]["action"] and lrows3[3]["result"].startswith("n=")
+            and out3.find("已写入访问日志") > 0
+            and out3.find("差（变体 − B）") > out3.find("已写入访问日志")
+            and r_bad["code"] == 2, "日志 %d 行" % len(lrows3))
+    # ---- 11 the coverage scope on the decoy: covered actual = low bid minus
+    # the low bidder's own uncovered amounts; the sensitivity replay ran
+    if e.COVERAGE_SCOPE:
+        wu = [r for r in st2["tests"] + st2["train_recs"] if r.get("n_uncovered_lines")]
+        chk("11 覆盖口径：含未覆盖子目的招标，实际值 = 最低价 − 中标人在未覆盖子目上的金额；"
+            "其余招标实际值就是最低价；敏感性版本跑了",
+            all(abs(r["actual_low"] + r["uncovered_low"] - r["actual_low_full"]) < 1e-6
+                for r in wu) and all(r["actual_low"] == r["actual_low_full"]
+                                     for r in st2["tests"] if not r.get("n_uncovered_lines"))
+            and st2.get("tests_med") is not None,
+            "含未覆盖子目 %d 个（训练+诱饵）；诱饵整体未覆盖 %d 个，训练端 %d 个；敏感性 %d 个" % (
+                len(wu), st2["cov_test"].get("not_covered", 0),
+                st2["cov_train"].get("not_covered", 0), len(st2.get("tests_med") or ())))
     chk("9 运行期间 data/clean 没被改动", fingerprint() == fp0)
     chk("9 真正的访问日志没被碰过",
         (open(ph.LOG, "rb").read() if os.path.exists(ph.LOG) else None) == log0)
@@ -1671,6 +2201,11 @@ def main(argv=None):
     ap.add_argument("--per-letting", action="store_true",
                     help="（只配合 --confirm）也打印逐个留出招标；会写进日志")
     ap.add_argument("--json", metavar="路径", help="（只配合 --decoy）结果写到这里")
+    ap.add_argument("--compare-switch", metavar="开关",
+                    help="配对模式：B = 这个 pricing_rule 开关关、变体 = 开，同一批留出招标"
+                         "（配合 --decoy 演练，或 --confirm）")
+    ap.add_argument("--full-scope", action="store_true",
+                    help="旧口径：全部子目定价、按整张最低价打分（coverage_scope 关）")
     a = ap.parse_args(argv)
     modes = sum(bool(x) for x in (a.confirm is not None, a.selftest,
                                   a.decoy is not None and not a.selftest))
@@ -1683,9 +2218,15 @@ def main(argv=None):
         return 2
     if a.selftest:
         return 0 if _selftest(a.decoy if a.decoy is not None else SELFTEST_SEED) else 1
+    if a.compare_switch is not None and a.decoy is not None:
+        return run_compare_decoy(a.decoy, a.compare_switch, a.json, a.full_scope)
     if a.decoy is not None:
+        if a.full_scope:
+            with e.pricing_rule(coverage_scope=False):
+                return run_decoy(a.decoy, a.json)
         return run_decoy(a.decoy, a.json)
-    return run_confirm(a.confirm, a.allow_pre_rebuild, a.per_letting)["code"]
+    return run_confirm(a.confirm, a.allow_pre_rebuild, a.per_letting,
+                       compare=a.compare_switch, full_scope=a.full_scope)["code"]
 
 
 if __name__ == "__main__":

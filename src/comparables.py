@@ -52,9 +52,22 @@ DEV_END = "2023-01-01"
 K_MAIN, O_MIN = 5, 0.10
 
 
-def tokens(desc):
-    """The registered line identity: item_tokens without the removal flag."""
-    return IT.tokens(desc, removal=False)
+# Round 10 E, part of the CORE preset (estimate_low_bid.pricing_rule(
+# round10_core=True); handoff/scratchpad/p50fix/PREREGISTRATION_ROUND10.md):
+# the MUNICIPAL pool's line identity and the municipal schedules' carry F2's
+# removal flag, so similar() refuses a removal-only line against any other
+# (remove-and-replace and new work never take a pure-removal price, nor the
+# reverse).  TxDOT keeps the flag-free identity.  OFF until the locked-set
+# confirmation (Registration 5) passes; off = production.
+MUNI_REMOVAL_IDENTITY = False
+
+
+def tokens(desc, market=None):
+    """The registered line identity: item_tokens without the removal flag
+    (round 10 E: with it, for the municipal market, when
+    MUNI_REMOVAL_IDENTITY is on)."""
+    return IT.tokens(desc, removal=bool(MUNI_REMOVAL_IDENTITY
+                                        and market == "municipal"))
 
 
 def removal_only(desc):
@@ -219,7 +232,7 @@ def prepare(rows, avail, market, clean, never, min_items):
         lines = []
         nonls = 0.0
         for fam, un, sz, q, u, dn, yr in win_rows[pk]:
-            t = tokens(dn)
+            t = tokens(dn, market)
             iid = ident.setdefault((t, un), len(ident)) if (t and un) else -1
             isls = (un or "").upper() in LS_UNITS
             if not isls:
@@ -382,7 +395,7 @@ def price_target(ctx, rec, keys_full, tab, beta, gamma, E, owner=None,
     kinfo = {}
     for ki in kis:
         fam, un, sz, bd, dn = keys_full[ki]
-        t = tokens(dn)
+        t = tokens(dn, mk)
         sm = ctx.sims(t, un) if (t and un) else []
         kinfo[ki] = {"t": t, "un": un, "rm": removal_only(dn),
                      "ls": (un or "").upper() in LS_UNITS, "sims": dict(sm)}
