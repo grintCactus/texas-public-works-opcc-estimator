@@ -87,7 +87,10 @@ def letting_frame():
         ymap = (tot.drop_duplicates("project_id").set_index("project_id")["bid_date"]
                 .astype(str).str[:4])
         for r in c.itertuples(index=False):
-            rows.append({"src": "current", "year": ymap.get(r.project_id, ""),
+            # the letting's own date: a re-let project_id has two (load_txdot)
+            rows.append({"src": "current",
+                         "year": (str(getattr(r, "bid_date", "") or "")[:4]
+                                  or ymap.get(r.project_id, "")),
                          "county": "", "scope": "DFW_district14",
                          "project_type": "",
                          "n_bidders": r.n_bidders, "low": r.low,

@@ -34,7 +34,11 @@ MARGIN = 12.0           # a value may start slightly left of its header anchor
 # names. A line carrying any of this is not a name line.
 FURNITURE_RE = re.compile(
     r"bid\s*opened|bid\s*tabulation|project\s*no|solicitation|addend|page\s*\d|"
-    r"bid\s*date|prepared\s*by|certified", re.I)
+    r"bid\s*date|prepared\s*by|certified|"
+    # a vendor quote's or invoice's form furniture (round 3: Grand Prairie's
+    # Briar Hill packet, p.110 'Created By: ... Quote Name: ...', p.83
+    # 'Issued: ____ Invoice: ____' read as bidder names)
+    r"created\s*by|quote\s*(?:name|no\b|number|#)|\bissued\s*:|\binvoice\s*:", re.I)
 
 # "Irving, TX" / "Kennedale, TX 76060" / "Fort Worth, Texas" -- an address, not a name.
 STATES = (r"TX|OK|AR|LA|NM|KS|MO|CO|AZ|CA|FL|GA|TN|MS|AL|IL|OH|PA|NY|NC|SC|VA|UT|NV|IA|NE"
@@ -49,13 +53,36 @@ NOT_A_NAME_RE = re.compile(r"[\$]|\d{3,}")
 
 ITEM_RE = re.compile(r"^[A-Z]?[0-9][0-9.\-]*[A-Za-z]?$")
 # "Paving Subtotal" puts the word at the END, so this has to search, not match.
-AGG_RE = re.compile(r"\bsub-?totals?\b|^(total|grand|sum)\b|\btotal\s+(bid|base|cost|amount)\b",
+# 'Sub Total' is spelled with a space too (Frisco 2103-057).
+AGG_RE = re.compile(r"\bsub[\s.\-]*totals?\b|^(total|grand|sum)\b|\btotal\s+(bid|base|cost|amount)\b",
                     re.I)
 # Column captions used instead of names: "BIDDER 1", "CONTRACTOR 2", "BID 3".
 BIDDER_LABEL_RE = re.compile(r"^(bidder|contractor|vendor|bid|respondent)\s*#?\s*\d+$", re.I)
 MONEYISH = re.compile(r"^[\$\(]?[\d,]*\.?\d*[\)]?$")
 STATE_RE = re.compile(r"^[A-Z]{2}$")
 CITYLINE_RE = re.compile(r"^[A-Z][A-Za-z.\- ]+,$")
+
+# The words column captions are made of.  A line made of nothing else is a
+# caption line: a header printed over two or three lines ('BID / NO.',
+# 'UNIT / PRICE', 'Unit / of / Measure') is a band of such lines, and a name
+# fragment made of nothing else ('Bid Amount' under each firm) names no firm.
+CAPTION_WORDS = frozenset("""
+item items no number # bid pay spec code description desc of work qty quantity quantities
+est estimated approx approximate required unit units uom measure price prices cost costs
+total totals amount amounts extended extension ext with in words figures only and or per
+each line
+""".split())
+# An item number as the first word of a row: '1.01', '100', '#1-1', '199A'.
+ITEM_TOKEN_RE = re.compile(r"^#?[A-Z]?\d[\d.\-]*[A-Z]?[.):]?$", re.I)
+# A complete dollar amount with cents: '$1,300.00', '27.00'.
+AMOUNT_RE = re.compile(r"\$?\d[\d,]*\.\d{2}")
+# 'Item 12.' is a council packet's agenda-item stamp, never a firm.
+ITEM_LABEL_RE = re.compile(r"^item\s*#?\s*\d+[A-Z]?\.?$", re.I)
+# A caption over a group of items ('Bid Schedule 1.00:', 'Section 2 - Paving'):
+# a label, never the first line of the description below it.
+GROUP_LABEL_RE = re.compile(
+    r":\s*$|^(?:bid\s+)?(?:schedule|section|part|phase|division|group|alternates?|alt\.?|"
+    r"base\s+bid|additive|deductive|add\s+alt)\b", re.I)
 
 
 DASHES = {"‐": "-", "‑": "-", "–": "-", "—": "-",
@@ -175,7 +202,7 @@ def extract_words_robust(page):
                               "top": w["x0"], "bottom": w["x1"],
                               "doctop": w["x0"]})
         if fixed:
-            return fixed
+            return join_touching_words(fixed)
         WORD_STATS["rotated_repair_failed"] += 1
 
     frac = sum(1 for w in words if len(w["text"]) == 1) / len(words)
@@ -214,6 +241,29 @@ def extract_words_robust(page):
         return flowed
     WORD_STATS["screened_but_repair_rejected"] += 1
     return words
+
+
+def join_touching_words(words):
+    """Rejoin the pieces of words a rotated text layer shatters.
+
+    On a table drawn turned 90 degrees pdfplumber can return one or two letters
+    per word -- Grand Prairie's Kirby Creek tab (2025) reads 'C','o','n','d',
+    'it','i','o','n' for 'Condition': the characters sit edge to edge, a real
+    word break being an explicit space glyph about a point wide.  After the
+    axes are swapped, pieces on one line whose gap is under 0.3 pt are one word.
+    No column is ever that close to the next, and the upright path already
+    joins characters 3 pt apart, so this is the more conservative rule."""
+    out = []
+    for w in words:
+        p = out[-1] if out else None
+        if (p is not None and abs(p["top"] - w["top"]) < 0.5
+                and -0.5 < w["x0"] - p["x1"] < 0.3):
+            out[-1] = {**p, "text": p["text"] + w["text"], "x1": max(p["x1"], w["x1"]),
+                       "bottom": max(p["bottom"], w["bottom"])}
+            WORD_STATS["rotated_pieces_joined"] += 1
+            continue
+        out.append(w)
+    return out
 
 
 def find_header(line):
@@ -264,6 +314,13 @@ def find_header(line):
         elif a == "TOTAL" and b not in ("COST", "PRICE", "AMOUNT"):
             total_x.append(ws[i]["x0"])
         elif a == "EXTENDED" and b not in ("COST", "PRICE", "AMOUNT"):
+            total_x.append(ws[i]["x0"])
+        elif a == "AMOUNT" and i > 0 and (i - 1) in consumed \
+                and txts[i - 1] in ("PRICE", "COST", "BID"):
+            # 'UNIT PRICE | AMOUNT' repeated per bidder (Southlake's North
+            # Park tab, 2026): the bare AMOUNT right after a unit-price caption
+            # is that bidder's total.  Only the LAST one was taken (the tail
+            # rule below), 1 total for 3 prices, and the page read nothing.
             total_x.append(ws[i]["x0"])
     # Defence in depth: the same anchor must never appear twice in either list,
     # whatever the caption vocabulary does next.
@@ -328,6 +385,179 @@ def find_header(line):
     }
 
 
+# ---- a header printed over several lines ------------------------------------
+# Spreadsheet tabs wrap their captions inside tall header cells, so one column's
+# caption is spread over two or three lines:
+#
+#     BID    DESCRIPTION                 UNIT         UNIT    TOTAL       (Southlake,
+#                                   UNIT  QTY                              Timarron
+#     NO.    (with unit price in words)               PRICE   PRICE        Creek 2022)
+#
+# find_header reads ONE line, so it either finds nothing (Frisco 2103-057:
+# 'Unit / Price', 'Total / Cost', 'Quantity / Required', 'Unit / of / Measure'
+# -- both strategies read zero rows) or a partial header with no quantity or
+# unit column, so the description column swallowed 'LS 1' and the middle line
+# 'UNIT QTY' became a section banner.  Here the caption lines next to each
+# other are read as one band: words stacked over each other form one column's
+# caption, and each column is classified by its whole caption.
+
+def _height(words):
+    hs = sorted(w["bottom"] - w["top"] for w in words)
+    return hs[len(hs) // 2] if hs else 0.0
+
+
+def caption_line(l):
+    """A line made only of column-caption words (no digits)."""
+    if any(re.search(r"\d", w["text"]) for w in l["words"]):
+        return False
+    toks = [t for t in (re.sub(r"[^a-z#]", "", w["text"].lower()) for w in l["words"]) if t]
+    return bool(toks) and all(t in CAPTION_WORDS for t in toks)
+
+
+def phrases(l, gap):
+    """Split a line into runs of words no more than `gap` apart."""
+    out = []
+    for w in l["words"]:
+        if out and w["x0"] - out[-1]["x1"] <= gap:
+            out[-1]["words"].append(w)
+            out[-1]["x1"] = max(out[-1]["x1"], w["x1"])
+        else:
+            out.append({"x0": w["x0"], "x1": w["x1"], "top": l["top"], "words": [w]})
+    return out
+
+
+def _caption_kind(text, has_description):
+    s = re.sub(r"\([^)]*\)", " ", text.upper())
+    s = " ".join(re.sub(r"[^A-Z#/ ]", " ", s).split())
+    ws = s.split()
+    if not ws:
+        return "other"
+    if re.match(r"^(?:BID )?UNIT (?:PRICE|COST|BID)\b", s):
+        return "price"
+    if re.match(r"^(?:TOTAL|EXTENDED|EXTENSION|EXT|AMOUNT|ITEM TOTAL|LINE TOTAL|BID AMOUNT)"
+                r"(?: (?:PRICE|COST|AMOUNT|TOTAL|BID))?$", s):
+        return "total"
+    if "DESCRIPTION" in ws or "DESC" in ws:
+        return "description"
+    if {"QTY", "QUANTITY", "QUANTITIES"} & set(ws):
+        return "qty"
+    if s in ("UNIT", "UNITS", "UOM", "UNIT OF MEASURE", "UNIT MEASURE", "U/M"):
+        return "unit"
+    if s in ("#", "NO", "ITEM", "ITEM NO", "ITEM #", "ITEM NUMBER", "BID NO", "BID ITEM",
+             "PAY ITEM", "NUMBER", "LINE", "LINE NO"):
+        return "item"
+    if s in ("ITEMS", "BID ITEMS") and not has_description:
+        return "description"           # Mesquite heads the description 'Bid Items'
+    return "other"
+
+
+def stacked_header(lines, i):
+    """Header anchors from the band of caption lines around lines[i], or None."""
+    if not caption_line(lines[i]):
+        return None
+    h = _height(lines[i]["words"]) or 6.0
+    band = [i]
+    j = i - 1
+    while j >= 0 and caption_line(lines[j]) and \
+            lines[band[0]]["top"] - lines[j]["top"] <= 1.3 * h:
+        band.insert(0, j)
+        j -= 1
+    j = i + 1
+    while j < len(lines) and caption_line(lines[j]) and \
+            lines[j]["top"] - lines[band[-1]]["top"] <= 1.3 * h:
+        band.append(j)
+        j += 1
+    if len(band) < 2:
+        return None
+    rows = [phrases(lines[k], 0.6 * h) for k in band]
+    cols = []                          # each: list of phrases, stacked top to bottom
+    for row in rows:
+        for ph in row:
+            hit = [c for c in cols if any(min(ph["x1"], q["x1"]) - max(ph["x0"], q["x0"]) > 0
+                                          for q in c)]
+            if len(hit) > 1:
+                return None            # a caption over two columns: not a plain band
+            if hit:
+                if any(q["top"] == ph["top"] for q in hit[0]):
+                    return None        # two runs of one line under one caption
+                hit[0].append(ph)
+            else:
+                cols.append([ph])
+    out = []
+    for c in cols:
+        text = " ".join(w["text"] for ph in sorted(c, key=lambda q: q["top"]) for w in ph["words"])
+        out.append({"x0": min(q["x0"] for q in c), "x1": max(q["x1"] for q in c), "text": text})
+    out.sort(key=lambda c: c["x0"])
+    has_desc = any("DESCRIPTION" in c["text"].upper() or "DESC" in c["text"].upper().split()
+                   for c in out)
+    for c in out:
+        c["kind"] = _caption_kind(c["text"], has_desc)
+    prices = [c for c in out if c["kind"] == "price"]
+    if not prices:
+        return None
+    total_x = []
+    for k, p in enumerate(prices):
+        nxt = prices[k + 1]["x0"] if k + 1 < len(prices) else float("inf")
+        t = [c for c in out if c["kind"] == "total" and p["x0"] < c["x0"] < nxt]
+        if not t:
+            return None
+        total_x.append(t[0]["x0"])
+    left = [c for c in out if c["x1"] <= prices[0]["x0"] + 1.0]
+
+    def first(kind):
+        return next((c for c in left if c["kind"] == kind), None)
+    desc, item = first("description"), first("item")
+    if desc is None:
+        return None
+    # A caption column between the item number and the description (Frisco's
+    # spec-section code 'Items' -- '017133', 'PK313519') is neither: the item
+    # range stops where it starts.
+    other = next((c for c in left if c["kind"] == "other" and item is not None
+                  and item["x0"] < c["x0"] < desc["x0"]), None)
+    qty, unit = first("qty"), first("unit")
+    return {
+        "top": lines[band[0]]["top"],
+        "band": [lines[k]["top"] for k in band],
+        "item_x": item["x0"] if item else None,
+        "item_hi_x": other["x0"] if other else None,
+        "desc_x": desc["x0"],
+        "qty_x": qty["x0"] if qty else None,
+        "unit_x": unit["x0"] if unit else None,
+        "price_x": [p["x0"] for p in prices],
+        "total_x": total_x,
+    }
+
+
+def page_headers(lines):
+    """[(line index, header)] for a page: one-line headers, completed from the
+    caption band around them when the line alone lacks the quantity or unit
+    column, and band headers where no single line is a header."""
+    out = []
+    for i, l in enumerate(lines):
+        hd = find_header(l)
+        if hd is None:
+            continue
+        if hd["qty_x"] is None or hd["unit_x"] is None:
+            st = stacked_header(lines, i)
+            if st is not None and len(st["price_x"]) == len(hd["price_x"]):
+                WORD_STATS["header_bands_completed"] += 1
+                hd = st
+        out.append((i, hd))
+    if out:
+        return out
+    seen = set()
+    for i, l in enumerate(lines):
+        if not any(w["text"].upper().strip(":") in ("DESCRIPTION", "DESC", "ITEMS")
+                   for w in l["words"]):
+            continue
+        st = stacked_header(lines, i)
+        if st is not None and st["top"] not in seen:
+            seen.add(st["top"])
+            WORD_STATS["header_bands_read"] += 1
+            out.append((i, st))
+    return out
+
+
 def build_ranges(hdr, page_width):
     """Turn header anchors into [lo, hi) x ranges for every field."""
     px, tx = hdr["price_x"], hdr["total_x"]
@@ -337,19 +567,137 @@ def build_ranges(hdr, page_width):
         lo = px[k] - MARGIN
         hi = (px[k + 1] - MARGIN) if k + 1 < n else page_width
         mid = tx[k] - MARGIN
-        blocks.append({"lo": lo, "hi": hi, "price": (lo, mid), "total": (mid, hi)})
+        blocks.append({"lo": lo, "hi": hi, "price": (lo, mid), "total": (mid, hi),
+                       "tx": tx[k]})
     left = px[0] - MARGIN
     unit_lo = (hdr["unit_x"] - MARGIN) if hdr["unit_x"] else left
     qty_lo = (hdr["qty_x"] - MARGIN) if hdr["qty_x"] else unit_lo
     desc_lo = (hdr["desc_x"] - MARGIN) if hdr["desc_x"] else 0.0
+    # The item range stops at a caption column printed between the item number
+    # and the description (see stacked_header); that column is read as neither.
+    item_hi, glued = desc_lo, None
+    if hdr.get("item_hi_x") is not None:
+        item_hi = min(desc_lo, hdr["item_hi_x"] - MARGIN)
+        glued = (item_hi, hdr["desc_x"] - 1.0)
+    if hdr["unit_x"] and hdr["qty_x"] and hdr["unit_x"] < hdr["qty_x"]:
+        # 'UNIT | QTY' -- the unit printed LEFT of the quantity (Southlake's
+        # tabs).  The ranges below assume QTY first, which made the quantity
+        # range end before it began: no quantity, and 'LS 1' read as the unit.
+        return {
+            "item": (0.0, item_hi),
+            "desc": (desc_lo, unit_lo),
+            "unit": (unit_lo, qty_lo),
+            "qty": (qty_lo, left),
+            "blocks": blocks,
+            "left_edge": left,
+            "glued": glued,
+        }
     return {
-        "item": (0.0, desc_lo),
+        "item": (0.0, item_hi),
         "desc": (desc_lo, qty_lo),
         "qty": (qty_lo, unit_lo),
         "unit": (unit_lo, left),
         "blocks": blocks,
         "left_edge": left,
+        "glued": glued,
     }
+
+
+def refine_description_start(lines, top, ranges):
+    """Move the item/description boundary to where the descriptions start when
+    the DESCRIPTION caption is centred over a wide column.
+
+    build_ranges puts the boundary a margin left of the caption.  A caption
+    centred over the column (Southlake, Arlington's PWDR19010C, Grand Prairie's
+    Kirby Creek) sits 60-170 pt right of where the text starts, so the item
+    range swallowed most of every description: '301 Site Preparation' was read
+    as the item number with no description, failed the item pattern and the
+    row was dropped -- Arlington's Kee Branch Trib 1 kept 5 of its 23 items.
+    The rows themselves say where the column starts: on the lines below the
+    header that open with an item number, the next word starts the
+    description.  Moved only when most such lines (3 or more) show it, the
+    item numbers are distinct (an item number is unique: four description
+    lines opening '6 sack mix' are no item rows), the starts line up on
+    their median (a left-aligned column, not codes of varying width; a
+    section line like '100 Miscellaneous Items' may start elsewhere), the
+    text starts well left of the caption (2 margins), and never past an item
+    number."""
+    lo, hi = ranges["item"]
+    if hi <= 0 or hi != ranges["desc"][0]:
+        return False
+    item_x, starts, toks, rests = [], [], [], []
+    for l in lines:
+        if l["top"] <= top + LINE_TOL:
+            continue
+        ws = [w for w in l["words"] if w["x0"] < hi]
+        if not ws or not ITEM_TOKEN_RE.match(ws[0]["text"]):
+            continue
+        item_x.append(ws[0]["x0"])
+        toks.append(ws[0]["text"])
+        if len(ws) > 1 and re.search(r"[A-Za-z]", ws[1]["text"]):
+            starts.append(ws[1]["x0"])
+            rests.append([w["x0"] for w in ws[2:]])
+    if len(item_x) < 3 or len(starts) < 0.5 * len(item_x) or len(set(toks)) < 0.8 * len(toks):
+        return False
+    s = sorted(starts)[len(starts) // 2]
+    if (max(item_x) >= s - 1.0 or hi - s < 2 * MARGIN
+            or sum(1 for x in starts if abs(x - s) <= 3.0) < 0.6 * len(starts)):
+        return False
+    # A row whose second word starts between the item numbers and that column
+    # while a later word starts AT the column has a code printed beside its
+    # number ('103 SP Paving'): the column there is no plain description
+    # column, so it is left as it was.  (A section line such as '100
+    # Miscellaneous Items' starts left of the column too, but nothing of it
+    # lines up with the column.)
+    if any(x < s - MARGIN / 2.0 and any(abs(y - s) <= 3.0 for y in rest)
+           for x, rest in zip(starts, rests)):
+        return False
+    cut = max(max(item_x) + 1.0, s - MARGIN / 2.0)
+    ranges["item"] = (lo, cut)
+    ranges["desc"] = (cut, ranges["desc"][1])
+    WORD_STATS["description_start_from_rows"] += 1
+    return True
+
+
+# ---- the description column starts where the WORDS start ------------------
+# A description caption centred over a left-aligned column puts the column's
+# start too far right: Bedford's Parkwood Drive tab captions it 'DESCRIPTION OF
+# ITEMS' at x=137 while every description starts at x=77, right after the item
+# number, so the item cell read '100 CONSTRUCTION', '109 CEMENT SLURRY' --
+# items whose description fitted there had none left and were dropped (11 of
+# 66), the rest lost their first words.  Where three or more priced lines, and
+# at least half of those with anything in the item column, print an item
+# number followed by words there, the description column starts at the
+# leftmost of those words.  (Parser round 3: the fallback when
+# refine_description_start declines -- Parkwood's words start 23.5 pt left of the
+# boundary, under its 2-margin floor -- with the same evidence asked of the rows.)
+def refine_item_column(lines, ranges, top_limit=None):
+    """ranges with the item/description boundary moved left to where the
+    descriptions start, or ranges unchanged."""
+    item_lo, item_hi = ranges["item"]
+    starts, ends, n = [], [], 0
+    for l in lines:
+        if top_limit is not None and l["top"] <= top_limit + LINE_TOL:
+            continue
+        if not any(joined(l, b["price"]) for b in ranges["blocks"]):
+            continue
+        ws = words_in(l, ranges["item"])
+        if not ws:
+            continue
+        n += 1
+        if (len(ws) >= 2 and ITEM_RE.match(ws[0]["text"])
+                and re.search(r"[A-Za-z]{2}", " ".join(w["text"] for w in ws[1:]))):
+            starts.append(ws[1]["x0"])
+            ends.append(ws[0]["x1"])
+    if len(starts) < 3 or len(starts) < 0.5 * n:
+        return ranges
+    x = min(starts)
+    if x <= max(ends) or x >= item_hi:
+        return ranges
+    out = dict(ranges)
+    out["item"] = (item_lo, x - 0.5)
+    out["desc"] = (x - 0.5, ranges["desc"][1])
+    return out
 
 
 def words_in(line, rng):
@@ -367,16 +715,109 @@ def spaced(line, rng):
     return " ".join(w["text"] for w in words_in(line, rng)).strip()
 
 
-def extract_bidder_names(lines, hdr, ranges):
+def desc_and_qty(line, ranges):
+    """(description, quantity) text of a line.  A description running into the
+    quantity column's margin keeps its last words: a word in the quantity
+    range that is no number and follows the description at word spacing is
+    the description's ('... complete in' + '1' read as quantity 'in1' on Kirby
+    Creek item 117, and the 4' of '... Riprap with 4'' lost from 115).  A
+    word of letters run into digits ('in1', 'wit747': the description cut
+    by its cell and printed against the quantity, Little Elm 2023-05) is
+    left where it was."""
+    d = words_in(line, ranges["desc"])
+    q = words_in(line, ranges["qty"])
+    if d and q and ranges["desc"][1] == ranges["qty"][0]:
+        gap = 0.6 * (_height(d) or 6.0)
+        while q and q[0]["x0"] - d[-1]["x1"] <= gap and \
+                not re.fullmatch(r"[\d,]*\.?\d+", q[0]["text"]) and \
+                not re.fullmatch(r"[A-Za-z]+[\d,.]*\d", q[0]["text"]):
+            d.append(q.pop(0))
+            WORD_STATS["description_overflow_words"] += 1
+    return (" ".join(w["text"] for w in d).strip(),
+            "".join(w["text"] for w in q).strip())
+
+
+def money_cells(line, b):
+    """(unit price, total) text of one bidder block on a line.
+
+    The split is a margin left of the total column's caption; a NUMBER lying
+    wholly left of that caption is still the unit price.  In a tab printed in
+    a 4-5 pt font the margin is wider than a short price: Frisco 2103-057's
+    '1.80' ends at x=337, the 'Total' caption starts at 340.6, the price was
+    read as the total and the row dropped as unpriced (7 of 61 items, for
+    every bidder).  Only when a number follows it under the caption, though:
+    a total printed right-aligned and ending left of its own caption, with
+    nothing after it, is the total (Addison 22-164's estimate column on its
+    alternates page read '$1,300.00$1,300.00' as the unit price)."""
+    p, t = [], []
+    ws = words_in(line, (b["lo"], b["hi"]))
+    for i, w in enumerate(ws):
+        if w["x0"] < b["price"][1] or (
+                not t and "tx" in b and w["x1"] <= b["tx"] + 0.5 and re.search(r"\d", w["text"])
+                and any(re.search(r"\d", v["text"]) and v["x1"] > b["tx"] + 0.5 for v in ws[i + 1:])):
+            p.append(w["text"])
+        else:
+            t.append(w["text"])
+    if not t and len(p) >= 2:
+        # two complete amounts in the price cell and none in the total cell:
+        # the second is the total (a total column whose values start left of
+        # the split -- Addison 22-164's estimate on its alternates page)
+        for k in range(len(p) - 1, 0, -1):
+            if AMOUNT_RE.fullmatch("".join(p[:k])) and AMOUNT_RE.fullmatch("".join(p[k:])):
+                p, t = p[:k], p[k:]
+                WORD_STATS["price_cell_amount_pairs_split"] += 1
+                break
+    return "".join(p).strip(), "".join(t).strip()
+
+
+def split_glued_words(lines, page, lo, cut):
+    """Split a word that starts in [lo, cut) and runs past `cut` at `cut`, by
+    its characters.  A narrow code column printed edge to edge with the
+    description ('PK329200' + 'Sod' -> 'PK329200Sod', 1.6 pt apart in a 4.8 pt
+    font, under the 3 pt join tolerance) comes out as ONE word starting in the
+    code column, and the description lost its first word."""
+    chars = [c for c in getattr(page, "chars", []) if c.get("upright", True)]
+    n = 0
+    for l in lines:
+        out = []
+        for w in l["words"]:
+            if not (lo <= w["x0"] < cut < w["x1"] - 1.0):
+                out.append(w)
+                continue
+            cs = sorted((c for c in chars if w["x0"] - 0.5 <= c["x0"] < w["x1"]
+                         and c["top"] < w["bottom"] and c["bottom"] > w["top"]
+                         and c["text"].strip()), key=lambda c: c["x0"])
+            a = [c for c in cs if c["x0"] < cut]
+            b = [c for c in cs if c["x0"] >= cut]
+            if not a or not b or "".join(c["text"] for c in a + b) != w["text"]:
+                out.append(w)
+                continue
+            out.append({**w, "text": "".join(c["text"] for c in a), "x1": a[-1]["x1"]})
+            out.append({**w, "text": "".join(c["text"] for c in b), "x0": b[0]["x0"]})
+            n += 1
+        l["words"] = out
+        l["text"] = " ".join(w["text"] for w in out)
+    WORD_STATS["glued_words_split"] += n
+    return n
+
+
+def extract_bidder_names(lines, hdr, ranges, by_phrase=True):
     """Contractor names sit above the header, centred over their whole block and
     often wrapped across two lines. Lines that also carry something in the left
     label margin are page furniture (BID OPENED / PROJECT No. / city, ST) and
-    are skipped."""
+    are skipped.  by_phrase=False files each word by its own x0 (the reading
+    before name_words_by_block; see page_bidder_names)."""
     names = [""] * len(ranges["blocks"])
     left_label = ranges["desc"][0]
     cand = []
     for l in lines:
         if l["top"] >= hdr["top"] - 1 or not l["words"]:
+            continue
+        # a line with a form's fill-in blank ('Issued: ____ Invoice: ____',
+        # 'CHECKED BY: ____') is form furniture, none of it a name (round 3:
+        # Grand Prairie's Briar Hill packet p.83, an invoice, went out as a
+        # bidder named '_____________')
+        if "_____" in l.get("text", ""):
             continue
         cand.append(l)
 
@@ -385,11 +826,36 @@ def extract_bidder_names(lines, hdr, ranges):
     # files their names outright, because some templates do put the name band on
     # the same visual line as a left-margin label.
     spans_left = {id(l): (min(w["x0"] for w in l["words"]) < left_label) for l in cand}
+    by_block = {id(l): (name_words_by_block(l, ranges["blocks"]) if by_phrase else
+                        [[w for w in l["words"] if b["lo"] <= w["x0"] < b["hi"]]
+                         for b in ranges["blocks"]]) for l in cand}
+
+    # ---- the TITLE block above the names ----------------------------------
+    # Bedford's Parkwood Drive tab (Huitt-Zollars) centres 'BID TABULATION
+    # REPORT', 'CLIENT: CITY OF BEDFORD' and 'DESCRIPTION: PARKWOOD DRIVE
+    # RECONSTRUCTION (PAVING, DRAINAGE, ...)' over the money block, above the
+    # firms.  Cut into the bidder blocks, the titles became the first words of
+    # every name ('REPORT (PAVING, DRAINAGE, WATER, SANITARY BIDDERS FORT WORTH
+    # CIVIL CONSTRUCTORS, LLC'), the set was refused as too long, and all 654
+    # rows of the coordinate parse went out with no bidder.  A title is one
+    # continuous run of words (no gap wider than the words are tall) that
+    # crosses into two or more bidder blocks and reads as a title: a caption
+    # with a colon, or page furniture ('BID TABULATION').  Width alone proves
+    # nothing: Collin County prints its firm names so close together that
+    # one 'run' crosses three blocks.  And it takes a title BLOCK, two or more
+    # such lines: a single caption line ('Prepared by Halff Associates, Inc.'
+    # in Frisco 2410-003, 'IFB: 2022-055, PRINTING: ...' in Collin County
+    # 51844) is left as before.  The lowest title line and everything above it
+    # are not names.
+    titles = [l["top"] for l in cand if _title_run(l["words"], ranges["blocks"])]
+    if len(titles) >= 2:
+        title_top = max(titles)
+        cand = [l for l in cand if l["top"] > title_top + LINE_TOL]
 
     for k, b in enumerate(ranges["blocks"]):
         parts = []
         for l in cand:
-            toks = [w["text"] for w in l["words"] if b["lo"] <= w["x0"] < b["hi"]]
+            toks = [w["text"] for w in by_block[id(l)][k]]
             if not toks:
                 continue
             frag = re.sub(r"\s+", " ", " ".join(toks)).strip()
@@ -403,10 +869,24 @@ def extract_bidder_names(lines, hdr, ranges):
                 continue
             if FURNITURE_RE.search(frag) or BIDDER_LABEL_RE.match(frag):
                 continue
+            if ITEM_LABEL_RE.match(frag) or caption_only(frag):
+                continue
             if len(frag) <= 2 and not frag.isalpha():
                 continue
-            # a banner running across the page ("ARLINGTON CITY LIMITS ...")
-            if spans_left.get(id(l)) and frag.upper() == frag and len(frag) > 12:
+            # a banner running across the page ("ARLINGTON CITY LIMITS ...") --
+            # and the tail of a title that starts over the item/description
+            # columns and runs into this block without a break: firms are
+            # printed over the money blocks ('... ELEVATED STORAGE TANK SITE'
+            # over Frisco 2205-058's only firm went out as 'TANK SITE Landmark
+            # Structures').  A firm name that merely overhangs the first block
+            # ('SYB Construction Company, Inc' in Irving ITB-163D-20F) starts
+            # right of the description column and is no title.
+            if frag.upper() == frag and (
+                    (spans_left.get(id(l)) and len(frag) > 12)
+                    or _runs_from_margin(l["words"], b["lo"], ranges["desc"][1])):
+                continue
+            # the bare caption over the bidder columns ('BIDDERS', 'VENDORS')
+            if BIDDERS_CAPTION_RE.match(frag):
                 continue
             parts.append((l["top"], frag))
         parts.sort()
@@ -417,6 +897,85 @@ def extract_bidder_names(lines, hdr, ranges):
     return names
 
 
+def caption_only(frag):
+    """'Bid Amount', 'UNIT PRICE (NUMBER ONLY)' -- caption words and nothing else."""
+    toks = re.findall(r"[a-z#]+", frag.lower())
+    return bool(toks) and all(t in CAPTION_WORDS for t in toks)
+
+
+def name_words_by_block(l, blocks):
+    """The words of a name-band line over each bidder block.
+
+    Judged by whole runs of words, not word by word: a name centred over its
+    two columns starts left of its block's first anchor, and word by word its
+    first word was filed under the bidder to the left -- Southlake's Timarron
+    Creek tab read 'PROJECT ERS of MS, Inc. DAVID-TEHOUNGUE' and 'Ltd. Co'.
+    Each run goes to the block it overlaps most; a run lying mostly outside
+    every block is a title or a margin label ('... EROSION PROTECTION
+    PROJECT' ending over the first block) and goes nowhere.  A run straddling
+    two blocks about evenly is split word by word, by each word's centre."""
+    out = [[] for _ in blocks]
+    if not blocks:
+        return out
+    h = _height(l["words"]) or 6.0
+    lo_all, hi_all = blocks[0]["lo"], blocks[-1]["hi"]
+    for ph in phrases(l, 0.8 * h):
+        width = max(ph["x1"] - ph["x0"], 0.1)
+        if min(ph["x1"], hi_all) - max(ph["x0"], lo_all) < 0.5 * width:
+            continue
+        ov = [max(0.0, min(ph["x1"], b["hi"]) - max(ph["x0"], b["lo"])) for b in blocks]
+        best = max(range(len(blocks)), key=lambda k: ov[k])
+        if len(ov) > 1 and sorted(ov)[-2] >= 0.3 * width:
+            for w in ph["words"]:
+                c = (w["x0"] + w["x1"]) / 2.0
+                for k, b in enumerate(blocks):
+                    if b["lo"] <= c < b["hi"]:
+                        out[k].append(w)
+                        break
+            continue
+        out[best].extend(ph["words"])
+    return out
+
+
+# 'CONTRACTOR' is no such caption: it ends wrapped firm names ('Rose & Two
+# Thorns Landscaping & General / Contractor', Collin County 2023-138).
+BIDDERS_CAPTION_RE = re.compile(r"^(bidders?|vendors?|respondents?)\W*$", re.I)
+
+
+def _runs(words):
+    """Runs of words on one line with no gap wider than the words are tall."""
+    out = []
+    for w in sorted(words, key=lambda w: w["x0"]):
+        h = max(w["bottom"] - w["top"], 1.0)
+        if out and w["x0"] - out[-1][-1]["x1"] <= h:
+            out[-1].append(w)
+        else:
+            out.append([w])
+    return out
+
+
+def _title_run(words, blocks):
+    """True when one run of these words reads as a page title across the
+    bidder blocks (see extract_bidder_names)."""
+    for run in _runs(words):
+        hit = {k for w in run for k, b in enumerate(blocks) if b["lo"] <= w["x0"] < b["hi"]}
+        if len(hit) < 2:
+            continue
+        text = " ".join(w["text"] for w in run)
+        if ":" in text or FURNITURE_RE.search(text):
+            return True
+    return False
+
+
+def _runs_from_margin(words, lo, start):
+    """True when one run of these words starts left of x=start (over the
+    item/description columns) and reaches x=lo (a title written into a block)."""
+    for run in _runs(words):
+        if run[0]["x0"] < start and any(w["x0"] >= lo for w in run):
+            return True
+    return False
+
+
 def looks_like_name_set(names):
     """Accept a page's names only if they actually look like company names --
     otherwise a malformed page would overwrite good names carried from page 1."""
@@ -424,6 +983,33 @@ def looks_like_name_set(names):
     if not good:
         return False
     return all(len(n) <= 60 and not NOT_A_NAME_RE.search(n) for n in good)
+
+
+def page_bidder_names(lines, hdr, ranges):
+    """The page's bidder names (judged by runs of words), or None.
+
+    Judging runs puts a word in the right block more often, and so makes some
+    names longer than the word-by-word reading did: Collin County 2022-324's
+    'Vulcan Construction Materials LLC dba Vulcan Materials Company' (62
+    characters; word by word its 'Vulcan' was lost to the left), a name read
+    letter by letter, or one followed by a contact person -- and
+    looks_like_name_set refused the whole page for it, so every bidder lost
+    its name.  When the run-judged set fails that check but the word-by-word
+    set passes it, the run-judged set is still taken if no name is longer
+    than 60 characters once spaces are ignored; otherwise the word-by-word
+    set is.  Judging by runs never costs a page its names."""
+    names = extract_bidder_names(lines, hdr, ranges)
+    if looks_like_name_set(names):
+        return names
+    old = extract_bidder_names(lines, hdr, ranges, by_phrase=False)
+    if not looks_like_name_set(old):
+        return None
+    if any(names) and all(len(re.sub(r"\s+", "", n)) <= 60 and not NOT_A_NAME_RE.search(n)
+                          for n in names if n):
+        WORD_STATS["long_run_names_kept"] += 1
+        return names
+    WORD_STATS["names_by_word_fallback"] += 1
+    return old
 
 
 def parse_pdf_by_coords(path):
@@ -438,25 +1024,36 @@ def parse_pdf_by_coords(path):
     # fabricated BASE BID bucket, mixing MOBILIZATION / PAVING / BOND /
     # STORMWATER / SANITARY, which have completely different funding.
     section = "BASE BID"
+    prev_shape = None
     with pdfplumber.open(path) as pdf:
         for pi, page in enumerate(pdf.pages):
+            rotated_before = WORD_STATS["pages_rotated_text"]
             try:
                 words = extract_words_robust(page)
             except Exception:
                 continue
+            shape = (round(float(page.width)), round(float(page.height)),
+                     WORD_STATS["pages_rotated_text"] > rotated_before)
             lines = group_lines(words)
-            headers = [(i, find_header(l)) for i, l in enumerate(lines)]
-            headers = [(i, h) for i, h in headers if h]
+            headers = page_headers(lines)
+            inherited = False
             if headers:
                 hdr0 = headers[0][1]
-                ranges = build_ranges(hdr0, float(page.width))
-                prev_ranges = ranges
-                header_tops = [h["top"] for _, h in headers]
+                # The last bidder's block runs to the right edge of the TEXT: on
+                # a table turned 90 degrees the words run past page.width, and
+                # Kirby Creek's right-most bidder (McMahon) lost its name and
+                # its extended prices to the page box.
+                ranges = build_ranges(hdr0, max([float(page.width)]
+                                                + [w["x1"] + 1.0 for w in words]))
+                if not refine_description_start(lines, hdr0["top"], ranges):
+                    ranges = refine_item_column(lines, ranges, hdr0["top"])
+                prev_ranges, prev_shape = ranges, shape
+                header_tops = [t for _, h in headers for t in h.get("band", [h["top"]])]
                 top_limit = hdr0["top"]
-                page_names = extract_bidder_names(lines, hdr0, ranges)
-                if looks_like_name_set(page_names):
+                page_names = page_bidder_names(lines, hdr0, ranges)
+                if page_names:
                     names = page_names
-            elif prev_ranges is not None:
+            elif prev_ranges is not None and shape == prev_shape:
                 # A continuation page: the table carries on with the same column
                 # geometry but the caption row is not reprinted.  read_pdf has
                 # inherited headers across pages for exactly this reason; this
@@ -464,10 +1061,20 @@ def parse_pdf_by_coords(path):
                 # collin 58471 lost items 13-37 (the 42"-120" culvert price
                 # gradient, i.e. the large-diameter end of the curve) and
                 # mesquite 2024-013 lost pages 2-4, 105 priced items down to 33.
+                #
+                # ... but only while the pages in between ARE the table: same
+                # page shape, and every inherited page yielding item rows (an
+                # item number or a quantity).  Inherited without that check,
+                # Grand Prairie's 115-page council packet read the Kirby Creek
+                # tab's columns onto council checklists, RFQ score sheets, fee
+                # proposals and pump data sheets 8-58 pages later, as rows
+                # under the Kirby bidders' names.
                 ranges = prev_ranges
                 header_tops = []
                 top_limit = None
+                inherited = True
             else:
+                prev_ranges = None
                 continue
 
             # Never skip a page because the names could not be read: the prices
@@ -476,10 +1083,20 @@ def parse_pdf_by_coords(path):
             cur = list(names) if names else []
             cur = (cur + [""] * len(ranges["blocks"]))[:len(ranges["blocks"])]
 
-            last = None
-            for l in lines:
+            if ranges.get("glued"):
+                split_glued_words(lines, page, *ranges["glued"])
+            lines = merge_split_rows(lines, ranges, header_tops, top_limit)
+            events = []
+            page_recs = []
+            h_page = _height([w for l in lines for w in l["words"]]) or 6.0
+            numbered_rows = sum(1 for l in lines if ITEM_RE.match(spaced(l, ranges["item"]))
+                                and any(p for p, _ in (money_cells(l, b) for b in ranges["blocks"])))
+            numbered = None     # (line, item number, description) of an unpriced item line
+            for li, l in enumerate(lines):
+                pending, numbered = numbered, None
                 if header_tops and any(abs(l["top"] - ht) <= LINE_TOL
                                        for ht in header_tops):
+                    events.append(("stop", l))
                     continue
                 # Rows ABOVE the first header are not all furniture.  Dropping
                 # them outright cost 1,379 priced rows across 24 arlington PDFs
@@ -493,14 +1110,13 @@ def parse_pdf_by_coords(path):
                 above_header = top_limit is not None and l["top"] < top_limit
 
                 item_no = spaced(l, ranges["item"])
-                desc = spaced(l, ranges["desc"])
-                qty_s = joined(l, ranges["qty"])
+                desc, qty_s = desc_and_qty(l, ranges)
                 unit_s = spaced(l, ranges["unit"])
-                money = [(joined(l, b["price"]), joined(l, b["total"]))
-                         for b in ranges["blocks"]]
+                money = [money_cells(l, b) for b in ranges["blocks"]]
                 has_money = any(p for p, _ in money)
 
                 if AGG_RE.search(item_no) or AGG_RE.search(desc):
+                    events.append(("stop", l))
                     continue
                 if not has_money:
                     if above_header:
@@ -511,19 +1127,33 @@ def parse_pdf_by_coords(path):
                     if not txt_left:
                         continue
                     if ITEM_RE.match(item_no):
+                        numbered = (l, item_no, desc)
+                        continue
+                    if (pending is not None and not item_no and desc and numbered_rows >= 2
+                            and li + 1 < len(lines)
+                            and adoptable_priced_line(lines[li + 1], l, ranges, h_page)):
+                        # one more description line between the number and the
+                        # prices (Addison 22-164 alternates items 8 and 14: '8' /
+                        # 'CEMENT TREATED (NEW BASE WITH' / the priced line): it
+                        # is that item's, not a section banner
+                        numbered = (l, pending[1], (pending[2] + " " + desc).strip())
                         continue
                     letters = re.sub(r"[^A-Za-z]", "", txt_left)
                     if (letters and letters.upper() == letters and len(txt_left) > 4
                             and not qty_s):
                         section = txt_left[:60].upper()
-                        last = None
-                    elif last and desc:
-                        # a wrapped description line belongs to EVERY bidder row
-                        # of the item above it, not just the first
-                        for g in last:
-                            g["description"] = (g["description"] + " " + desc).strip()
+                        events.append(("stop", l))
+                    elif desc:
+                        # a wrapped description line -- which item it belongs to
+                        # is decided once the page is read (attach_wrapped_lines)
+                        events.append(("wrap", l, desc,
+                                       words_in(l, ranges["desc"])[0]["x0"]))
                     continue
+                item_no, desc = number_from_line_above(pending, l, item_no, desc,
+                                                       qty_s or unit_s, h_page, numbered_rows)
                 if not ITEM_RE.match(item_no) and not desc:
+                    # a priced line that is no item: a total under another caption
+                    events.append(("stop", l))
                     continue
 
                 group = []
@@ -542,6 +1172,488 @@ def parse_pdf_by_coords(path):
                         "unit_price_raw": p,
                         "extended_raw": t,
                     })
-                recs.extend(group)
-                last = group or None
+                page_recs.extend(group)
+                dw = words_in(l, ranges["desc"])
+                events.append(("row", l, group, dw[0]["x0"] if dw else None)
+                              if group else ("stop", l))
+            attach_wrapped_lines(events, lines)
+            if inherited and not item_rows(page_recs) and not repeats_price_captions(lines, ranges):
+                WORD_STATS["inherited_pages_refused"] += bool(page_recs)
+                prev_ranges = None
+                continue
+            recs.extend(page_recs)
     return recs
+
+
+def item_rows(recs):
+    """True when some record of a page carries a money-shaped price AND an item
+    number, a quantity or a unit -- what a page continuing a bid table has
+    and a letter or memo does not (a year landing in the quantity column of a
+    memo whose 'prices' are words is no item row).  A unit may be priced per
+    unit in its own cell (Mansfield's '$ Per SY') or glued to the quantity
+    (Collin County 2024-346's '9ACRE' in the quantity cell, Lewisville
+    25-4410's '150Cubic Yard' in the unit cell)."""
+    return any(re.fullmatch(r"\(?-?\$?[\d,]*\.?\d+\)?\$?", (r["unit_price_raw"] or "").replace(" ", ""))
+               and (ITEM_TOKEN_RE.match(r["item_no"] or "")
+                    or re.fullmatch(r"[\d,]*\.?\d+(?:[A-Za-z]{1,5}\.?)?", r["quantity_raw"] or "")
+                    or re.fullmatch(r"(?:\$\s*|[\d,]*\.?\d+\s*)?[A-Za-z][A-Za-z$ ./]{0,15}",
+                                    r["unit_raw"] or ""))
+               for r in recs)
+
+
+def number_from_line_above(pending, l, item_no, desc, has_qty_or_unit, h, numbered_rows):
+    """(item number, description) of a priced line, taken from the unpriced
+    line just above it when the priced line has neither but has a quantity or
+    unit, and the line above (pending: (line, item number, description)) is
+    within two line heights.  The item's number and first description line
+    are printed on the line ABOVE its prices: a top-aligned cell beside cells
+    centred on a three-line row (Addison 22-164 items 9, 19 and 28: '9 CEMENT
+    TREATED (NEW BASE WITH LIQUID' over 'TX-275-6.1 S.Y. 210 $65.00 ...').
+    The priced line was dropped as a total line, and the item with it.
+    Only where such rows are the exception: the page must also have priced
+    lines carrying their own item number (numbered_rows, 2 or more).  A tab
+    printing EVERY item's prices on a line of their own under a description
+    of several lines (Little Elm 2023-08) is another layout, which this rule
+    reads only in part."""
+    if (not item_no and not desc and has_qty_or_unit and pending is not None
+            and numbered_rows >= 2 and 0 < l["top"] - pending[0]["top"] <= 2.0 * h):
+        WORD_STATS["item_number_from_line_above"] += 1
+        return pending[1], pending[2]
+    return item_no, desc
+
+
+def adoptable_priced_line(l2, l, ranges, h):
+    """True when line l2 (just below line l) is a priced line with no item
+    number and no description but a quantity or unit -- the line
+    number_from_line_above gives a number to."""
+    if l2["top"] - l["top"] > 2.0 * h or spaced(l2, ranges["item"]):
+        return False
+    d2, q2 = desc_and_qty(l2, ranges)
+    return (not d2 and bool(q2 or spaced(l2, ranges["unit"]))
+            and any(p for p, _ in (money_cells(l2, b) for b in ranges["blocks"])))
+
+
+def repeats_price_captions(lines, ranges):
+    """True when a line of the page reprints a unit-price caption inside every
+    inherited bidder block ('Qty | Unit Price | Extended Price' per bidder,
+    the item and description captions left off): the table goes on even where
+    its rows have no item-number, quantity or unit cell -- Collin County's
+    Cisco maintenance tab (2025) prints part numbers and prices on page 2,
+    and item_rows alone refused the page."""
+    blocks = ranges["blocks"]
+    if len(blocks) < 2:
+        return False
+    for l in lines:
+        ws = l["words"]
+        t = [w["text"].upper().strip(":") for w in ws]
+        xs = [ws[i]["x0"] for i in range(len(t))
+              if t[i] == "UNITPRICE" or (t[i] == "UNIT" and i + 1 < len(t)
+                                         and t[i + 1] in ("PRICE", "COST"))]
+        if len(xs) >= len(blocks) and all(any(b["lo"] <= x < b["hi"] for x in xs)
+                                          for b in blocks):
+            return True
+    return False
+
+
+def merge_split_rows(lines, ranges, header_tops, top_limit):
+    """Put back together a row whose cells were drawn at different heights.
+
+    A line holding only an item number, quantity and/or unit -- no price, no
+    description -- within a fraction of a line of a priced line that has none
+    of those fields is the same row.  On Grand Prairie's Kirby Creek tab (a
+    table turned 90 degrees, its fonts of two sizes) '102  1  LS' sits 2 pt
+    from the line carrying item 102's prices, beyond LINE_TOL, so the item had
+    no number, quantity or unit; on Southlake's North Park tab item 85's
+    quantity sits on a line of its own between the two lines of its
+    description."""
+    if not lines:
+        return lines
+    h = _height([w for l in lines for w in l["words"]]) or 6.0
+    near = max(2.5, 0.75 * h)
+
+    def fields(l):
+        return ([joined(l, b["price"]) for b in ranges["blocks"]],
+                spaced(l, ranges["item"]), spaced(l, ranges["desc"]),
+                joined(l, ranges["qty"]), spaced(l, ranges["unit"]))
+    info = [fields(l) for l in lines]
+    banned = set()
+    for i, l in enumerate(lines):
+        if any(abs(l["top"] - t) <= LINE_TOL for t in header_tops):
+            banned.add(i)
+    out = list(lines)
+    gone = set()
+    for i, l in enumerate(lines):
+        prices, item, desc, qty, unit = info[i]
+        if i in banned or any(prices) or desc or not (item or qty or unit):
+            continue
+        if top_limit is not None and l["top"] < top_limit:
+            continue
+        if item and not ITEM_TOKEN_RE.match(item):
+            continue
+        if qty and not re.fullmatch(r"[\d,]*\.?\d+", qty):
+            continue
+        if unit and (len(unit) > 12 or re.search(r"\d", unit)):
+            continue
+        best = None
+        for j in (i - 2, i - 1, i + 1, i + 2):
+            if not 0 <= j < len(lines) or j in gone or j in banned:
+                continue
+            p2, it2, d2, q2, u2 = info[j]
+            if not any(p2) or AGG_RE.search(it2) or AGG_RE.search(d2):
+                continue
+            if (item and it2) or (qty and q2) or (unit and u2):
+                continue
+            d = abs(lines[j]["top"] - l["top"])
+            if d <= near and (best is None or d < best[0]):
+                best = (d, j)
+        if best is None:
+            continue
+        j = best[1]
+        ws = sorted(out[j]["words"] + l["words"], key=lambda w: w["x0"])
+        out[j] = {**out[j], "words": ws, "x0": ws[0]["x0"],
+                  "text": " ".join(w["text"] for w in ws)}
+        info[j] = fields(out[j])
+        gone.add(i)
+        WORD_STATS["split_rows_merged"] += 1
+    return [l for i, l in enumerate(out) if i not in gone]
+
+
+def attach_wrapped_lines(events, lines):
+    """Give each wrapped description line to the item it belongs to.
+
+    It used to go to the item ABOVE it.  Spreadsheet tabs centre single-line
+    cells vertically, so a description of several lines starts ABOVE its own
+    item line: Southlake's Timarron Creek 1.07 ('Gravel Fill for Engineered
+    Bank Stabilization System &' / '1.07 ... CY 102' / 'Pyramattress'),
+    Arlington's Kee Branch 313 and every item of Grand Prairie's Kirby Creek
+    tab gave their first lines to the item above.  For a run of such lines
+    between two items, the widest vertical gap in the run is the boundary
+    between the two cells: lines before it belong to the item above, lines
+    after it to the item below.  Where no gap stands out (rows spaced like
+    wrapped lines) everything stays with the item above, as before.  A line
+    after a total, banner or header line can only belong to the item below,
+    and one before such a line only to the item above.  A line given to the
+    item BELOW must start where the descriptions start and must not be a
+    group caption ('Bid Schedule 1.00:'): a title centred in the column ('2.
+    Field Lighting Upgrades' after a subtotal) is nobody's description and is
+    dropped -- it used to be glued to the item above the subtotal, as was a
+    footnote under a total line ('*Denotes correction by Engineer')."""
+    h = _height([w for l in lines for w in l["words"]]) or 6.0
+    starts = sorted(e[3] for e in events if e[0] == "row" and e[3] is not None)
+    ref = starts[len(starts) // 2] if starts else None
+    i, n = 0, len(events)
+    while i < n:
+        if events[i][0] != "wrap":
+            i += 1
+            continue
+        j = i
+        while j < n and events[j][0] == "wrap":
+            j += 1
+        run = events[i:j]
+        above = events[i - 1] if i > 0 and events[i - 1][0] == "row" else None
+        below = events[j] if j < n and events[j][0] == "row" else None
+        split = len(run)                      # run[:split] -> above, the rest -> below
+        if above is None:
+            split = 0
+        elif below is not None:
+            tops = [above[1]["top"]] + [e[1]["top"] for e in run] + [below[1]["top"]]
+            gaps = [b - a for a, b in zip(tops, tops[1:])]
+            k = max(range(len(gaps)), key=lambda x: gaps[x])
+            rest = [g for x, g in enumerate(gaps) if x != k]
+            if not rest or gaps[k] >= 1.25 * max(rest):
+                split = k
+        if above is not None:
+            for e in run[:split]:
+                for g in above[2]:
+                    g["description"] = (g["description"] + " " + e[2]).strip()
+        fwd = [e[2] for e in run[split:]
+               if below is not None and ref is not None and abs(e[3] - ref) <= max(8.0, h)
+               and not GROUP_LABEL_RE.search(e[2])]
+        if fwd:
+            WORD_STATS["wrapped_lines_to_item_below"] += len(fwd)
+            for g in below[2]:
+                g["description"] = (" ".join(fwd) + " " + g["description"]).strip()
+        i = j
+
+
+
+# ---- self-test ----------------------------------------------------------------
+def _sw(text, x0, top, x1=None, h=8.0):
+    """A synthetic word, the shape pdfplumber returns."""
+    return {"text": text, "x0": float(x0), "x1": float(x1 if x1 is not None else x0 + 4.0 * len(text)),
+            "top": float(top), "bottom": float(top) + h, "upright": True}
+
+
+def selftest_checks():
+    """(name, got, want) for the coordinate reader's layout rules, each on a
+    small synthetic page shaped like the tab that needed it, with the
+    look-alikes it must leave alone.  Run by parse_bidtabs --selftest."""
+    out = []
+
+    def check(name, got, want):
+        out.append((name, got, want))
+
+    # 1. 'UNIT PRICE | AMOUNT' per bidder: every bare AMOUNT is a total
+    h1 = find_header(group_lines([_sw(t, x, 60, h=4.4) for t, x in (
+        ("ITEM", 19), ("NO.", 30), ("DESCRIPTION", 138), ("UNIT", 271), ("QTY", 297),
+        ("UNIT", 327), ("PRICE", 338), ("AMOUNT", 375), ("UNIT", 419), ("PRICE", 429),
+        ("AMOUNT", 466), ("UNIT", 510), ("PRICE", 520), ("AMOUNT", 557))])[0])
+    check("bare AMOUNT after UNIT PRICE", (h1["price_x"], h1["total_x"], h1["unit_x"], h1["qty_x"]),
+          ([327.0, 419.0, 510.0], [375.0, 466.0, 557.0], 271.0, 297.0))
+    r1 = build_ranges(h1, 612.0)
+    check("UNIT left of QTY: the quantity range follows the unit range",
+          (r1["unit"], r1["qty"]), ((259.0, 285.0), (285.0, 315.0)))
+
+    # 2. a header over three lines (Timarron Creek): band completes the anchors,
+    #    '(with unit price in words)' under DESCRIPTION is no price caption
+    tim = [_sw(t, x, 136.7, x1, h=11.0) for t, x, x1 in (
+        ("BID", 81, 96), ("DESCRIPTION", 204, 264), ("UNIT", 462, 485), ("TOTAL", 530, 559),
+        ("UNIT", 604, 626), ("TOTAL", 671, 700))]
+    tim += [_sw(t, x, 143.3, x1, h=11.0) for t, x, x1 in (("UNIT", 368, 391), ("QTY", 409, 428))]
+    tim += [_sw(t, x, 150.5, x1, h=11.0) for t, x, x1 in (
+        ("NO.", 81, 98), ("(with", 178, 201), ("unit", 203, 221), ("price", 224, 246),
+        ("in", 249, 257), ("words)", 259, 290), ("PRICE", 461, 486), ("PRICE", 531, 557),
+        ("PRICE", 602, 628), ("PRICE", 672, 698))]
+    tim += [_sw("1.01", 80, 178.1, 100, h=11.0), _sw("Mobilization", 110, 178.1, 166, h=11.0),
+            _sw("LS", 375, 178.1, 384, h=11.0), _sw("1", 416, 178.1, 421, h=11.0),
+            _sw("35,000.00", 458, 178.1, 503, h=11.0), _sw("35,000.00", 529, 178.1, 574, h=11.0)]
+    lines = group_lines(tim)
+    hs = page_headers(lines)
+    hd = hs[0][1] if hs else {}
+    check("three-line header", (len(hs), hd.get("price_x"), hd.get("total_x"), hd.get("qty_x"),
+                                hd.get("unit_x"), hd.get("desc_x"), len(hd.get("band", []))),
+          (1, [461.0, 602.0], [530.0, 671.0], 409.0, 368.0, 178.0, 3))
+    r2 = build_ranges(hd, 792.0)
+    l1 = [l for l in lines if abs(l["top"] - 178.1) < 1][0]
+    check("three-line header: unit and quantity read",
+          (spaced(l1, r2["unit"]), desc_and_qty(l1, r2)[1]), ("LS", "1"))
+    # a wide caption over two columns of the next line is no plain band
+    wide = group_lines([_sw("TOTAL", 300, 50, 400, h=6.0), _sw("DESCRIPTION", 100, 56, 150, h=6.0),
+                        _sw("UNIT", 300, 56, 320, h=6.0), _sw("PRICE", 322, 56, 340, h=6.0),
+                        _sw("AMOUNT", 360, 56, 390, h=6.0)])
+    check("caption over two columns: no band", stacked_header(wide, 1), None)
+
+    # 3. no single-line header at all (Frisco 2103-057), with a spec-code
+    #    column ('Items') between the item number and the description
+    fr = [_sw(t, x, 60.9, x1, h=4.8) for t, x, x1 in (
+        ("#", 40, 42), ("Items", 61, 72), ("Item", 82, 91), ("Unit", 264, 270))]
+    fr += [_sw(t, x, 63.8, x1, h=4.8) for t, x, x1 in (
+        ("Quantity", 242, 255), ("of", 264, 266), ("Unit", 300, 306), ("Total", 341, 349),
+        ("Unit", 391, 397), ("Total", 422, 429))]
+    fr += [_sw(t, x, 68.4, x1, h=4.8) for t, x, x1 in (
+        ("Description", 82, 105), ("Required", 242, 255), ("Measure", 264, 276), ("Price", 299, 306),
+        ("Cost", 341, 347), ("Price", 390, 397), ("Cost", 421, 427))]
+    hs = page_headers(group_lines(fr))
+    hd = hs[0][1] if hs else {}
+    check("header band with no single-line header",
+          (len(hs), hd.get("item_x"), hd.get("item_hi_x"), hd.get("desc_x"), hd.get("qty_x"),
+           hd.get("unit_x"), hd.get("price_x"), hd.get("total_x")),
+          (1, 40.0, 61.0, 82.0, 242.0, 264.0, [299.0, 390.0], [341.0, 421.0]))
+    r3 = build_ranges(hd, 792.0)
+    check("spec column: the item range stops before it", r3["item"], (0.0, 49.0))
+    b0 = r3["blocks"][0]
+    lp = group_lines([_sw("$", 300, 173.6, 302.7, h=4.8), _sw("1.80", 328.7, 173.6, 337.1, h=4.8),
+                      _sw("$", 342.1, 173.6, 344.6, h=4.8),
+                      _sw("37,827.00", 365.9, 173.6, 385.1, h=4.8)])[0]
+    check("a short unit price inside the total's margin is the price", money_cells(lp, b0),
+          ("$1.80", "$37,827.00"))
+    lt = group_lines([_sw("$", 331, 10, 334), _sw("12.00", 346, 10, 368)])[0]
+    check("a total's '$' left of the caption stays the total's", money_cells(lt, b0), ("", "$12.00"))
+    l2 = group_lines([_sw("$1,300.00", 290.0, 20, 318.0, h=4.8), _sw("$1,300.00", 312.0, 20, 338.0, h=4.8)])[0]
+    check("two amounts in the price cell, none in the total: the second is the total",
+          money_cells(l2, b0), ("$1,300.00", "$1,300.00"))
+    la = group_lines([_sw("$5.00", 300.0, 20, 318.0, h=4.8), _sw("40.00", 330.0, 20, 340.5, h=4.8)])[0]
+    check("a total ending left of its caption with nothing after it stays the total",
+          money_cells(la, b0), ("$5.00", "40.00"))
+
+    # 4. a DESCRIPTION caption centred over a wide column (North Park)
+    rows = [_sw("DESCRIPTION", 138, 60, 163)]
+    for k, (n, t) in enumerate((("0", "Mobilization"), ("1", "Provide"), ("2", "Implement"),
+                                ("3", "Remove"))):
+        rows += [_sw(n, 27, 66 + 6 * k, 29), _sw(t, 38.4, 66 + 6 * k)]
+    rr = {"item": (0.0, 126.0), "desc": (126.0, 285.0)}
+    refine_description_start(group_lines(rows), 60.0, rr)
+    check("centred DESCRIPTION caption: descriptions start at the text", (rr["item"], rr["desc"]),
+          ((0.0, 32.4), (32.4, 285.0)))
+    codes = [_sw("DESCRIPTION", 120, 60)]
+    for k, ws in enumerate((("101", "Mobilization"), ("102", "Excavation"), ("103", "SP", "Paving"),
+                            ("104", "Grading"))):
+        codes += [_sw(ws[0], 20, 66 + 6 * k)]
+        codes += [_sw(t, 40 if len(ws) == 3 and j == 0 else 60, 66 + 6 * k)
+                  for j, t in enumerate(ws[1:])]
+    rc = {"item": (0.0, 108.0), "desc": (108.0, 285.0)}
+    check("codes of varying width beside the item number: no move",
+          (refine_description_start(group_lines(codes), 60.0, rc), rc["item"]), (False, (0.0, 108.0)))
+    secs = [_sw("Description", 148, 60)]
+    for k, ws in enumerate((("100", "Miscellaneous", "Items"), ("101", "General", "Site"),
+                            ("102", "Mobilization"), ("103", "Tree", "Protection"),
+                            ("200", "Demolition", "Items"), ("201", "Demolish", "and"))):
+        xs = (21, 35, 87) if ws[0].endswith("00") else (30, 54, 87)
+        secs += [_sw(t, xs[j], 66 + 6 * k) for j, t in enumerate(ws)]
+    rs = {"item": (0.0, 136.8), "desc": (136.8, 280.0)}
+    check("section lines starting left of the column do not stop the move",
+          (refine_description_start(group_lines(secs), 60.0, rs), rs["item"]), (True, (0.0, 48.0)))
+
+    # 5. a description running into the quantity column's margin
+    rq = {"desc": (92.0, 192.6), "qty": (192.6, 224.9)}
+    lq = group_lines([_sw("complete", 180, 428, 194.7, h=3.65), _sw("in", 195.7, 428, 198.5, h=3.65),
+                      _sw("1", 212.3, 428, 214.3, h=3.65)])[0]
+    check("description overflow into the quantity margin", desc_and_qty(lq, rq), ("complete in", "1"))
+    lq2 = group_lines([_sw("complete", 180, 428, 194.7, h=3.65),
+                       _sw("12", 195.7, 428, 199.5, h=3.65)])[0]
+    check("a number in the quantity margin stays the quantity", desc_and_qty(lq2, rq), ("complete", "12"))
+    lq3 = group_lines([_sw("furnished", 170, 428, 186.7, h=3.65), _sw("and", 187.5, 428, 192.5, h=3.65),
+                       _sw("in1", 193.6, 428, 199.5, h=3.65)])[0]
+    check("a word run into the quantity's digits stays where it was", desc_and_qty(lq3, rq),
+          ("furnished and", "in1"))
+
+    # 6. names centred over their two columns; a title ending over the first
+    blocks = [{"lo": 449.0, "hi": 591.0}, {"lo": 591.0, "hi": 792.0}]
+    nl = group_lines([_sw(t, x, 69.6, x1, h=11.0) for t, x, x1 in (
+        ("ERS", 475, 492), ("of", 494, 504), ("MS,", 506, 524), ("Inc.", 526, 543),
+        ("DAVID-TEHOUNGUE,", 583, 679), ("Ltd.", 682, 699), ("Co.", 702, 716))])[0]
+    check("a name is judged by its whole run of words",
+          [" ".join(w["text"] for w in ws) for ws in name_words_by_block(nl, blocks)],
+          ["ERS of MS, Inc.", "DAVID-TEHOUNGUE, Ltd. Co."])
+    tl = group_lines([_sw(t, x, 44.9, x1, h=11.0) for t, x, x1 in (
+        ("TIMARRON", 277, 314), ("CREEK", 316, 336), ("AND", 338, 353), ("BB-8", 355, 370),
+        ("TRIBUTARY", 372, 408), ("EROSION", 410, 440), ("PROTECTION", 442, 484),
+        ("PROJECT", 486, 515))])[0]
+    check("a title ending over the first block names nobody",
+          name_words_by_block(tl, blocks), [[], []])
+    check("caption-only and agenda-stamp fragments",
+          [caption_only("Bid Amount"), caption_only("UNIT PRICE (NUMBER ONLY)"),
+           caption_only("Iron T Construction, Inc."), bool(ITEM_LABEL_RE.match("Item 12.")),
+           bool(ITEM_LABEL_RE.match("Item 12. Ed Bell Construction"))],
+          [True, True, False, True, False])
+
+    # 7. a row drawn at two heights (item number 2 pt off its prices)
+    rk = {"item": (0.0, 92.0), "desc": (92.0, 192.6), "qty": (192.6, 224.9), "unit": (224.9, 253.0),
+          "blocks": [{"lo": 253.0, "hi": 407.5, "price": (253.0, 324.6), "total": (324.6, 407.5),
+                      "tx": 336.6}]}
+    kl = group_lines([_sw("Erosion", 98, 159.8, 110, h=3.65), _sw("$", 258, 159.8, 262, h=3.65),
+                      _sw("13,167.09", 296, 159.8, 323, h=3.65),
+                      _sw("13,167.09", 380, 159.8, 407, h=3.65),
+                      _sw("102", 82, 161.8, 88, h=3.65), _sw("1", 212, 161.8, 214, h=3.65),
+                      _sw("LS", 239, 161.8, 243, h=3.65),
+                      _sw("specifications,", 98, 164.1, 121, h=3.65)])
+    mk = merge_split_rows(kl, rk, [], None)
+    check("an item number drawn off its priced line is merged into it",
+          (len(kl), len(mk), spaced(mk[0], rk["item"]), desc_and_qty(mk[0], rk)[1],
+           spaced(mk[0], rk["unit"])),
+          (3, 2, "102", "1", "LS"))
+
+    # 8. wrapped description lines: centred cells, top-aligned cells, after a
+    #    total line, a centred title, a group caption
+    def grp(desc):
+        return [{"description": desc}, {"description": desc}]
+
+    def ln(top):
+        return {"top": float(top), "words": [_sw("x", 0, top, h=11.0)]}
+
+    a, b, c = grp("Remove 13\"-24\" Tree"), grp(""), grp("Seed")
+    ev = [("row", ln(238.2), a, 110.0), ("wrap", ln(250.4), "Gravel Fill for Engineered", 110.0),
+          ("row", ln(257.6), b, None), ("wrap", ln(264.9), "Pyramattress", 110.0),
+          ("row", ln(277.1), c, 110.0)]
+    attach_wrapped_lines(ev, [ln(250.4)])
+    check("centred cells: the line above an item is its first line",
+          [a[1]["description"], b[0]["description"], c[0]["description"]],
+          ['Remove 13"-24" Tree', "Gravel Fill for Engineered Pyramattress", "Seed"])
+    a, b = grp("Furnish and install"), grp("Grading")
+    attach_wrapped_lines([("row", ln(100), a, 40.0), ("wrap", ln(108), "pipe complete", 40.0),
+                          ("row", ln(120), b, 40.0)], [ln(100)])
+    check("top-aligned cells: a wrapped line stays with the item above",
+          [a[0]["description"], b[0]["description"]], ["Furnish and install pipe complete", "Grading"])
+    a, b = grp("Furnish"), grp("Grading")
+    attach_wrapped_lines([("row", ln(100), a, 40.0), ("wrap", ln(106), "and install", 40.0),
+                          ("row", ln(112), b, 40.0)], [ln(100)])
+    check("no gap stands out: the item above, as before",
+          [a[0]["description"], b[0]["description"]], ["Furnish and install", "Grading"])
+    b = grp("Item 20")
+    attach_wrapped_lines([("stop", ln(628)),
+                          ("wrap", ln(639.4), "Turf Option A: Install Turf in Lieu of", 38.0),
+                          ("row", ln(645.3), b, 38.0)], [ln(628)])
+    check("after a total line: the item below", b[0]["description"],
+          "Turf Option A: Install Turf in Lieu of Item 20")
+    b, c = grp("Remove Existing Flood Light"), grp("Mobilization")
+    attach_wrapped_lines([("stop", ln(530)), ("wrap", ln(536), "2. Field Lighting Upgrades", 196.0),
+                          ("row", ln(542), b, 38.0)], [ln(530)])
+    attach_wrapped_lines([("stop", ln(150)), ("wrap", ln(165), "Bid Schedule 1.00:", 110.0),
+                          ("row", ln(178), c, 110.0)], [ln(150)])
+    check("a centred title or a group caption is nobody's description",
+          [b[0]["description"], c[0]["description"]], ["Remove Existing Flood Light", "Mobilization"])
+
+    # 9. rotated text shattered into letters; a page that continues no table
+    pieces = [_sw(t, x0, 147.1, x1, h=3.65) for t, x0, x1 in (
+        ("C", 98.1, 101.8), ("o", 101.8, 103.8), ("n", 103.8, 106.0), ("d", 106.0, 108.3),
+        ("it", 108.3, 110.5), ("ion", 110.5, 115.2), ("S", 116.2, 118.6), ("urvey,", 118.6, 129.4),
+        ("1", 212.3, 214.3))]
+    check("rotated pieces edge to edge are one word",
+          [w["text"] for w in join_touching_words(pieces)], ["Condition", "Survey,", "1"])
+    check("a continuation page needs an item number or a quantity",
+          [item_rows([{"item_no": "", "quantity_raw": "", "unit_raw": "", "unit_price_raw": "$445,510.00"}]),
+           item_rows([{"item_no": "Bernal", "quantity_raw": "$445,510.00", "unit_raw": "",
+                       "unit_price_raw": "Sheet"}]),
+           item_rows([{"item_no": "plumbing", "quantity_raw": "2022", "unit_raw": "Cost",
+                       "unit_price_raw": "forthe"}]),
+           item_rows([{"item_no": "#1-1", "quantity_raw": "", "unit_raw": "", "unit_price_raw": "$50,000.00"}]),
+           item_rows([{"item_no": "", "quantity_raw": "1,250", "unit_raw": "", "unit_price_raw": "35,000.00$"}]),
+           item_rows([{"item_no": "", "quantity_raw": "", "unit_raw": "$ Per SY",
+                        "unit_price_raw": "$68.00"}])],
+          [False, False, False, True, True, True])
+    check("'Sub Total' is a total line", bool(AGG_RE.search("Sub Total")), True)
+
+    # 10. names judged by runs that come out over 60 characters: kept when
+    #     short without spaces and the word-by-word set passes; the
+    #     word-by-word set when they are long even so (a signature line)
+    nb = {"desc": (50.0, 280.0), "blocks": [{"lo": 319.0, "hi": 424.0}, {"lo": 424.0, "hi": 525.0}]}
+    vl = group_lines([_sw(t, x0, top, x1) for t, x0, x1, top in (
+        ("Vulcan", 316, 339, 60), ("Construction", 341, 383, 60), ("Materials", 385, 417, 60),
+        ("Green", 424, 445, 60), ("Dream", 447, 469, 60), ("International", 471, 515, 60),
+        ("LLC", 325, 336, 66), ("dba", 338, 350, 66), ("Vulcan", 352, 375, 66),
+        ("Materials", 377, 408, 66), ("LLC", 464, 475, 66), ("Company", 351, 382, 72))])
+    check("a long name judged by runs is kept",
+          (extract_bidder_names(vl, {"top": 100.0}, nb, by_phrase=False)[0],
+           page_bidder_names(vl, {"top": 100.0}, nb)),
+          ("Construction Materials LLC dba Vulcan Materials Company",
+           ["Vulcan Construction Materials LLC dba Vulcan Materials Company",
+            "Green Dream International LLC"]))
+    sb = {"desc": (50.0, 280.0), "blocks": [{"lo": 319.0, "hi": 424.0}, {"lo": 424.0, "hi": 560.0},
+                                           {"lo": 560.0, "hi": 700.0}]}
+    sl = group_lines([_sw(t, x0, top, x1) for t, x0, x1, top in (
+        ("CHECKED", 500, 530, 54), ("BY:", 532, 542, 54), ("_" * 50, 544, 690, 54),
+        ("Acme", 330, 350, 66), ("Paving", 352, 380, 66), ("Beta", 440, 460, 66),
+        ("Builders", 462, 500, 66), ("Texas", 580, 600, 66), ("Standard", 602, 640, 66),
+        ("Construction", 642, 690, 66))])
+    check("names judged by runs too long even without spaces: word by word",
+          page_bidder_names(sl, {"top": 100.0}, sb), ["Acme Paving", "Beta Builders",
+                                                       "Texas Standard Construction"])
+
+    # 11. a continuation page that reprints the price captions per bidder
+    cb = {"blocks": [{"lo": 300.0, "hi": 450.0}, {"lo": 450.0, "hi": 600.0}]}
+    cap = group_lines([_sw(t, x, 50) for t, x in (("Qty", 290), ("Unit", 312), ("Price", 332),
+                                                    ("Extended", 380), ("Price", 420), ("Qty", 440),
+                                                    ("Unit", 462), ("Price", 482), ("Extended", 530))])
+    one = group_lines([_sw(t, x, 50) for t, x in (("Unit", 312), ("Price", 332), ("Total", 380))])
+    check("price captions reprinted over every block continue the table",
+          [repeats_price_captions(cap, cb), repeats_price_captions(one, cb)], [True, False])
+    check("a quantity glued to its unit is an item row",
+          [item_rows([{"item_no": "", "quantity_raw": "9ACRE", "unit_raw": "",
+                       "unit_price_raw": "$50.00"}]),
+           item_rows([{"item_no": "", "quantity_raw": "9ACRE", "unit_raw": "",
+                       "unit_price_raw": "Hours"}]),
+           item_rows([{"item_no": "", "quantity_raw": "", "unit_raw": "150Cubic Yard",
+                       "unit_price_raw": "$30.00"}])], [True, False, True])
+
+    # 12. the item number on the line above its prices
+    above = ({"top": 300.0}, "9", "CEMENT TREATED (NEW BASE WITH LIQUID")
+    check("item number and description from the line above",
+          [number_from_line_above(above, {"top": 308.0}, "", "", True, 6.0, 26),
+           number_from_line_above(above, {"top": 308.0}, "", "", False, 6.0, 26),
+           number_from_line_above(above, {"top": 330.0}, "", "", True, 6.0, 26),
+           number_from_line_above(above, {"top": 308.0}, "10", "", True, 6.0, 26),
+           number_from_line_above(None, {"top": 308.0}, "", "", True, 6.0, 26),
+           number_from_line_above(above, {"top": 308.0}, "", "", True, 6.0, 0)],
+          [("9", "CEMENT TREATED (NEW BASE WITH LIQUID"), ("", ""), ("", ""), ("10", ""),
+           ("", ""), ("", "")])
+    return out

@@ -9,7 +9,7 @@ The focus is municipal work in the Dallas–Fort Worth area, especially creek er
 
 The model is trained **only on public bid tabulations**. Every number it reports was measured **forward in time**: each letting is priced using only lettings dated before it, the way the tool would actually be used.
 
-> **Status: work in progress.** The data pipeline and the evaluation framework are in place. Accuracy is still well short of the goal (see below). This repository is being published step by step.
+> **Status: work in progress.** The data pipeline, the evaluation framework and two rounds of confirmed pricing changes are in place. TxDOT accuracy is near engineer level; municipal accuracy is still short of the goal (see below). This repository is being published step by step.
 
 ---
 
@@ -18,31 +18,37 @@ The model is trained **only on public bid tabulations**. Every number it reports
 The estimate is meant to be used as an OPCC, where underestimating is the costly mistake. The target is:
 
 1. **Floor:** the P80 estimate is below the actual low bid on **at most 20%** of lettings.
-2. **Score:** as many lettings as possible land with P80 / low bid between **1.00 and 1.13** (over, but by no more than 13%).
+2. **Score:** within that floor, P80 should overshoot the low bid **as little as possible** (13% is the aspiration).
+3. **Yardstick:** at the same not-under rate, the overshoot is compared with engineers' own estimates. Engineer estimates are never an input.
 
 ## Where it stands (2026-11-20)
 
 All figures are forward in time, on lettings the model had not seen when it priced them.
 
-| | Lettings | P50 median error | P80 under the low bid | P80 within 1.00–1.13 |
-|---|---|---|---|---|
-| DFW municipal, 2024–26 | 140 | 29% | 17% | 9% |
-| Locked public test set, municipal | 58 | 22% | 14% (90% interval 7–21%) | 14% |
-| TxDOT (DFW counties), 2023–26 | 798 | 26% | 16% | 13% |
+| | Lettings | P50 median error | P80 under the low bid | Median overshoot (P80 ≥ low) | Overshoot at 70% / 75% / 80% not-under |
+|---|---|---|---|---|---|
+| DFW municipal, 2024–26 | 144 | 26% | 19% | 51% | 34% / 45% / 50% |
+| Locked public test set, municipal | 56 | 14% | 20% | 31% | — |
+| TxDOT (DFW counties), 2023–26 | 796 | 17% | 16% | 31% | 26% / 26% / 30% |
 
-For comparison, engineers' own estimates have these median errors:
+For comparison, engineers' own estimates on DFW municipal lettings:
 
-- DFW municipal: **15%** on 140 lettings checked against the original documents. They are under the low bid 33% of the time and within 1.00–1.13 only 23% of the time.
-- TxDOT: about **14%**.
+- **Median error:** about **15%**, on 140 lettings checked against the original documents.
+- **Overshoot at 70% / 75% / 80% not-under:** **20% / 21% / 25%**.
+- **TxDOT:** engineers' median error is about **14%**.
 
-The floor holds. The point estimate is about twice as far off as an engineer's.
+TxDOT is close to engineer level. Municipal overshoot is still about twice the engineers'.
 
-Experiments in progress, not yet adopted:
+Adopted on 2026-11-20, each after a test registered in advance:
 
-- **Pricing ordinary line items from the most similar earlier projects ("comparables").** This cut municipal error significantly and TxDOT median error from 26% to 15–18%.
-- **Mobilization as a share of the job, and a competition discount that depends on job size.** These remove most of the size bias on TxDOT, where small jobs were overestimated and large ones underestimated.
-
-None is adopted until it passes a test registered in advance, judged per year, and is then confirmed once on the locked test set.
+- **Comparables blend, size fallback, removal identity ("V2+F1+F2", both markets).**
+  - Comparables: each job is also priced from its five most similar earlier jobs, and the two prices are blended.
+  - Size fallback: a large pipe with no same-size history is scaled from the nearest size.
+  - Removal identity: pure removals are priced only from removal history.
+  - It was confirmed once on the locked test set: P80 under 19.6%, overshoot 31% (vs 36%), P50 error 14% (vs 18%).
+- **Mobilization as a share of the job and a size-aware competition discount ("T1", TxDOT only).**
+  - The locked test set holds no TxDOT lettings, so T1 is adopted on forward evidence.
+  - It will be re-checked on TxDOT lettings dated after 2026-11-20.
 
 ## How it works
 
@@ -57,7 +63,8 @@ panel  ── one row per bidder × line item; item family, unit, size, quantity
 reference prices ── two-stage medians (within letting, then across lettings),
                     price index by market, competition discount by bidder count
       ▼
-estimate(schedule) ── price each line, sum, discount  →  P50
+estimate(schedule) ── price each line, sum; blend with the five most similar
+                       earlier jobs (comparables); competition discount  →  P50
       ▼
 forward calibration ── centring and the P80 divisor from earlier lettings only,
                        plus an adaptive guard aimed at a 16% under-share  →  P80
@@ -107,7 +114,7 @@ Text extraction and OCR use poppler (`pdftotext`) and Tesseract, installed from 
 - 所有准确度都按时间往前测：每场开标只用比它早的开标定价。
 - 另有一个锁定的公开检验集，只用来确认事先登记的决定。
 
-目前底线守住了，但估价本身的误差约为工程师估价的两倍，还在改进中。
+2026-11-20：TxDOT 的估价误差已接近工程师（中位约 17%，工程师约 14%）；DFW 市政在同样不低估比例下的高估仍约为工程师的两倍，还在改进中。
 
 ## License
 

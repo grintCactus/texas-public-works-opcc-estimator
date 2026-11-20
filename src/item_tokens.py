@@ -42,6 +42,32 @@ import re
 
 THRESHOLD = 0.35
 
+# REMOVAL IDENTITY.  remove / removal / replace / existing are stop words
+# below, so "REMOVE EXISTING SANITARY SEWER PIPE" and "Install 10\" SDR-35 PVC
+# Sanitary Sewer Pipe" shared {sanitary, sewer, pipe} and a removal price
+# ($14/LF) could price new pipe bid at $82-155 (p50fix round 5, worst-line
+# check).  In the 2024-26 municipal forward back-test removal-only lines
+# summed to 1.42x their own median bids.  So a removal-only
+# description (one that removes and builds nothing back) carries the flag
+# token RM_FLAG, and similar() refuses a pair whose flags differ -- a hard
+# constraint, like the dimensions.  The rule is the one registered for the
+# defects experiment (handoff/scratchpad/defects/PREREGISTRATION.md item 1)
+# and adopted after round 5 (PREREGISTRATION_ROUND5.md, variant F2).  The
+# band and family tables split the same way (estimate_low_bid.family_key).
+REMOVAL_IDENTITY = True
+RM_FLAG = "zzremoval"
+_RM = re.compile(r"\b(remov\w*|rem|demo|demol\w*|demolition)\b")
+_RP = re.compile(r"\b(replac\w*|reconstruct\w*|install\w*|reset\w*|"
+                 r"relocat\w*|new|rebuild\w*|reinstall\w*)\b")
+
+
+def removal_only(desc):
+    """A line that removes and builds nothing back: a removal word and no
+    replace / reconstruct / install / reset / relocate / new / rebuild /
+    reinstall word."""
+    d = (desc or "").lower()
+    return bool(_RM.search(d)) and not _RP.search(d)
+
 # Words that appear on every other bid item and so carry no identity.  Units
 # are in here too: the unit is matched exactly and separately, so repeating it
 # in the token set would inflate every Jaccard score by the same amount.
@@ -85,8 +111,13 @@ def _fold(w):
     return w
 
 
-def tokens(desc):
+def tokens(desc, removal=None):
     """The identity token set: content words plus bare numbers.
+
+    `removal` (default: REMOVAL_IDENTITY) adds RM_FLAG to a removal-only
+    description.  The comparables method (comparables.py) matches lines on
+    the identity it was registered with, which has no removal flag, so it
+    passes removal=False.
 
     Numbers are kept -- they are the dimensions, and 18-inch pipe is not
     24-inch pipe.  `3.0` folds to `3`, and a glued dimension is split at the
@@ -117,6 +148,11 @@ def tokens(desc):
             w = _fold(w)
             if w and w not in STOP:
                 out.add(w)
+    # the flag joins only a set that already has content words: a bare
+    # "remove existing" must not become an identity of its own
+    if (REMOVAL_IDENTITY if removal is None else removal) and out \
+            and removal_only(desc):
+        out.add(RM_FLAG)
     return frozenset(out)
 
 
@@ -150,6 +186,8 @@ def similar(a, b, thresh=THRESHOLD):
     """
     na, nb = numbers(a), numbers(b)
     if na and nb and not (na & nb):
+        return 0.0
+    if REMOVAL_IDENTITY and ((RM_FLAG in a) != (RM_FLAG in b)):
         return 0.0
     return jaccard(a, b) if jaccard(a, b) >= thresh else 0.0
 
@@ -213,6 +251,23 @@ def _selftest():
     chk("9 signature is sorted and stable",
         signature("PVC coated 3 x 3 gabion basket"),
         " ".join(sorted(tokens("basket gabion 3 3 coated pvc"))))
+
+    # removal identity: removal-only work never prices new work, nor back
+    k_ = tokens("remove existing sanitary sewer pipe")
+    m_ = tokens("install 10 in sdr 35 pvc sanitary sewer pipe")
+    chk("10 removal-only line carries the flag", RM_FLAG in k_, True)
+    chk("10 removal price refused for new pipe (was 0.43)",
+        similar(m_, k_), 0.0)
+    chk("10 two removal wordings still match",
+        similar(k_, tokens("removal of existing sanitary sewer pipe")) > 0,
+        True)
+    chk("10 remove-and-replace is not removal-only",
+        RM_FLAG in tokens("remove and replace 6 in concrete pavement"), False)
+    chk("10 a bare removal phrase stays empty", tokens("remove existing"),
+        frozenset())
+    chk("10 removal=False gives the flag-free identity (comparables)",
+        RM_FLAG in tokens("remove existing sanitary sewer pipe", removal=False),
+        False)
 
     print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
     return ok

@@ -27,7 +27,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from parse_bidtabs import (norm_unit, norm_desc, item_family, extract_size_in,
-                           canon_bidder, MATERIAL_RE, ENGINEER_RE)
+                           canon_bidder, MATERIAL_RE, ENGINEER_RE, is_time_bid_item)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "data", "external", "txdot", "txdot_bidtabs_dfw.csv")
@@ -90,6 +90,16 @@ def main():
         ["competitive", "thin", "sole"], default="none")
 
     desc = df.bid_item_description.fillna("").astype(str)
+    # The B half of an A+B bid (parse_bidtabs.is_time_bid_item): 800-7001 'NO.
+    # OF WORKING DAYS', $/D, days x the daily road user cost.  It ranks the
+    # bids and is not paid -- bid_total_amount already leaves it out -- so it
+    # leaves txdot_line_items (every bidder total, low bid and unit-price table
+    # built from it) and its amount is kept per bidder as time_bid_amount.
+    # Tail audit 2026-11-20: A00066071 read Archer Western $96,052,232.47
+    # against TxDOT's $93,868,232.48.
+    df["is_time_bid"] = [is_time_bid_item(c, u, s) for c, u, s in
+                         zip(df.bid_code, df.measurement_unit, desc)]
+    df["time_bid_amount"] = np.where(df.is_time_bid, df.quantity * df.unit_price, 0.0)
     df["desc_norm"] = desc.map(norm_desc)
     df["item_family"] = df.desc_norm.map(item_family)
     df["size_in"] = df.desc_norm.map(extract_size_in)
@@ -127,7 +137,10 @@ def main():
         "unit_price": df.unit_price,
         "bid_total_amount": df.bid_total_amount,
     })
-    keep = keep[keep.unit_price.notna() & (keep.unit_price > 0)]
+    keep = keep[keep.unit_price.notna() & (keep.unit_price > 0) & ~df.is_time_bid]
+    print("A+B time items dropped (800-x001, $/D): %d rows in %d lettings"
+          % (int(df.is_time_bid.sum()),
+             df.loc[df.is_time_bid, ["project_id", "bid_date"]].drop_duplicates().shape[0]))
     keep.to_csv(os.path.join(OUT, "txdot_line_items.csv"), index=False, encoding="utf-8-sig")
 
     # ---- project x vendor totals ----------------------------------------
@@ -136,7 +149,9 @@ def main():
                        "is_engineer_estimate", "is_low_bidder", "n_bidders"],
                       dropna=False)
            .agg(bid_total=("bid_total_amount", "max"),
-                n_items=("bid_code", "nunique"))
+                n_items=("bid_code", "nunique"),
+                # B of an A+B bid: ranked on, not in bid_total, not paid
+                time_bid_amount=("time_bid_amount", "sum"))
            .reset_index())
     tot.to_csv(os.path.join(OUT, "txdot_project_totals.csv"), index=False, encoding="utf-8-sig")
 

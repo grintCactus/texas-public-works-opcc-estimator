@@ -118,7 +118,9 @@ trusting this comment.
 """
 import bisect
 import collections
+import contextlib
 import csv
+import datetime as _dt
 import math
 import os
 import re
@@ -126,6 +128,7 @@ import statistics
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import comparables  # noqa: E402
 import item_tokens  # noqa: E402
 import qty_shape  # noqa: E402
 
@@ -200,6 +203,406 @@ def owner_fixed_amount(item):
                               item.get("description") or "")):
         return float(up) * q
     return None
+
+
+# REMOVAL IDENTITY in the band and family tables (item_tokens.REMOVAL_IDENTITY
+# for the token table).  A removal-only row is filed under family + "#rm", so
+# removal work and the same family's new work never share a cell: a removal
+# line is priced only from removal history and new work only from new work.
+# The quantity-shape table is still read by the original family.  A removal-
+# only line whose own #rm cells are all empty is not priced as new
+# construction: it gets the schedule's typical line amount (estimate()).
+# Pre-registered as variant F2 of p50fix round 5 (handoff/scratchpad/p50fix/
+# PREREGISTRATION_ROUND5.md, the rule of defects/PREREGISTRATION.md item 1)
+# and chosen under its rule on the 2026-11-20 snapshot: municipal 2024-26
+# median P80 overshoot 69.0% -> 60.4%, P80 under 15.5% -> 16.1%, mean |ln|
+# 0.435 -> 0.420 (90% interval -0.028 to -0.003); TxDOT 2023-26 51.3% ->
+# 48.8%, 16.3% -> 16.1%, 0.370 -> 0.362.
+REMOVAL_SUFFIX = "#rm"
+
+
+def family_key(family, description=""):
+    """The family as the band and family tables key it."""
+    if item_tokens.REMOVAL_IDENTITY and item_tokens.removal_only(
+            description or ""):
+        return (family or "") + REMOVAL_SUFFIX
+    return family
+
+
+def _base_family(fk):
+    """family_key() undone: the classifier's own family."""
+    return fk.split("#")[0] if fk else fk
+
+
+# V2+F1+F2 (adopted 2026-11-20).  Selected by p50fix round 5 on data
+# snapshot 3 (handoff/scratchpad/p50fix/PREREGISTRATION_ROUND5.md with
+# addendum R5-1; reports/p50_fix_round5_snap3.md) and confirmed on the locked
+# public test set (Registration 3, data/test_holdout/REGISTRATIONS.md): P80
+# under the low bid 19.6% (<= 20%), median overshoot 35.9% -> 31.0%, P50
+# median error 18.4% -> 13.6%.  Three parts:
+#   F2  removal identity (family_key above, item_tokens.REMOVAL_IDENTITY);
+#   F1  size fallback (SIZE_FALLBACK, SizeCells, item_market_price);
+#   V2  comparables blend (COMPARABLES_BLEND, comparables.py, estimate()).
+# The switches exist so the rule before the change can be reproduced (the
+# self-tests' control, and holdout_eval's decoy draw); production runs with
+# all three on.
+SIZE_FALLBACK = True
+COMPARABLES_BLEND = True
+SIZE_K_MIN_SIZES, SIZE_K_MIN_LETTINGS = 5, 20       # registered (round 5)
+SIZE_K_ONE = ("water_pipe", "sanitary_pipe", "storm_pipe")   # k = 1, else 0
+
+# T1 (TxDOT only): round 1's C4 -- an exact word-set cell with >= 5 lettings
+# prices a line instead of the weighted median of every match, and
+# mobilization is priced as a share of the rest of the schedule -- plus
+# round 2's D1, the competition discount by bidder class x the model's own
+# pre-discount size, also inside V2's competition adjustment (round 3's
+# V2+C4+D1 rules, on top of V2+F1+F2).  Pre-registered and selected by p50fix
+# round 6 (handoff/scratchpad/p50fix/PREREGISTRATION_ROUND6.md, md5
+# ddc945cb...) on data snapshot 4, forward: TxDOT 2023-26 median P80
+# overshoot 37.2% -> 31.3%, P80 under 16.7% -> 16.0%, mean |ln| 0.269 ->
+# 0.242 (90% interval -0.034 to -0.020); municipal untouched.  The locked
+# public test set is municipal only, so T1 has no locked-set confirmation;
+# judge it on TxDOT lettings bid after 2026-11-20.  TxDOT bridge
+# maintenance (72 lettings) went 20.8% -> 26.4% under.
+TXDOT_C4D1 = True
+C4_MIN_N = 5                       # exact cell: Jaccard 1 and >= 5 lettings
+MOB_MIN_LETTINGS = 20              # mobilization ratio: >= 20 earlier lettings
+D1_MIN = 10                        # D1 cell: >= 10 earlier scored lettings
+D1_SIZE_EDGES = (250e3, 1e6, 5e6)
+T1_FILE = "estimator_t1_txdot.csv"  # D1 records + model totals (calibrate_forward)
+
+
+@contextlib.contextmanager
+def pricing_rule(size_fallback=True, removal_identity=True, comparables=True,
+                 txdot_c4d1=True):
+    """Run a block under another combination of the switches."""
+    g = globals()
+    old = (g["SIZE_FALLBACK"], item_tokens.REMOVAL_IDENTITY,
+           g["COMPARABLES_BLEND"], g["TXDOT_C4D1"])
+    g["SIZE_FALLBACK"], g["COMPARABLES_BLEND"] = size_fallback, comparables
+    g["TXDOT_C4D1"] = txdot_c4d1
+    item_tokens.REMOVAL_IDENTITY = removal_identity
+    try:
+        yield
+    finally:
+        g["SIZE_FALLBACK"], item_tokens.REMOVAL_IDENTITY, \
+            g["COMPARABLES_BLEND"], g["TXDOT_C4D1"] = old
+
+
+class SizeCells:
+    """F1's fitted quantities: the size structure of the family table.
+
+    The family table's sized cells are (family_key, unit, size_bucket); a
+    bucket is a range, so a line whose own bucket has no band cell used to
+    fall back to the UNSIZED cell -- rows whose size did not parse, about
+    $45/LF of mostly trench repair and paving -- while still saying "size
+    match" (Frisco 2406-104, a 48-inch main, priced at 0.037x).  F1 prices
+    such a line from the NEAREST sized cell of its family+unit instead,
+    scaled by (size / size_ref) ** k.
+
+      entry          one (cell, letting, year) group, as _reference_cells
+                     groups the family table: (median unit price, median
+                     size_in of the group's rows)
+      size_ref(c, D) median entry size (> 0) of cell c's lettings available
+                     strictly before D (production's prefix order)
+      k(f, u, D)     OLS slope of ln(entry price) on ln(entry size) over
+                     every sized cell of (f, u), lettings before D; used with
+                     >= 5 distinct sizes (0.01 in) and >= 20 lettings, else 1
+                     for pipes (SIZE_K_ONE, by the classifier's family) and 0
+
+    D = None (the published tables) means every letting.  Built from the
+    rows handed to _reference_cells, so whoever decides which rows may train
+    the reference cells decides it for these too (external rows only in
+    production, training rows only in holdout_eval).  Ported from p50fix
+    round5/r5lib.py SizeIndex (the code that was scored and confirmed)."""
+
+    def __init__(self, rows, sizes, avail):
+        grp = collections.defaultdict(lambda: ([], []))
+        for (mk, pk, fam, un, sz, q, u, w, b, dn, ow, yr), s in zip(rows, sizes):
+            if not un or not sz:
+                continue
+            fk = family_key(fam, dn)
+            g = grp[((fk, un, sz), pk, yr)]
+            g[0].append(u)
+            if s is not None:
+                g[1].append(s)
+        by = collections.defaultdict(lambda: collections.defaultdict(list))
+        for (key, pk, yr), (us, ss) in grp.items():
+            by[key][pk].append((statistics.median(us),
+                                statistics.median(ss) if ss else None))
+        self.cells = {}            # key -> (dates, pks, entries per pk)
+        self.sized = collections.defaultdict(list)   # (fam_key, unit) -> keys
+        fit = collections.defaultdict(list)
+        for key, bp in by.items():
+            lst = sorted(bp, key=lambda pk: (avail.get(pk, NEVER), pk))
+            self.cells[key] = ([avail.get(pk, NEVER) for pk in lst], lst, bp)
+            self.sized[(key[0], key[1])].append(key)
+            for pk, ents in bp.items():
+                for pr, sm in ents:
+                    if pr and pr > 0 and sm and sm > 0:
+                        fit[(key[0], key[1])].append(
+                            (avail.get(pk, NEVER), pk, math.log(sm),
+                             math.log(pr), round(sm, 2)))
+        for v in self.sized.values():
+            v.sort()
+        self.fit = {}              # cumulative sums per (fam_key, unit), date order
+        for fu, pts in fit.items():
+            pts.sort()
+            d, n, sx, sy, sxx, sxy, ns, nl = [], [], [], [], [], [], [], []
+            a = [0, 0.0, 0.0, 0.0, 0.0]
+            seen_s, seen_l = set(), set()
+            for D, pk, x, y, sm in pts:
+                a[0] += 1
+                a[1] += x
+                a[2] += y
+                a[3] += x * x
+                a[4] += x * y
+                seen_s.add(sm)
+                seen_l.add(pk)
+                d.append(D)
+                n.append(a[0]); sx.append(a[1]); sy.append(a[2])  # noqa: E702
+                sxx.append(a[3]); sxy.append(a[4])                 # noqa: E702
+                ns.append(len(seen_s)); nl.append(len(seen_l))      # noqa: E702
+            self.fit[fu] = (d, n, sx, sy, sxx, sxy, ns, nl, [p[1] for p in pts])
+        self.memo_ref, self.memo_k = {}, {}
+
+    def lettings(self):
+        """Every letting in any size cell (the leak guards' view)."""
+        return {pk for _, lst, _ in self.cells.values() for pk in lst}
+
+    def size_ref(self, key, D=None):
+        c = self.cells.get(key)
+        if c is None:
+            return None
+        L = len(c[0]) if D is None else bisect.bisect_left(c[0], D)
+        if (key, L) not in self.memo_ref:
+            ss = [s for pk in c[1][:L] for _, s in c[2][pk]
+                  if s is not None and s > 0]
+            self.memo_ref[(key, L)] = statistics.median(ss) if ss else None
+        return self.memo_ref[(key, L)]
+
+    def ref_lettings(self, key, D=None):
+        c = self.cells.get(key)
+        if c is None:
+            return []
+        L = len(c[0]) if D is None else bisect.bisect_left(c[0], D)
+        return list(c[1][:L])
+
+    def k_at(self, fam, unit, D=None):
+        default = 1.0 if _base_family(fam or "") in SIZE_K_ONE else 0.0
+        F = self.fit.get((fam, unit))
+        if F is None:
+            return default, {"src": "default", "n": 0, "sizes": 0, "lettings": 0}
+        i = len(F[0]) if D is None else bisect.bisect_left(F[0], D)
+        hit = self.memo_k.get((fam, unit, i))
+        if hit is not None:
+            return hit
+        if i == 0:
+            out = (default, {"src": "default", "n": 0, "sizes": 0, "lettings": 0})
+        else:
+            j = i - 1
+            n, sx, sy, sxx, sxy = F[1][j], F[2][j], F[3][j], F[4][j], F[5][j]
+            den = n * sxx - sx * sx
+            info = {"n": n, "sizes": F[6][j], "lettings": F[7][j]}
+            if F[6][j] >= SIZE_K_MIN_SIZES and F[7][j] >= SIZE_K_MIN_LETTINGS \
+                    and den > 1e-12:
+                info["src"] = "fit"
+                out = ((n * sxy - sx * sy) / den, info)
+            else:
+                info["src"] = "default"
+                out = (default, info)
+        self.memo_k[(fam, unit, i)] = out
+        return out
+
+    def k_lettings(self, fam, unit, D=None):
+        F = self.fit.get((fam, unit))
+        if F is None:
+            return set()
+        i = len(F[0]) if D is None else bisect.bisect_left(F[0], D)
+        return set(F[8][:i])
+
+
+def _line_sizes(rows, sizes):
+    """A schedule line's own size: the median size_in of the low bidder's
+    rows of that schedule key (q > 0), keyed (letting, family, unit, size
+    bucket, quantity band, description) -- part of the schedule, like its
+    quantities."""
+    line = collections.defaultdict(list)
+    for (mk, pk, fam, un, sz, q, u, w, b, dn, ow, yr), s in zip(rows, sizes):
+        if w and q is not None and q > 0:
+            line[(pk, fam, un, sz, qty_shape.band_of(q), dn)].append(s)
+    out = {}
+    for k, v in line.items():
+        v = [x for x in v if x is not None]
+        out[k] = statistics.median(v) if v else None
+    return out
+
+
+def _band_has_size(tab, fk, unit, sz):
+    """A usable band cell (production's .get(): >= 2 earlier lettings) for
+    this size bucket in ANY quantity band."""
+    for b in qty_shape.BAND_LABELS:
+        if tab.ref_band.get((fk, unit, sz, b)) is not None:
+            return True
+    return False
+
+
+def d1_n_class(n):
+    """D1's bidder class: 0 = 1-2, 1 = 3-4, 2 = 5-6, 3 = 7+ bidders."""
+    return 0 if n <= 2 else 1 if n <= 4 else 2 if n <= 6 else 3
+
+
+def d1_s_class(x):
+    """D1's size class of a pre-discount model total: 0 < 250k, 1 250k-1M,
+    2 1M-5M, 3 >= 5M."""
+    return bisect.bisect_right(D1_SIZE_EDGES, x)
+
+
+class MobRatio:
+    """T1's mobilization ratio for one market: r(D) = the median, over every
+    bid of every letting available strictly before D, of (that bid's
+    mobilization amount / the same bid's amount on every other line), bids
+    with both > 0, owner-set lines (is_owner_fixed on the letting's bids)
+    out of both; with the number of such lettings.  Ported from p50fix
+    p50_variants.ForwardRatios (round 1, spec "c1", no size classes)."""
+
+    def __init__(self, pool, avail, market="txdot"):
+        per = collections.defaultdict(
+            lambda: {"rows": [], "prices": collections.defaultdict(list)})
+        for mk, pk, fam, un, sz, q, u, w, b, dn, ow, yr in pool:
+            if mk != market or q is None or q <= 0:
+                continue
+            d = per[pk]
+            k = (fam, un, sz, qty_shape.band_of(q), dn)
+            d["prices"][k].append(u)
+            d["rows"].append((b, k, q * u))
+        bids, lets = [], []
+        for pk, d in per.items():
+            D = avail.get(pk, NEVER)
+            if D == NEVER:
+                continue
+            fixed = {k for k, ps in d["prices"].items()
+                     if is_owner_fixed(ps, k[0], k[1], k[4])}
+            acc = collections.defaultdict(
+                lambda: collections.defaultdict(float))
+            for b, k, a in d["rows"]:
+                if k in fixed:
+                    continue
+                acc[b]["mob" if k[0] == "mobilization" else "base"] += a
+            rs = [v["mob"] / v["base"] for v in acc.values()
+                  if v.get("mob", 0) > 0 and v.get("base", 0) > 0]
+            if not rs:
+                continue
+            bids.extend((D, x) for x in rs)
+            lets.append(D)
+        bids.sort(key=lambda t: t[0])
+        self.dates = [t[0] for t in bids]
+        self.vals = [t[1] for t in bids]
+        self.lets = sorted(lets)
+        self.memo = {}
+
+    def at(self, D=None):
+        """(r, lettings behind it) from the lettings before D (None: all)."""
+        k = len(self.dates) if D is None else bisect.bisect_left(self.dates, D)
+        nl = len(self.lets) if D is None else bisect.bisect_left(self.lets, D)
+        if k not in self.memo:
+            self.memo[k] = statistics.median(self.vals[:k]) if k else None
+        return self.memo[k], nl
+
+    def lettings(self, D=None):
+        return self.lets if D is None else self.lets[:bisect.bisect_left(self.lets, D)]
+
+
+class T1State:
+    """T1's D1 discount, the model totals its comparables adjustment reads,
+    and the mobilization ratio, for one pricing pass.
+
+      d1 records  one per forward-scored TxDOT letting (calibrate_forward's
+                  population and 90%-priced rule): its date, bidder class,
+                  the class of its own pre-discount model total, and low /
+                  median bidder total -- fed in date order by the pass
+      model       every priced TxDOT letting's pre-discount model total
+      d1(n, x, D) the median of the cell's records dated strictly before D
+                  when there are >= D1_MIN of them, else None (f(n) stays)
+
+    calibrate_forward feeds it as it prices; for a NEW schedule
+    (Tables.attach_v2f1f2) the records come back from T1_FILE, written by
+    the last calibrate_forward(write=True).  Ported from p50fix
+    round2/p50_round2.D1Table and round3/cmp_port.d1_factory."""
+
+    def __init__(self, pool, avail):
+        self.mob = MobRatio(pool, avail, "txdot")
+        self.cells = collections.defaultdict(lambda: ([], []))
+        self.model = {}
+        self.memo = {}
+        self.loaded = None
+
+    def note_priced(self, pk, total):
+        self.model[pk] = total
+
+    def note_scored(self, D, n_bidders, total, low, median_total):
+        if total <= 0 or median_total <= 0:
+            return
+        dates, vals = self.cells[(d1_n_class(n_bidders), d1_s_class(total))]
+        assert not dates or dates[-1] <= D, "D1 records must come in date order"
+        dates.append(D)
+        vals.append(low / median_total)
+
+    def d1(self, n_bidders, total, D):
+        key = (d1_n_class(n_bidders), d1_s_class(total))
+        c = self.cells.get(key)
+        if c is None:
+            return None
+        k = len(c[0]) if D is None else bisect.bisect_left(c[0], D)
+        if k < D1_MIN:
+            return None
+        m = self.memo.get((key, k))
+        if m is None:
+            m = self.memo[(key, k)] = statistics.median(c[1][:k])
+        return m
+
+    def f_candidate(self, tab, D):
+        """f(C) for V2's competition adjustment c = f(T) / f(C): C's D1 cell
+        at D (C's bidder count, the class of C's own model total), else
+        production f(n_C) at D; a letting never priced takes f(n_C)."""
+        def f(n, pk):
+            m = self.model.get(pk)
+            if m is not None and m > 0:
+                v = self.d1(n, m, D)
+                if v is not None:
+                    return v
+            dC = discount(tab, n, "txdot")
+            return dC["f"] if dC else None
+        return f
+
+    def write(self, path):
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            wr = csv.writer(f)
+            wr.writerow(["kind", "project_key", "date", "n_class", "s_class",
+                         "value"])
+            for (nc, sc), (dates, vals) in sorted(self.cells.items()):
+                for D, v in zip(dates, vals):
+                    wr.writerow(["d1", "", D, nc, sc, repr(v)])
+            for pk, m in sorted(self.model.items()):
+                wr.writerow(["model", pk, "", "", "", repr(m)])
+
+    def load(self, path):
+        self.loaded = os.path.exists(path)
+        if not self.loaded:
+            return self
+        recs = []
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f):
+                if r["kind"] == "d1":
+                    recs.append((r["date"], int(r["n_class"]),
+                                 int(r["s_class"]), float(r["value"])))
+                elif r["kind"] == "model":
+                    self.model[r["project_key"]] = float(r["value"])
+        for D, nc, sc, v in sorted(recs, key=lambda x: x[0]):
+            dates, vals = self.cells[(nc, sc)]
+            dates.append(D)
+            vals.append(v)
+        return self
 
 
 def _centre(trip):
@@ -365,6 +768,31 @@ class Tables:
         self.calib = {}
         for r in _read("estimator_calibration.csv"):
             self.calib[r["market"]] = r
+
+        # F1 / V2 / T1 for a NEW schedule: attach_v2f1f2() loads them
+        self.size_cells = None
+        self.comparables = None
+        self.t1 = None
+        self.D = None
+
+    def attach_v2f1f2(self):
+        """F1's size cells and V2's comparables pools for pricing a NEW
+        schedule on the published tables, fitted on the external price pool
+        as it stands (size cells over every letting, like the published
+        reference cells; a comparable must still be dated before the
+        schedule's own bid date -- estimate()'s target["date"], else today).
+        Reads master_panel.csv once."""
+        sizes = [] if SIZE_FALLBACK else None
+        pool = _reference_pool(sizes)
+        avail = _letting_dates()
+        self.size_cells = (SizeCells(pool, sizes, avail)
+                           if sizes is not None else None)
+        self.comparables = comparables_pools(pool, avail)
+        # T1: the mobilization ratio from the pool; D1 records and model
+        # totals from the last calibrate_forward(write=True)
+        self.t1 = (T1State(pool, avail).load(os.path.join(CLEAN, T1_FILE))
+                   if TXDOT_C4D1 else None)
+        return self
 
     # -- the basis check, run rather than asserted in a comment -------------
     def assert_all_bids_basis(self):
@@ -568,11 +996,14 @@ def escalation(tab, from_year, to_year, market):
 
 def item_market_price(tab, family, unit, quantity, size_bucket="",
                       to_year=None, market="municipal",
-                      description=""):
+                      description="", size_in=None):
     """The ALL-BIDS market unit price for one pay item, escalated and
-    quantity-adjusted.  No discount here -- that belongs on the total."""
+    quantity-adjusted.  No discount here -- that belongs on the total.
+    size_in: the line's own parsed size (F1, see SizeCells)."""
     out = {"family": family, "unit": unit, "quantity": quantity,
            "price": None, "why": [], "usable": None, "price_key": None}
+    # the band and family tables key a removal-only line apart (family_key)
+    fk = family_key(family, description)
 
     # Tier 0: token identity.  Jaccard-weighted median over the reference
     # cells whose words match this item's, in the same unit and quantity band,
@@ -598,6 +1029,14 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
                 if pv and pv > 0 and np_ >= 2:
                     hits.append((j, pv, row))
             if hits:
+                # T1 (C4, TxDOT): an exact word-set cell (Jaccard 1; at most
+                # one: the cells are keyed by word set, unit and band) with
+                # >= C4_MIN_N lettings prices the line by itself
+                exact = None
+                if TXDOT_C4D1 and (market or "").strip().lower() == "txdot":
+                    ex = [h for h in hits if h[0] >= 1.0 and
+                          (_f(h[2].get("n_projects")) or 0) >= C4_MIN_N]
+                    exact = ex[0] if ex else None
                 # Equal-price cells can carry different vintages, and a sort
                 # on price alone left the pick to the candidate SET's order,
                 # which moves with PYTHONHASHSEED: 37-38 of 241 public
@@ -614,6 +1053,9 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
                     if acc >= tw / 2:
                         pick = h
                         break
+                if exact is not None:
+                    pick = exact
+                    out["token_exact_rule"] = True
                 p = pick[1]
                 row = pick[2]
                 out["price_key"] = "token_jaccard"
@@ -647,11 +1089,21 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
     # Priced from other lettings' items in the SAME quantity band rather than
     # from a pooled median scaled into that band -- measured 4 points better on
     # municipal and 19 on TxDOT, matched population, leave-one-letting-out.
+    # F1 trigger: a sized line whose family+unit has NO usable band cell for
+    # its size bucket in any quantity band never takes the unsized cell.
+    f1 = False
+    si = getattr(tab, "size_cells", None) if SIZE_FALLBACK else None
+    if si is not None and size_bucket and unit and family:
+        if size_in is not None and size_in > 0 \
+                and not _band_has_size(tab, fk, unit, size_bucket):
+            f1 = True
+            out["f1"] = {"size": size_in}
     qb = qty_shape.band_of(quantity) if quantity and quantity > 0 else ""
     rb_row = None
     if qb and tab.ref_band:
-        rb_row = (tab.ref_band.get((family, unit, size_bucket, qb))
-                  or tab.ref_band.get((family, unit, "", qb)))
+        rb_row = tab.ref_band.get((fk, unit, size_bucket, qb))
+        if rb_row is None and not f1:          # F1: never the unsized cell
+            rb_row = tab.ref_band.get((fk, unit, "", qb))
         if rb_row is not None and (_f(rb_row.get("n_projects")) or 0) < 2:
             rb_row = None
     if rb_row is not None:
@@ -694,13 +1146,56 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
         out["why"].append("no item_family on this line item -- cannot be "
                           "priced")
         return out
-    row = tab.ref.get((family, unit, size_bucket))
-    if row is None:
+    f1_factor = None
+    if f1:
+        # F1: the nearest sized cell of the same family+unit, nearest in
+        # |ln(size / size_ref)| (ties: more lettings, then bucket label),
+        # scaled by (size / size_ref) ** k; then quantity shape and
+        # escalation exactly as below.
+        D = getattr(tab, "D", None)
+        cands = []
+        for key in si.sized.get((fk, unit), ()):
+            r_ = tab.ref.get(key)
+            if r_ is None:
+                continue
+            sr = si.size_ref(key, D)
+            if not sr or sr <= 0:
+                continue
+            pm = _f(r_.get("price_median"))
+            if not pm or pm <= 0:
+                continue
+            cands.append((abs(math.log(size_in / sr)),
+                          -(_f(r_.get("n_projects")) or 0), key[2], key, r_, sr))
+        if not cands:
+            # no sized cell: the unsized cell is not used, and the token tier
+            # (tried first) found nothing -- the line stays unpriced
+            out["f1"]["no_sized_cell"] = True
+            out["why"].append("F1: no sized cell of this family+unit; the "
+                              "unsized cell is not used and the token tier "
+                              "found nothing")
+            if fk != family and tab.ref.get((fk, unit, "")) is None:
+                out["removal_no_cell"] = True
+            return out
+        c = min(cands)
+        row, sr = c[4], c[5]
+        k, kinfo = si.k_at(fk, unit, D)
+        f1_factor = (size_in / sr) ** k
+        out["f1"].update({"ref_key": c[3], "size_ref": sr, "k": k,
+                          "k_src": kinfo["src"], "k_n": kinfo.get("n"),
+                          "k_sizes": kinfo.get("sizes"),
+                          "k_lettings": kinfo.get("lettings"),
+                          "factor": f1_factor})
+        out["why"].append("F1: size %g not in any band; nearest sized cell %r "
+                          "(size %.3g) x (%g/%.3g)^%.3f" % (
+                              size_in, c[3][2], sr, size_in, sr, k))
+    else:
+        row = tab.ref.get((fk, unit, size_bucket))
+    if row is None and not f1:
         # "" is not a neutral bucket, it is the leftovers: rows whose size was
         # not parsed. Prefer the best-evidenced vetted bucket for this
         # family+unit over it, and say which was substituted.
         cands = [(k, v) for k, v in tab.ref.items()
-                 if k[0] == family and k[1] == unit]
+                 if k[0] == fk and k[1] == unit]
         vetted = [(k, v) for k, v in cands
                   if (v.get("usable") == "yes" and k[2])]
         pick = max(vetted, key=lambda kv: _f(kv[1].get("n_projects")) or 0)             if vetted else None
@@ -711,7 +1206,7 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
                               "projects)" % (size_bucket, pick[0][2],
                                              pick[1].get("n_projects")))
         else:
-            row = tab.ref.get((family, unit, ""))
+            row = tab.ref.get((fk, unit, ""))
             if row is not None:
                 out["why"].append(
                     "size_bucket %r not in the reference; fell back to the "
@@ -719,8 +1214,12 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
                     "be parsed" % (size_bucket,))
     if row is None:
         out["why"].append("no price_reference entry")
+        if fk != family:
+            # a removal-only line with no removal cell: estimate() gives it
+            # the schedule's typical line, never a new-work price
+            out["removal_no_cell"] = True
         return out
-    out["price_key"] = "family+unit+size"
+    out["price_key"] = "f1_nearest_size" if f1 else "family+unit+size"
     base = _f(row.get("price_median"))
     if not base or base <= 0:
         out["why"].append("price_median missing")
@@ -729,6 +1228,8 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
     out["n_projects"] = _f(row.get("n_projects"))
     out["n_owners"] = _f(row.get("n_owners"))
     p = base
+    if f1_factor is not None:
+        p *= f1_factor
 
     # quantity shape, relative to the band the reference price sits in
     ref_qty = _f(row.get("qty_median"))
@@ -779,7 +1280,8 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
     return out
 
 
-def estimate(tab, items, n_bidders, market="municipal", to_year=None):
+def estimate(tab, items, n_bidders, market="municipal", to_year=None,
+             target=None):
     """items: [{family, unit, quantity, size_bucket?}]  ->  expected low bid.
 
     Returns the market total, the discount actually used, the point estimate
@@ -821,7 +1323,8 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None):
             continue
         r = item_market_price(tab, it["family"], it["unit"], q,
                               it.get("size_bucket") or "", to_year, market,
-                              it.get("description") or "")
+                              it.get("description") or "",
+                              _f(it.get("size_in")))
         r["item"] = it.get("item_no") or it.get("description") or ""
         r["allowance_like"] = allowance_like(it.get("family"), it.get("unit"),
                                              it.get("description") or "")
@@ -831,6 +1334,86 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None):
             priced += 1
         else:
             unpriced += 1
+
+    # A removal-only line whose own (#rm) cells are all empty gets this
+    # schedule's TYPICAL line amount: the median market-level amount of its
+    # directly priced, non-LS, non-owner-set lines (the rule registered with
+    # the removal identity; see family_key).  Pre-bid: it uses only this
+    # schedule's own estimated lines.
+    todo = [t for t in trace if t.get("removal_no_cell") and not t.get("price")
+            and (t.get("quantity") or 0) > 0]
+    if todo:
+        amts = [t["price"] * t["quantity"] for t in trace
+                if t.get("price") and (t.get("quantity") or 0) > 0
+                and not t.get("fixed_amount")
+                and not t.get("typical_line_imputed")
+                and (t.get("unit") or "").strip().upper() != "LS"]
+        if amts:
+            a = statistics.median(amts)
+            for t in todo:
+                t["price"] = a / t["quantity"]
+                t["typical_line_imputed"] = True
+                t["price_key"] = "removal_typical_line"
+                t["why"].append("removal-only line with no removal reference "
+                                "cell: priced at this schedule's typical line "
+                                "amount %.2f" % a)
+                priced += 1
+                unpriced -= 1
+            total = 0.0
+            for t in trace:
+                if t.get("fixed_amount"):
+                    continue
+                if t.get("price") and (t.get("quantity") or 0) > 0:
+                    total += t["price"] * t["quantity"]
+
+    # T1 (C4, TxDOT): mobilization priced as a share of the rest of the
+    # schedule: r(D) x S split evenly over the mobilization lines, S = the
+    # priced non-owner-set, non-mobilization lines (all-bids level,
+    # escalated, before the discount), r from >= MOB_MIN_LETTINGS lettings
+    # before D.  D = the schedule's bid date (target["date"]), else the
+    # tables' date, else today -- the date the comparables use.
+    t1 = getattr(tab, "t1", None) if (TXDOT_C4D1 and market == "txdot") \
+        else None
+    D_t1 = ((target or {}).get("date") or getattr(tab, "D", None)
+            or _dt.date.today().isoformat())
+    if t1 is not None:
+        S, mob = 0.0, []
+        for i, (it, t) in enumerate(zip(items, trace)):
+            if t.get("fixed_amount"):
+                continue
+            if it.get("family") == "mobilization":
+                mob.append(i)
+                continue
+            q = _f(it.get("quantity"), 0.0) or 0.0
+            if t.get("price") and q > 0:
+                S += t["price"] * q
+        rv, nl = t1.mob.at(D_t1) if (S > 0 and mob) else (None, 0)
+        if rv is not None and nl >= MOB_MIN_LETTINGS:
+            amt = rv * S / len(mob)
+            for i in mob:
+                q = _f(items[i].get("quantity"), 0.0) or 0.0
+                qe = q if q > 0 else 1.0
+                t = trace[i]
+                if not (t.get("price") and q > 0):
+                    priced += 1
+                    unpriced -= 1
+                t["price_before_ratio"] = t.get("price")
+                t["price"] = amt / qe
+                t["quantity_effective"] = qe
+                t["price_key"] = "mobilization_ratio"
+                t["mobilization_ratio"] = rv
+                t["mobilization_base"] = S
+                t["why"].append("T1: mobilization = %.4f x %.2f (the rest of "
+                                "the schedule) over %d line(s); ratio from %d "
+                                "earlier lettings" % (rv, S, len(mob), nl))
+            total = 0.0
+            for it, t in zip(items, trace):
+                if t.get("fixed_amount"):
+                    continue
+                q = t.get("quantity_effective") or (
+                    _f(it.get("quantity"), 0.0) or 0.0)
+                if t.get("price") and q > 0:
+                    total += t["price"] * q
 
     out = {"market_total": total, "fixed_total": fixed_total,
            "n_fixed": n_fixed, "n_items": len(items), "priced": priced,
@@ -928,6 +1511,16 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None):
             "to extrapolate; the market total above has NO discount in it"
             % (MAX_BIN_DISTANCE, n_bidders))
         return out
+    if t1 is not None and total > 0:
+        # T1 (D1, TxDOT): the discount of the earlier scored lettings with
+        # this bidder class and this model size class, >= D1_MIN of them
+        fv = t1.d1(n_bidders, total, D_t1)
+        if fv is not None:
+            d = dict(d, f=fv, d1=True)
+        elif t1.loaded is False:
+            out["warnings"].append(
+                "T1: no D1 records (%s missing; calibrate_forward(write=True) "
+                "writes it) -- the production f(n) is used" % T1_FILE)
     out["discount"] = d
     if d["extrapolated"]:
         out["warnings"].append("bidder count %s priced off the %d-bidder bin"
@@ -935,7 +1528,20 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None):
     if d["lettings"] < 20:
         out["warnings"].append("that discount bin rests on %d lettings"
                                % d["lettings"])
-    out["expected_low"] = total * d["f"]
+    # V2: the P50 bid part is the geometric mean of the comparables price
+    # and the line-priced bid part; owner-set money still goes on last.
+    out["bid_part_lines"] = total * d["f"]
+    out["bid_part"] = out["bid_part_lines"]
+    cm = _comparables_price(tab, items, trace, n_bidders, market, to_year, d,
+                            target)
+    if cm is not None:
+        out["comparables"] = cm
+        out["bid_part"] = math.sqrt(cm["cmp"] * out["bid_part_lines"])
+        if not cm["n_comps"]:
+            out["warnings"].append(
+                "no comparable earlier letting (overlap >= %.2f) -- the bid "
+                "part is the line-priced one" % comparables.O_MIN)
+    out["expected_low"] = out["bid_part"]
 
     c = tab.calib.get(market) or tab.calib.get("all")
     if c:
@@ -991,6 +1597,49 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None):
         out["warnings"].append("no calibration for market %r; point estimate "
                                "only, no interval" % market)
     return out
+
+
+def _comparables_price(tab, items, trace, n_bidders, market, to_year, d,
+                       target):
+    """CMP for this schedule (comparables.py), or None when the blend is off
+    or the tables carry no comparables pool for this market.  `target`:
+    {"key": the letting's key if it is in the pool, "date": its bid date
+    (default: the tables' date D, else today), "owner", "work_type"}."""
+    if not COMPARABLES_BLEND:
+        return None
+    pools = getattr(tab, "comparables", None)
+    if callable(pools):
+        pools = pools()
+    pool = pools.get(market) if pools else None
+    if pool is None:
+        return None
+    tgt = target or {}
+    D = tgt.get("date") or getattr(tab, "D", None) \
+        or _dt.date.today().isoformat()
+    keys, kidx, lines = [], {}, []
+    for it, t in zip(items, trace):
+        q = _f(it.get("quantity"), 0.0) or 0.0
+        k = it.get("key")
+        if k is None:
+            k = (it.get("family") or "", it.get("unit") or "",
+                 it.get("size_bucket") or "",
+                 qty_shape.band_of(q) if q > 0 else "",
+                 it.get("description") or "")
+        k = tuple(k)
+        ki = kidx.get(k)
+        if ki is None:
+            ki = kidx[k] = len(keys)
+            keys.append(k)
+        lines.append({"ki": ki, "q": q, "p": t.get("price"),
+                      "fx": t.get("fixed_amount") or 0.0})
+    rec = {"key": tgt.get("key"), "date": D, "year": to_year or "",
+           "n_bidders": n_bidders, "f": d["f"], "lines": lines}
+    t1 = getattr(tab, "t1", None) if (TXDOT_C4D1 and market == "txdot") \
+        else None
+    r = pool.price(rec, keys, tab, tgt.get("owner"), tgt.get("work_type") or "",
+                   t1.f_candidate(tab, D) if t1 is not None else None)
+    r["date"] = D
+    return r
 
 
 # ---------------------------------------------------------------------------
@@ -1326,11 +1975,12 @@ def _year(v):
     return y if y is not None and 1990 <= y <= 2100 else None
 
 
-def _reference_pool():
+def _reference_pool(sizes=None):
     """build_master's `comp`, read back from the panel: the rows every
     published reference table is built from.  Quantity is NOT filtered (the
     family table keeps rows without one) and a row without a unit is dropped,
-    as pandas drops a NaN group key."""
+    as pandas drops a NaN group key.  `sizes` (a list): each kept row's
+    size_in is appended to it, aligned with the rows (F1)."""
     csv.field_size_limit(10 ** 8)
     seen = {}
     intern = lambda x: seen.setdefault(x, x)  # noqa: E731
@@ -1361,10 +2011,12 @@ def _reference_pool():
                 intern(r.get("bidder_norm") or r.get("bidder")),
                 intern((r.get("desc_norm") or "").strip()),
                 intern(r.get("owner") or ""), intern(str(r.get("year") or ""))))
+            if sizes is not None:
+                sizes.append(_f(r.get("size_in")))
     return rows
 
 
-def _reference_cells(rows):
+def _reference_cells(rows, sizes=None, avail=None):
     """The three published tables at their stage-1 grain -- per cell, per
     letting: (median price, median quantity, year, owner), grouped by (cell,
     letting, year) as build_master groups -- so any one letting can be left
@@ -1378,8 +2030,9 @@ def _reference_cells(rows):
         t = tokc.get(dn)
         if t is None:
             t = tokc[dn] = item_tokens.tokens(dn)
-        for name, key, ok in (("fam", (fam, un, sz), True),
-                              ("band", (fam, un, sz, bd), bool(bd)),
+        fk = family_key(fam, dn)
+        for name, key, ok in (("fam", (fk, un, sz), True),
+                              ("band", (fk, un, sz, bd), bool(bd)),
                               ("tok", (t, un, bd), bool(t and bd))):
             if not ok:
                 continue
@@ -1402,6 +2055,9 @@ def _reference_cells(rows):
             for w in k[0]:
                 inv[k[1]][w].append(k)
     cells["tok_inv"] = inv
+    # F1's size cells, from the same rows (None without sizes)
+    cells["size"] = (SizeCells(rows, sizes, avail or {})
+                     if sizes is not None else None)
     return cells
 
 
@@ -1424,7 +2080,7 @@ def _held_out_row(by, drop, family=None, tok=None):
             "price_median": statistics.median([e[0] for e in es]),
             "qty_median": statistics.median(qs) if qs else None,
             "vintage_year": vint, "tok": tok or "",
-            "usable": ("unclassified" if family in _UNCLASSIFIED
+            "usable": ("unclassified" if _base_family(family) in _UNCLASSIFIED
                        else "yes" if n >= 5 else "thin" if n >= 3 else "no")}
 
 
@@ -1868,7 +2524,7 @@ class _FwdKind:
         if L == 0:
             r = None
         else:
-            fam = None if self.kind == "tok" else k[0]
+            fam = None if self.kind == "tok" else _base_family(k[0])
             tok = " ".join(sorted(k[0])) if self.kind == "tok" else None
             cheap = {"n_projects": L, "tok": tok or "",
                      "usable": ("unclassified" if fam in _UNCLASSIFIED
@@ -1931,7 +2587,7 @@ class ForwardTables:
     on it unchanged."""
 
     def __init__(self, tab, kinds, tok_inv, D, index, disc_pooled,
-                 disc_muni):
+                 disc_muni, size_cells=None, comparables=None, t1=None):
         self.missing, self.notes = [], []
         self.shape = getattr(tab, "shape", None) or {}
         self.borrow_sigma = getattr(tab, "borrow_sigma", None) or {}
@@ -1945,6 +2601,9 @@ class ForwardTables:
         self.ref = _FwdMap(kinds["fam"], D)
         self.tok_inv = tok_inv
         self.D = D
+        self.size_cells = size_cells      # F1 (SizeCells), read at D
+        self.comparables = comparables    # V2: {market: comparables.Pool}
+        self.t1 = t1                      # T1 (T1State), fed by the pass
 
 
 def _guard_step(alpha, errs, gamma, target=GUARD_TARGET,
@@ -2001,20 +2660,33 @@ def _not_under_guard(trip, gamma, target=GUARD_TARGET):
             "under_share": (under / n) if n else None}
 
 
-def calibrate_forward(write=True, per_letting=None):
+def calibrate_forward(write=True, per_letting=None, fitted=None):
     """The interval, measured as a NEW letting meets it: every letting priced
     by estimate() itself on ForwardTables at its own date (reference cells,
     index and discount from lettings dated strictly before it), centring and
     quantiles fitted on all of those forward-scored lettings, and the
     not-under figure's quantile chosen by the guard.  The population and the
     filters are calibrate_out_of_fold's, line for line.  This is what main()
-    writes to estimator_calibration.csv."""
+    writes to estimator_calibration.csv.
+
+    V2+F1+F2: the line prices carry F1 and F2, the bid part of every letting
+    is the comparables blend (estimate(), from the lettings before it), and
+    the centring, quantiles and guard are fitted on those blended records.
+    per_letting also gets each letting's forward P50/P80 (forward_scores).
+    fitted (a dict): receives F1's size cells and the comparables pools, for
+    the leak guards."""
     tab = Tables()
     avail = _letting_dates()
     findex = _ForwardIndex(avail)
     fdisc = _ForwardDiscount(avail)
-    pool = _reference_pool()
-    cells = _reference_cells(pool)
+    sizes = [] if SIZE_FALLBACK else None
+    pool = _reference_pool(sizes)
+    cells = _reference_cells(pool, sizes, avail)
+    lsz = _line_sizes(pool, sizes) if sizes is not None else {}
+    pools = comparables_pools(pool, avail)
+    t1 = T1State(pool, avail) if TXDOT_C4D1 else None
+    if fitted is not None:
+        fitted.update({"size_cells": cells["size"], "comparables": pools})
     cov = collections.Counter()
     cov["reference_rebuild_mismatch"] = _check_reference_cells(tab, cells)
     kinds = _forward_kinds(cells, avail)
@@ -2066,22 +2738,26 @@ def calibrate_forward(write=True, per_letting=None):
             if is_owner_fixed(d["prices"].get(k, ()), fam, un, dn):
                 items.append({"family": fam, "unit": un, "size_bucket": sz,
                               "quantity": sched[k], "description": dn,
-                              "amount": d["wamt"].get(k, 0.0)})
+                              "amount": d["wamt"].get(k, 0.0), "key": k})
                 keys.append(k)
                 continue
             for qr in d["rows"][k]:
                 items.append({"family": fam, "unit": un, "size_bucket": sz,
-                              "quantity": qr, "description": dn})
+                              "quantity": qr, "description": dn, "key": k,
+                              "size_in": lsz.get((pk,) + k)})
                 keys.append(k)
         yr = d["yr"].most_common(1)[0][0] if d["yr"] else ""
         if D != ft_d:
             pooled, muni = fdisc.at(D)
             ft_d, ft = D, ForwardTables(tab, kinds, cells["tok_inv"], D,
-                                        findex.at(D), pooled, muni)
-        r = estimate(ft, items, n, mk, yr or None)
+                                        findex.at(D), pooled, muni,
+                                        cells["size"], pools, t1)
+        r = estimate(ft, items, n, mk, yr or None, target={"key": pk})
         if r.get("expected_low") is None:
             cov["no_estimate"] += 1
             continue
+        if t1 is not None and mk == "txdot":
+            t1.note_priced(pk, r["market_total"])
         ok = collections.defaultdict(lambda: True)
         for k, t in zip(keys, r["trace"]):
             if not (t.get("fixed_amount") or t.get("price")):
@@ -2092,14 +2768,22 @@ def calibrate_forward(write=True, per_letting=None):
             cov["under_90pct_priced"] += 1
             continue
         fa = r["discount"]["f"]
+        bp = r["bid_part"]                 # V2: the blend (= tot * fa without it)
         cov["scored"] += 1
-        trips[mk].append((D, tot * fa, fixed, wt))
-        trips["all"].append((D, tot * fa, fixed, wt))
+        if t1 is not None and mk == "txdot":
+            t1.note_scored(D, n, tot, wt, statistics.median(d["bt"].values()))
+        trips[mk].append((D, bp, fixed, wt))
+        trips["all"].append((D, bp, fixed, wt))
         if per_letting is not None:
+            cm = r.get("comparables") or {}
             per_letting.append({"project_key": pk, "market": mk, "date": D,
-                                "n_bidders": n, "bid_part": tot * fa,
+                                "n_bidders": n, "bid_part": bp,
                                 "owner_fixed": fixed, "actual_low": wt,
-                                "n_items": len(sched)})
+                                "n_items": len(sched),
+                                "bid_part_lines": tot * fa,
+                                "cmp": cm.get("cmp"),
+                                "n_comps": cm.get("n_comps"),
+                                "comps": cm.get("comps")})
 
     rows_out = []
     for mk, trip in sorted(trips.items()):
@@ -2143,6 +2827,10 @@ def calibrate_forward(write=True, per_letting=None):
                          "discount_table": "forward_refit",
                          "mode": "forward_production_path",
                          "train_scope": "public_external_only"})
+    if per_letting is not None:
+        forward_scores(per_letting)
+    if write and t1 is not None:
+        t1.write(os.path.join(CLEAN, T1_FILE))
     if write and rows_out:
         with open(os.path.join(CLEAN, "estimator_calibration.csv"), "w",
                   encoding="utf-8-sig", newline="") as f:
@@ -2150,6 +2838,56 @@ def calibrate_forward(write=True, per_letting=None):
             wr.writeheader()
             wr.writerows(rows_out)
     return rows_out, cov
+
+
+def comparables_pools(pool, avail, markets=("municipal", "txdot")):
+    """V2's comparables pool per market, from a price pool (the rows that may
+    train: the external rows here, training rows in holdout_eval)."""
+    if not COMPARABLES_BLEND:
+        return None
+    me = sys.modules[__name__]
+    return {mk: comparables.Pool(pool, avail, mk, CLEAN, me) for mk in markets}
+
+
+def forward_scores(per_letting, guard=True):
+    """Each forward-scored letting's P50 and P80 as ratios to its low bid,
+    with the constants a NEW letting dated D gets: centring and the P80
+    divisor fitted on the same market's lettings dated before D (at least
+    FORWARD_MIN_PRIOR of them), the divisor at the guard's level as it stood
+    when D opened.  The replay every forward score of the project uses
+    (handoff/scratchpad/fwd/mac_recheck/score_new_data.py replay(), same
+    order).  Adds p50, p80, alpha, centring, divisor and n_prior to each
+    record that has constants; returns {market: [records with them]}."""
+    out = {}
+    for market in sorted({r["market"] for r in per_letting}):
+        by = {r["project_key"]: r for r in per_letting if r["market"] == market}
+        trip = sorted((r["date"], r["bid_part"], r["owner_fixed"],
+                       r["actual_low"], r["project_key"]) for r in by.values())
+        gamma = GUARD_GAMMA.get(market, GUARD_GAMMA["municipal"])
+        alpha, i, got = GUARD_TARGET, 0, []
+        while i < len(trip):
+            D = trip[i][0]
+            j = i
+            while j < len(trip) and trip[j][0] == D:
+                j += 1
+            if i >= FORWARD_MIN_PRIOR:
+                prior = [(c, fx, w) for _, c, fx, w, _ in trip[:i]]
+                lc = _centre(prior)
+                rs = sorted((c * lc + fx) / w for c, fx, w in prior)
+                a = alpha if guard else GUARD_TARGET
+                p = rs[int(a * (len(rs) - 1))]
+                errs = []
+                for d, c, fx, w, k in trip[i:j]:
+                    p50 = (c * lc + fx) / w
+                    by[k].update({"p50": p50, "p80": p50 / p, "alpha": a,
+                                  "centring": lc, "divisor": p, "n_prior": i})
+                    got.append(by[k])
+                    errs.append(p50 / p < 1.0)
+                if guard:
+                    alpha = _guard_step(alpha, errs, gamma, GUARD_TARGET)
+            i = j
+        out[market] = got
+    return out
 
 
 def calibrate(write=True):
@@ -2590,6 +3328,225 @@ def _selftest():
     chk("17 and once both are earlier, both count", at17("2025-06-01"),
         (2, 200.0))
 
+    # 18 F1's size cells: size_ref and the slope k, forward, with the
+    # registered defaults (k = 1 for pipes, 0 otherwise, until >= 5 sizes
+    # and >= 20 lettings support a fit)
+    rows18, sizes18, av18 = [], [], {}
+    for i in range(20):
+        pk = "L%02d" % i
+        av18[pk] = "%d-%02d-01" % (2020 + i // 12, i % 12 + 1)
+        s_ = (6.0, 8.0, 10.0, 12.0, 16.0)[i % 5]
+        rows18.append(("municipal", pk, "water_pipe", "LF",
+                       "4-12" if s_ <= 12 else "12-24", 100.0, 10.0 * s_, True,
+                       "b", "%g in water line" % s_, "o", "2020"))
+        sizes18.append(s_)
+    si18 = SizeCells(rows18, sizes18, av18)
+    chk("18 size_ref = median entry size of the cell", si18.size_ref(
+        ("water_pipe", "LF", "4-12")), 9.0)
+    chk("18 nothing before the first letting",
+        si18.size_ref(("water_pipe", "LF", "4-12"), "2019-01-01"), None)
+    chk("18 k before 20 lettings: the pipe default 1",
+        si18.k_at("water_pipe", "LF", "2021-01-01")[0], 1.0)
+    chk("18 k on 20 lettings, 5 sizes: fitted (price ~ size -> 1)",
+        (round(si18.k_at("water_pipe", "LF")[0], 9),
+         si18.k_at("water_pipe", "LF")[1]["src"]), (1.0, "fit"))
+    chk("18 k default for a non-pipe family is 0",
+        si18.k_at("gabion_wall", "CY")[0], 0.0)
+
+    # 19 F1 in item_market_price: a sized line whose size has no band cell
+    # no longer takes the UNSIZED cell
+    t19 = Tables.__new__(Tables)
+    t19.missing, t19.notes = [], []
+    t19.ref = {("water_pipe", "LF", ""): {"price_median": "45", "qty_median":
+                                          "100", "usable": "yes",
+                                          "n_projects": "30"},
+               ("water_pipe", "LF", "4-12"): {"price_median": "90", "qty_median":
+                                              "100", "usable": "thin",
+                                              "n_projects": "4"},
+               ("water_pipe", "LF", "12-24"): {"price_median": "160",
+                                               "qty_median": "100",
+                                               "usable": "thin",
+                                               "n_projects": "4"}}
+    t19.ref_band, t19.ref_tok, t19.shape, t19.borrow_sigma = {}, {}, {}, {}
+    t19.tok_inv = collections.defaultdict(
+        lambda: collections.defaultdict(list))
+    t19.index, t19.calib, t19.D = {}, {}, None
+    t19.size_cells = si18
+    p19 = item_market_price(t19, "water_pipe", "LF", 100.0, "36-48", None,
+                            "municipal", "48 in water main")
+    chk("19 without its size the line keeps the unsized fallback",
+        (p19["price"], p19["price_key"]), (45.0, "family+unit+size"))
+    p19 = item_market_price(t19, "water_pipe", "LF", 100.0, "36-48", None,
+                            "municipal", "48 in water main", 48.0)
+    k19 = si18.k_at("water_pipe", "LF")[0]
+    chk("19 with it, F1: nearest sized cell x (48 / 16) ** k",
+        (round(p19["price"], 6), p19["price_key"], p19["f1"]["ref_key"]),
+        (round(160.0 * (48.0 / 16.0) ** k19, 6), "f1_nearest_size",
+         ("water_pipe", "LF", "12-24")))
+    with pricing_rule(size_fallback=False):
+        p19o = item_market_price(t19, "water_pipe", "LF", 100.0, "36-48",
+                                 None, "municipal", "48 in water main", 48.0)
+    chk("19 switched off, the rule before F1", p19o["price"], 45.0)
+    t19.size_cells = SizeCells([], [], {})
+    p19n = item_market_price(t19, "water_pipe", "LF", 100.0, "36-48", None,
+                             "municipal", "48 in water main", 48.0)
+    chk("19 no sized cell at all: unpriced, never the unsized cell",
+        (p19n["price"], p19n["f1"].get("no_sized_cell")), (None, True))
+
+    # 20 F2: a removal-only line keys apart, and with no removal cell of its
+    # own it gets the schedule's typical line amount
+    chk("20 removal-only lines key apart", (
+        family_key("water_pipe", "remove existing 8 in water line"),
+        family_key("water_pipe", "remove and replace 8 in water line")),
+        ("water_pipe#rm", "water_pipe"))
+    t20 = Tables.__new__(Tables)
+    t20.__dict__.update({k: v for k, v in t19.__dict__.items()})
+    t20.size_cells = None
+    t20.disc_muni = {4: {"f": 0.826, "p25": 0.8, "p75": 0.9, "lettings": 32}}
+    t20.disc = dict(t20.disc_muni)
+    items20 = [{"family": "water_pipe", "unit": "LF", "quantity": 100.0,
+                "description": "8 in water line"},
+               {"family": "water_pipe", "unit": "LF", "quantity": 300.0,
+                "description": "12 in water line"},
+               {"family": "water_pipe", "unit": "LF", "quantity": 50.0,
+                "description": "remove existing water line"}]
+    r20 = estimate(t20, items20, 4, "municipal")
+    chk("20 typical line amount = median of the other lines' amounts",
+        (r20["trace"][2]["price_key"], round(r20["trace"][2]["price"] * 50, 6)),
+        ("removal_typical_line", round(statistics.median([4500.0, 13500.0]), 6)))
+
+    # 21 V2: sqrt(CMP x line-priced bid part); no comparable -> the line bid
+    P21 = {"market": "municipal", "L": [], "id_list": [], "inv": {},
+           "postings": {}}
+    pool21 = comparables.Pool.__new__(comparables.Pool)
+    pool21.market, pool21.E = "municipal", sys.modules[__name__]
+    pool21.ctx, pool21.bg = comparables.Ctx(P21), comparables.BetaGamma([])
+    t20.comparables = {"municipal": pool21}
+    it21 = [{"family": "water_pipe", "unit": "LF", "quantity": 100.0,
+             "description": "8 in water line"}]
+    r21 = estimate(t20, it21, 4, "municipal", "2026",
+                   {"date": "2026-01-15"})
+    chk("21 no comparable: the bid part is the line-priced one",
+        (r21["comparables"]["n_comps"], round(r21["bid_part"], 9)),
+        (0, round(r21["bid_part_lines"], 9)))
+    tk = comparables.tokens("8 in water line")
+    L21 = [{"pk": "C1", "date": "2025-01-01", "year": "2025", "n": 4,
+            "low": 7000.0, "nonls": 6000.0, "owner": "x", "wtype": "",
+            "lines": [{"iid": 0, "unit": "LF", "q": 100.0, "u": 60.0,
+                       "rm": False, "ls": False}], "by_iid": {0: [0]}}]
+    pool21.ctx = comparables.Ctx({"market": "municipal", "L": L21,
+                                  "id_list": [(tk, "LF")],
+                                  "inv": {"LF": {w: [0] for w in tk}},
+                                  "postings": {0: comparables.np.array([0])}})
+    r21 = estimate(t20, it21, 4, "municipal", "2026",
+                   {"date": "2026-01-15"})
+    chk("21 one earlier comparable: sqrt(CMP x line bid), CMP = its price",
+        (r21["comparables"]["comps"], round(r21["comparables"]["cmp"], 9),
+         round(r21["bid_part"], 9)),
+        (["C1"], 6000.0, round(math.sqrt(6000.0 * r21["bid_part_lines"]), 9)))
+    r21b = estimate(t20, it21, 4, "municipal", "2026",
+                    {"date": "2024-06-01"})
+    chk("21 a comparable dated after the schedule is never used",
+        r21b["comparables"]["n_comps"], 0)
+    with pricing_rule(comparables=False):
+        r21o = estimate(t20, it21, 4, "municipal", "2026",
+                        {"date": "2026-01-15"})
+    chk("21 switched off: no blend", (r21o.get("comparables"),
+                                      r21o["bid_part"] == r21o["bid_part_lines"]),
+        (None, True))
+    chk("21 the switches are restored", (SIZE_FALLBACK, COMPARABLES_BLEND,
+                                         item_tokens.REMOVAL_IDENTITY),
+        (True, True, True))
+
+    # 22 T1 (TxDOT): D1 classes; the mobilization ratio, forward; D1 cells
+    # with >= D1_MIN records before D; the C4 exact rule; estimate() with
+    # T1 on a TxDOT schedule; municipal and the switch untouched
+    chk("22 D1 bidder classes", [d1_n_class(n) for n in (2, 3, 4, 5, 6, 7)],
+        [0, 1, 1, 2, 2, 3])
+    chk("22 D1 size classes", [d1_s_class(x) for x in (
+        249999.0, 250000.0, 999999.0, 1e6, 5e6)], [0, 1, 1, 2, 3])
+    pool22 = []
+    for pk, D_, mob_, base_ in (("T1", "2024-01-10", (5.0, 8.0), (100.0, 100.0)),
+                                ("T2", "2024-05-10", (30.0, 30.0), (100.0, 300.0)),
+                                ("M1", "2024-02-10", (50.0, 50.0), (100.0, 100.0))):
+        mk22 = "municipal" if pk.startswith("M") else "txdot"
+        for b, (m_, s_) in enumerate(zip(mob_, base_)):
+            pool22.append((mk22, pk, "mobilization", "LS", "", 1.0, m_,
+                           b == 0, "b%d" % b, "mobilization", "o", "2024"))
+            pool22.append((mk22, pk, "excavation", "CY", "", 10.0, s_ / 10.0,
+                           b == 0, "b%d" % b, "excavation", "o", "2024"))
+    av22 = {"T1": "2024-01-10", "T2": "2024-05-10", "M1": "2024-02-10"}
+    mr22 = MobRatio(pool22, av22, "txdot")
+    chk("22 mobilization ratio before T2: T1's bids only, municipal out",
+        mr22.at("2024-03-01"), (statistics.median([0.05, 0.08]), 1))
+    chk("22 mobilization ratio: same-date letting blind, then both",
+        (mr22.at("2024-05-10")[1], mr22.at(None)),
+        (1, (statistics.median([0.05, 0.08, 0.3, 0.1]), 2)))
+    st22 = T1State([], {})
+    for i in range(D1_MIN):
+        st22.note_scored("2024-01-%02d" % (i + 1), 4, 300000.0, 0.9 + i / 100,
+                         1.0)
+    chk("22 D1 cell: < D1_MIN records before D -> None",
+        st22.d1(4, 300000.0, "2024-01-10"), None)
+    chk("22 D1 cell: D1_MIN records -> their median",
+        round(st22.d1(3, 900000.0, "2024-02-01"), 9),
+        round(statistics.median([0.9 + i / 100 for i in range(D1_MIN)]), 9))
+    chk("22 D1 cell: another class has none", st22.d1(7, 300000.0,
+                                                      "2024-02-01"), None)
+    q22 = "reflective pavement marker yellow"
+    t22 = Tables.__new__(Tables)
+    t22.__dict__.update({k: v for k, v in t19.__dict__.items()})
+    t22.ref_tok = {}
+    for dsc, pr, npj in ((q22, "10", 6), ("reflective pavement marker", "4", 9),
+                         ("reflective pavement marker white", "5", 9)):
+        t22.ref_tok[(item_tokens.tokens(dsc), "EA", "0-10")] = {
+            "price_median": pr, "n_projects": npj, "vintage_year": None,
+            "usable": "yes", "tok": dsc}
+    t22.tok_inv = collections.defaultdict(lambda: collections.defaultdict(list))
+    for k in t22.ref_tok:
+        for w in k[0]:
+            t22.tok_inv["EA"][w].append(k)
+    p22t = item_market_price(t22, "other", "EA", 5.0, "", None, "txdot", q22)
+    p22m = item_market_price(t22, "other", "EA", 5.0, "", None, "municipal",
+                             q22)
+    with pricing_rule(txdot_c4d1=False):
+        p22o = item_market_price(t22, "other", "EA", 5.0, "", None, "txdot",
+                                 q22)
+    chk("22 C4: TxDOT takes the exact cell; municipal and off the median",
+        (p22t["price"], p22t.get("token_exact_rule"), p22m["price"],
+         p22o["price"]), (10.0, True, 5.0, 5.0))
+    t22.disc = {4: {"f": 0.9, "p25": 0.8, "p75": 1.0, "lettings": 40}}
+    t22.disc_muni = {4: {"f": 0.8, "p25": 0.7, "p75": 0.9, "lettings": 40}}
+    t22.comparables, t22.size_cells, t22.D = None, None, "2024-06-01"
+    t22.t1 = T1State(pool22, av22)
+    for i in range(D1_MIN):
+        t22.t1.note_scored("2024-01-%02d" % (i + 1), 4, 100.0, 0.7, 1.0)
+    it22 = [{"family": "water_pipe", "unit": "LF", "quantity": 100.0,
+             "description": "8 in water line"},
+            {"family": "mobilization", "unit": "LS", "quantity": 1.0,
+             "description": "mobilization"}]
+    r22 = estimate(t22, it22, 4, "txdot")
+    S22 = r22["trace"][0]["price"] * 100.0
+    r_mob = t22.t1.mob.at("2024-06-01")
+    chk("22 TxDOT: no T1 ratio with < MOB_MIN_LETTINGS lettings; D1 f",
+        (r_mob[1] < MOB_MIN_LETTINGS, r22["trace"][1].get("price_key")
+         == "mobilization_ratio", r22["discount"]["f"]), (True, False, 0.7))
+    t22.t1.mob.lets = ["2024-01-01"] * MOB_MIN_LETTINGS
+    r22 = estimate(t22, it22, 4, "txdot")
+    chk("22 TxDOT: mobilization = r x S, total and bid part follow",
+        (r22["trace"][1]["price_key"], round(r22["trace"][1]["price"], 9),
+         round(r22["market_total"], 9), round(r22["bid_part"], 9)),
+        ("mobilization_ratio", round(r_mob[0] * S22, 9),
+         round(S22 + r_mob[0] * S22, 9), round((S22 + r_mob[0] * S22) * 0.7, 9)))
+    r22m = estimate(t22, it22, 4, "municipal")
+    with pricing_rule(txdot_c4d1=False):
+        r22o = estimate(t22, it22, 4, "txdot")
+    chk("22 municipal and switched off: no ratio, production f(n)",
+        (r22m["discount"]["f"], r22m["trace"][1].get("price_key"),
+         r22o["discount"]["f"], r22o["trace"][1].get("price_key")),
+        (0.8, None, 0.9, None))
+    chk("22 the switch is restored", TXDOT_C4D1, True)
+
     print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
     return ok
 
@@ -2670,12 +3627,14 @@ def main():
     return rows_f
 
 
-def run_schedule(path, n_bidders, market="municipal", to_year=None):
+def run_schedule(path, n_bidders, market="municipal", to_year=None,
+                 bid_date=None, owner=None, work_type=None):
     """Price a real bid schedule from a CSV and print the estimate with its
     whole derivation, item by item.
 
     Columns read: item_family, unit, quantity, and optionally item_no,
-    description, size_bucket -- plus `amount` (or `unit_price`, or
+    description, size_bucket, size_in (the line's parsed size in inches,
+    which F1 needs for a sized line) -- plus `amount` (or `unit_price`, or
     owner_fixed=yes) for owner-set money: an allowance, contingency or force
     account is taken at that face value and kept out of the discount.  A
     unit_price on an ordinary line is ignored; prices are estimated, not read.
@@ -2693,6 +3652,7 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None):
                 "unit": (r.get("unit") or "").strip(),
                 "quantity": _f(r.get("quantity"), 0.0),
                 "size_bucket": (r.get("size_bucket") or "").strip(),
+                "size_in": _f(r.get("size_in")),
                 "amount": _f(r.get("amount")),
                 "unit_price": _f(r.get("unit_price")),
                 "owner_fixed": (r.get("owner_fixed") or "").strip().lower()
@@ -2700,7 +3660,9 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None):
     tab = Tables()
     if tab.missing:
         print("MISSING INPUTS:", tab.missing)
-    r = estimate(tab, items, n_bidders, market, to_year)
+    tab.attach_v2f1f2()
+    target = {"date": bid_date, "owner": owner, "work_type": work_type or ""}
+    r = estimate(tab, items, n_bidders, market, to_year, target)
 
     print("%-5s %-26s %-8s %12s %12s %14s  %s"
           % ("item", "family", "unit", "quantity", "unit price", "extended",
@@ -2757,7 +3719,8 @@ if __name__ == "__main__":
         nb = int(a[a.index("--bidders") + 1]) if "--bidders" in a else 4
         mk = a[a.index("--market") + 1] if "--market" in a else "municipal"
         yr = a[a.index("--year") + 1] if "--year" in a else None
-        run_schedule(sched, nb, mk, yr)
+        bd = a[a.index("--bid-date") + 1] if "--bid-date" in a else None
+        run_schedule(sched, nb, mk, yr, bd)
         sys.exit(0)
     if not _selftest():
         print("\nself-tests failed -- not calibrating")

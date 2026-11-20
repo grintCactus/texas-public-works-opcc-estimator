@@ -105,6 +105,7 @@ import shutil
 import statistics
 import sys
 import tempfile
+import types
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -134,7 +135,8 @@ INPUTS = ("master_panel.csv", "municipal_letting_totals.csv",
           "price_reference_band.csv", "price_by_quantity_band_family.csv",
           "index_by_market.csv", "price_time_index.csv",
           "competition_discount_pooled.csv", "competition_discount_municipal.csv",
-          "qty_shape_borrow_sigma.csv", "estimator_calibration.csv")
+          "qty_shape_borrow_sigma.csv", "estimator_calibration.csv",
+          "txdot_project_totals.csv")
 
 _T0 = time.time()
 
@@ -197,6 +199,7 @@ class Panel:
         dates = collections.defaultdict(set)
         precs = collections.defaultdict(set)
         self.pool, self.work, self.ss = [], {}, {}
+        self.sizes = []                              # size_in, aligned with pool (F1)
         self.real = set()
         self.real_rows = collections.Counter()      # locked-set rows by source_set
         self.stray_public_test = set()               # public_test keys no registry file lists
@@ -247,6 +250,7 @@ class Panel:
                     intern(r.get("bidder_norm") or r.get("bidder")),
                     intern((r.get("desc_norm") or "").strip()),
                     intern(r.get("owner") or ""), intern(str(r.get("year") or ""))))
+                self.sizes.append(e._f(r.get("size_in")))
         self.role = role
         self.avail = {pk: e._avail_date(dates[pk], precs[pk]) for pk in dates}
 
@@ -386,27 +390,33 @@ def population_reason(d):
     return None
 
 
-def schedule_of(d):
-    """calibrate_forward's items for one letting (owner-set money at face value)."""
+def schedule_of(d, pk=None, lsz=None):
+    """calibrate_forward's items for one letting (owner-set money at face
+    value), each with its schedule key and its own size (F1)."""
     items, keys = [], []
+    lsz = lsz or {}
     for k in d["sched"]:
         fam, un, sz, bd, dn = k
         if e.is_owner_fixed(d["prices"].get(k, ()), fam, un, dn):
             items.append({"family": fam, "unit": un, "size_bucket": sz,
                           "quantity": d["sched"][k], "description": dn,
-                          "amount": d["wamt"].get(k, 0.0)})
+                          "amount": d["wamt"].get(k, 0.0), "key": k})
             keys.append(k)
             continue
         for qr in d["rows"][k]:
             items.append({"family": fam, "unit": un, "size_bucket": sz,
-                          "quantity": qr, "description": dn})
+                          "quantity": qr, "description": dn, "key": k,
+                          "size_in": lsz.get((pk,) + k)})
             keys.append(k)
     return items, keys
 
 
-def price_forward(pks, lets, avail, tab, kinds, tok_inv, findex, fdisc, cov, audit=None):
+def price_forward(pks, lets, avail, tab, kinds, tok_inv, findex, fdisc, cov, audit=None,
+                  lsz=None, size_cells=None, pools=None, targets=None):
     """estimate() on ForwardTables at each letting's own date, calibrate_forward's
-    loop line for line.  Returns {key: record} for the lettings that pass."""
+    loop line for line.  Returns {key: record} for the lettings that pass.
+    lsz / size_cells: F1's line sizes and size cells; pools: V2's comparables
+    pools; targets: a held-out letting's own owner and work type."""
     out = {}
     ft_d, ft = None, None
     for pk in sorted(pks, key=lambda k: (avail.get(k, e.NEVER), k)):
@@ -417,15 +427,16 @@ def price_forward(pks, lets, avail, tab, kinds, tok_inv, findex, fdisc, cov, aud
         d = lets[pk]
         mk, n, sched = d["mk"], len(d["bt"]), d["sched"]
         wt = d["bt"][next(iter(d["win"]))]
-        items, keys = schedule_of(d)
+        items, keys = schedule_of(d, pk, lsz)
         yr = d["yr"].most_common(1)[0][0] if d["yr"] else ""
         if audit is not None:
             audit.cur_D = D
         if D != ft_d:
             pooled, muni = fdisc.at(D)
             ft_d, ft = D, e.ForwardTables(tab, kinds, tok_inv, D, findex.at(D),
-                                          pooled, muni)
-        r = e.estimate(ft, items, n, mk, yr or None)
+                                          pooled, muni, size_cells, pools)
+        tgt = (targets or {}).get(pk) or {"key": pk}
+        r = e.estimate(ft, items, n, mk, yr or None, target=tgt)
         if r.get("expected_low") is None:
             cov[pk] = "no_estimate"
             continue
@@ -440,9 +451,13 @@ def price_forward(pks, lets, avail, tab, kinds, tok_inv, findex, fdisc, cov, aud
             continue
         fa = r["discount"]["f"]
         cov[pk] = "scored"
+        cm = r.get("comparables") or {}
+        if audit is not None:
+            audit.priced(pk, D, r, size_cells)
         out[pk] = {"project_key": pk, "market": mk, "date": D, "n_bidders": n,
-                   "bid_part": tot * fa, "owner_fixed": fixed, "actual_low": wt,
-                   "n_items": len(sched),
+                   "bid_part": r["bid_part"], "owner_fixed": fixed, "actual_low": wt,
+                   "n_items": len(sched), "bid_part_lines": tot * fa,
+                   "cmp": cm.get("cmp"), "n_comps": cm.get("n_comps"),
                    "shape_items": sum(1 for t in r["trace"] if t.get("qty_factor")),
                    "shape_dollars": sum((t.get("price") or 0) * (t.get("quantity") or 0)
                                         for t in r["trace"] if t.get("qty_factor"))}
@@ -508,11 +523,20 @@ def evaluate(panel, tab, base_index, excluded, test_keys, meta, audit=None):
     every test letting (to score), on tables built from training rows only."""
     avail = panel.avail
     out = {"cov_train": collections.Counter(), "cov_test": collections.Counter()}
-    train_pool = [r for r in panel.pool if not excluded(r[1])]
+    keep = [i for i, r in enumerate(panel.pool) if not excluded(r[1])]
+    train_pool = [panel.pool[i] for i in keep]
+    train_sizes = ([panel.sizes[i] for i in keep] if e.SIZE_FALLBACK else None)
     out["train_pool_rows"] = len(train_pool)
     step("训练参考格：%d 行价格（已去掉留出文件）" % len(train_pool))
-    cells = e._reference_cells(train_pool)
-    del train_pool
+    cells = e._reference_cells(train_pool, train_sizes, avail)
+    # V2: the comparables pool from the training rows only
+    pools = ({MARKET: e.comparables.Pool(train_pool, avail, MARKET, e.CLEAN, e)}
+             if e.COMPARABLES_BLEND else None)
+    del train_pool, keep
+    lsz = e._line_sizes(panel.pool, panel.sizes) if e.SIZE_FALLBACK else {}
+    out["size_cells"], out["pools"] = cells["size"], pools
+    if audit is not None:
+        audit.fitted(cells["size"], pools)
     if audit is not None:
         kinds = {"tok": _AuditKind(cells["tok"], "tok", 2, avail, audit),
                  "band": _AuditKind(cells["band"], "band", 2, avail, audit),
@@ -546,9 +570,14 @@ def evaluate(panel, tab, base_index, excluded, test_keys, meta, audit=None):
         if pk not in lets:
             out["cov_test"]["no_priced_rows"] += 1
     step("按日期向前定价：训练 %d 个市政招标，测试 %d 个" % (len(train_ids), len(test_ids)))
+    # a held-out schedule is not in the pool: its own owner and work type
+    # (known when it is estimated) enter its similarity, nothing else
+    wt_t = e.comparables.schedule_worktypes(e.CLEAN, test_ids, e._f) if pools else {}
+    targets = {pk: {"key": pk, "owner": e.comparables.owner_id(pk, MARKET, ""),
+                    "work_type": wt_t.get(pk, "")} for pk in test_ids}
     cov = {}
     recs = price_forward(train_ids + test_ids, lets, avail, tab, kinds, cells["tok_inv"],
-                         findex, fdisc, cov, audit)
+                         findex, fdisc, cov, audit, lsz, cells["size"], pools, targets)
     for pk in train_ids:
         out["cov_train"][cov[pk]] += 1
     train_recs = sorted((recs[pk] for pk in train_ids if pk in recs),
@@ -794,6 +823,20 @@ def draw_decoy(seed, panel, scored):
             "target": dict(return_target)}
 
 
+def draw_population(panel, tab, base):
+    """The lettings a decoy is drawn from: those the rule in force before
+    V2+F1+F2 (2026-11-20) scores forward with an empty test set.  The locked
+    set itself was drawn from a fixed forward pass of that rule
+    (public_holdout.FORWARD_JSON); pinning the decoys' population the same
+    way keeps a seed naming the same decoy files across pricing changes, so
+    decoy runs before and after a change score the same lettings (F1's
+    no-sized-cell rule and F2's typical line move a few lettings in or out of
+    the scored set, which would otherwise reshuffle every year's draw)."""
+    with e.pricing_rule(size_fallback=False, removal_identity=False, comparables=False):
+        st0 = evaluate(panel, tab, base, make_excluded(panel), set(), lambda pk: (pk, False))
+    return st0["train_recs"]
+
+
 def decoy_meta(decoy):
     by_file = {}
     for g, u in decoy["groups"].items():
@@ -814,7 +857,8 @@ def run_decoy_core(seed, panel, tab, base, decoy=None):
     if decoy is None:
         step("第 1 步：测试集为空，给全部训练招标向前定价（抽诱饵集用）")
         st1 = evaluate(panel, tab, base, make_excluded(panel), set(), lambda pk: (pk, False))
-        decoy = draw_decoy(seed, panel, st1["train_recs"])
+        step("抽诱饵用的招标池：V2+F1+F2 之前的规则向前打出分的训练招标")
+        decoy = draw_decoy(seed, panel, draw_population(panel, tab, base))
     excluded = make_excluded(panel, decoy["files"])
     test_keys = {pk for pk in panel.avail if _file_of(pk) in decoy["files"]}
     step("第 2 步：诱饵集 %d 组 %d 个文件留出，重建训练表并打分"
@@ -1122,6 +1166,51 @@ class Audit:
             if self.held_out(pk):
                 self.bad("参考价用了留出招标 %s" % pk)
 
+    def fitted(self, size_cells, pools):
+        """V2+F1+F2's fitted sets, as built: no held-out letting in any F1
+        size cell, in a comparables pool or in its beta/gamma rows."""
+        if size_cells is not None:
+            self.n["F1 尺寸格"] += len(size_cells.cells)
+            leak = sorted(pk for pk in size_cells.lettings() if self.held_out(pk))
+            if leak:
+                self.bad("F1 尺寸格含留出招标 %s" % leak[:3])
+        for mk, pool in sorted((pools or {}).items()):
+            keys = pool.keys()
+            self.n["可比池招标"] += len(keys)
+            leak = [pk for pk in keys if self.held_out(pk)]
+            if leak:
+                self.bad("可比池 %s 含留出招标 %s" % (mk, leak[:3]))
+            leak = sorted(pk for pk in pool.bg.keys_before(e.NEVER) if self.held_out(pk))
+            if leak:
+                self.bad("可比池 %s 的 beta/gamma 含留出招标 %s" % (mk, leak[:3]))
+
+    def priced(self, pk, D, r, size_cells):
+        """One scored letting: its chosen comparables, the lettings behind
+        beta/gamma at its cutoff, and every F1 line's reference size and
+        slope k come from training lettings dated strictly before D."""
+        cm = r.get("comparables")
+        if cm is not None:
+            self.n["核对的可比法定价"] += 1
+            for c, cd in zip(cm["comps"], cm["comp_dates"]):
+                self.n["核对的可比招标"] += 1
+                if self.held_out(c):
+                    self.bad("%s 的可比招标是留出招标 %s" % (pk, c))
+                if cd >= D or self.avail.get(c, e.NEVER) >= D:
+                    self.bad("%s 的可比招标 %s 不早于定价日期 %s" % (pk, c, D))
+            if cm.get("date") != D or cm.get("bg_cutoff", D) > D:
+                self.bad("%s 的可比法日期 %s / beta-gamma 截断 %s 不对（定价日期 %s）"
+                         % (pk, cm.get("date"), cm.get("bg_cutoff"), D))
+        for t in r["trace"]:
+            f = t.get("f1")
+            if not f or "ref_key" not in f:
+                continue
+            self.n["核对的 F1 子目"] += 1
+            rk = tuple(f["ref_key"])
+            used = set(size_cells.ref_lettings(rk, D)) | size_cells.k_lettings(rk[0], rk[1], D)
+            bad = [q for q in used if self.held_out(q) or self.avail.get(q, e.NEVER) >= D]
+            if bad:
+                self.bad("%s 的 F1 子目 %r 的参照尺寸/k 用了 %s" % (pk, rk, sorted(bad)[:3]))
+
     def constants(self, rec, c, train_recs, const):
         self.n["核对的测试常数"] += 1
         D = rec["date"]
@@ -1303,7 +1392,7 @@ def _selftest(seed):
     # ---- stage 1 + the decoy, then stage 2 with every hand-out instrumented
     step("第 1 步：测试集为空")
     st1 = evaluate(panel, tab, base, make_excluded(panel), set(), lambda pk: (pk, False))
-    decoy = draw_decoy(seed, panel, st1["train_recs"])
+    decoy = draw_decoy(seed, panel, draw_population(panel, tab, base))
     excluded = make_excluded(panel, decoy["files"])
     test_keys = {pk for pk in panel.avail if _file_of(pk) in decoy["files"]}
     audit = Audit(excluded, panel.avail, test_keys,
@@ -1332,6 +1421,23 @@ def _selftest(seed):
         a.n["失败"] == 0, "；".join(a.fails[:5]) if a.fails else "")
     say("      核对次数：%s" % "，".join("%s %d" % kv for kv in sorted(a.n.items())
                                     if kv[0] != "失败"))
+    chk("2 V2+F1+F2 的拟合量都插桩核对过：可比池、beta/gamma、F1 尺寸格不含留出招标；"
+        "每个打分招标选中的可比招标、每个 F1 子目的参照尺寸和 k 都只来自定价日期之前的训练招标",
+        a.n["可比池招标"] > 0 and a.n["F1 尺寸格"] > 0 and a.n["核对的可比法定价"] > 0
+        and a.n["核对的可比招标"] > 0 and a.n["失败"] == 0,
+        "可比池 %d 个招标，尺寸格 %d 个；可比法定价 %d 次、可比招标 %d 个、F1 子目 %d 个" % (
+            a.n["可比池招标"], a.n["F1 尺寸格"], a.n["核对的可比法定价"],
+            a.n["核对的可比招标"], a.n["核对的 F1 子目"]))
+    sizes_ok = st2["size_cells"] is not None and not (
+        st2["size_cells"].lettings() & set(test_keys)) and not any(
+        excluded(k) for k in st2["size_cells"].lettings())
+    pool_ok = all(not excluded(k) and k not in test_keys
+                  for p_ in (st2["pools"] or {}).values() for k in p_.keys())
+    chk("2 训练端的可比池和 F1 尺寸格里没有诱饵文件的招标（按文件名重查）",
+        sizes_ok and pool_ok and bool(st2["pools"]),
+        "可比池 %d 个，尺寸格招标 %d 个" % (
+            sum(len(p_.keys()) for p_ in (st2["pools"] or {}).values()),
+            len(st2["size_cells"].lettings()) if st2["size_cells"] else 0))
     chk("2 每个诱饵招标的常数都和生产函数（_not_under_guard / _centre）重算一致",
         a.n["核对的测试常数"] == len(st2["tests"]), "%d 个" % a.n["核对的测试常数"])
     tdates = {r["date"] for r in st2["tests"]}
@@ -1359,6 +1465,26 @@ def _selftest(seed):
     neg.ref_row("fam", ("x", "EA", ""), {"A": [], "LATE": []}, "2025-01-01", {"n_projects": 2})
     chk("3 反向对照：插桩能抓到故意放进去的泄漏", n1 == 1 and n2 == 2 and neg.n["失败"] == 3,
         "留出格 %d，晚日期 %d，多数了招标 %d" % (n1, n2 - n1, neg.n["失败"] - n2))
+    # the same for V2+F1+F2's fitted quantities: a planted held-out letting
+    # in a size cell, in the comparables pool and its beta/gamma, a chosen
+    # comparable dated after D, and an F1 line resting on a late letting
+    rows_ = [("municipal", pk, "water_pipe", "LF", "8-12", 10.0, 50.0, True, "b",
+              "8 in water line", "o", "2020") for pk in ("A", "LEAK", "LATE")]
+    si_ = e.SizeCells(rows_, [8.0, 10.0, 12.0], {"A": "2024-01-01", "LEAK": "2023-01-01",
+                                                  "LATE": "2025-06-01"})
+    pool_ = types.SimpleNamespace(keys=lambda: ["A", "LEAK"], bg=types.SimpleNamespace(
+        keys_before=lambda c: {"A", "LEAK"}))
+    neg.fitted(si_, {"municipal": pool_})
+    n3 = neg.n["失败"]
+    neg.priced("T", "2025-01-01", {"comparables": {"comps": ["A", "LATE"],
+                                                  "comp_dates": ["2024-01-01", "2025-06-01"],
+                                                  "date": "2025-01-01", "bg_cutoff": "2023-01-01"},
+                                  "trace": [{"f1": {"ref_key": ("water_pipe", "LF", "8-12")}}]},
+               si_)
+    n4 = neg.n["失败"]
+    chk("3 反向对照：V2+F1+F2 的插桩也能抓到故意放进去的泄漏（尺寸格、可比池、beta/gamma、"
+        "晚日期的可比招标、F1 参照）", n3 - 3 == 3 and n4 - n3 == 2,
+        "尺寸格/可比池/beta-gamma %d，可比招标和 F1 子目 %d" % (n3 - 3, n4 - n3))
 
     # flip: stage 1 vs stage 2 on the training side
     s1 = {r["project_key"]: r for r in st1["train_recs"]}

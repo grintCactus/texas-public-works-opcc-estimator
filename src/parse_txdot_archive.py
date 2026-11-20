@@ -34,7 +34,7 @@ import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from parse_bidtabs import (norm_unit, norm_desc, item_family, extract_size_in,
-                           canon_bidder, MATERIAL_RE, num)
+                           canon_bidder, MATERIAL_RE, num, is_time_bid_item)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ZIPS = os.path.join(ROOT, "data", "external", "txdot_archive", "zips")
@@ -237,6 +237,22 @@ def parse_tab(text, src_name):
 
     scope = ("DFW_MSA12" if county in MSA12
              else ("DFW_district14" if county in DFW14 else "other"))
+    # The B half of an A+B bid (parse_bidtabs.is_time_bid_item): 800-6001 'NO.
+    # OF WORKING DAYS', $/D, quantity = the daily road user cost, one 'price'
+    # per bidder = the days bid.  TxDOT ranks on A+B and pays A, and the
+    # BIDDER totals this format prints INCLUDE B -- so the printed-total check
+    # cannot catch it (42 DFW tabs, 2017-24; median 7.7% of the low bid, up to
+    # 28%: tail audit 2026-11-20).  The item leaves the line items, and each
+    # bidder's total is its printed total less its B.  The rank-1 bidder is
+    # the one awarded (lowest A+B); low_bid is that bidder's A, the contract.
+    btime = {}
+    for r in recs:
+        if is_time_bid_item(r["code"], r["unit"], r["desc"]):
+            for k, price in r["prices"].items():
+                if price is not None and r["qty"] is not None:
+                    btime[k] = btime.get(k, 0.0) + r["qty"] * price
+    if btime:
+        recs = [r for r in recs if not is_time_bid_item(r["code"], r["unit"], r["desc"])]
     out = []
     for r in recs:
         dn = norm_desc(r["desc"])
@@ -278,12 +294,24 @@ def parse_tab(text, src_name):
                 "n_bidders": n_bidders,
                 "unit_price": price,
             })
+    printed = dict(btotals)
+    if btime:
+        btotals = {k: (round(v - btime[k], 2) if (v is not None and k in btime) else v)
+                   for k, v in printed.items()}
+    low = min([v for v in btotals.values() if v], default=None)
+    if btime and btotals.get(1):
+        low = btotals[1]          # A of the bidder ranked (and awarded) on A+B
     totals = {"src_file": src_name, "county": county, "scope": scope, "csj": csj,
               "project_type": ptype, "bid_date": date, "n_bidders": n_bidders,
               "ee_total": ee_total,
-              "low_bid": min([v for v in btotals.values() if v], default=None),
+              "low_bid": low,
+              # A only (the B time bid taken out of an A+B tab's printed totals)
               "bidder_totals": ";".join("%d:%s" % (k, btotals[k])
-                                        for k in sorted(btotals))}
+                                        for k in sorted(btotals)),
+              "ab_bid": bool(btime),
+              "bidder_totals_printed": (";".join("%d:%s" % (k, printed[k])
+                                                 for k in sorted(printed)) if btime else ""),
+              "time_bid": ";".join("%d:%.2f" % (k, btime[k]) for k in sorted(btime))}
     return out, totals
 
 
@@ -354,7 +382,9 @@ def main():
             w.writerows(all_ero)
 
     tcols = ["src_file", "county", "scope", "csj", "project_type", "bid_date",
-             "n_bidders", "ee_total", "low_bid", "bidder_totals"]
+             "n_bidders", "ee_total", "low_bid", "bidder_totals",
+             # A+B tabs: bidder_totals is A; the printed A+B and the B are kept
+             "ab_bid", "bidder_totals_printed", "time_bid"]
     with open(os.path.join(OUT, "txdot_archive_project_totals.csv"), "w", newline="",
               encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=tcols, extrasaction="ignore")

@@ -58,6 +58,8 @@ proof, not a sort:
 """
 import collections
 import math
+import os
+import re
 
 # A margin this small is a tie, not a win: two bidders at the same total does
 # happen on small lettings, and the tab itself does not say who the owner
@@ -351,38 +353,158 @@ def winner_of_letting(rows, declared=None):
 # numbers, or a summary page) cannot be counted against, and is let through as
 # `unverifiable`; a file without facts at all is not gated.
 #
-# NOT gated (measured 2026-11-19, left for review): a letting whose items are
-# all read but whose winner's total is not among the amounts the document
-# prints on its TOTAL lines.  157 decided lettings are like that; requiring
-# the match would remove them all, most a few tenths of a percent off.  One is
-# a wrong winner -- Cedar Hill Complete Streets 2A reads 147 rows for each of
-# four bidders and SYB sums lowest at $3,540,098.54, while the tab prints
-# TOTAL BASE BID $3,613,710.17 for Axis and $3,628,082.94 for SYB.
+# GATED SINCE 2026-11-20 (tail audit, reports/tail_audit_2026-11-20.md): a
+# letting whose items are all read but whose winner's total is not among the
+# amounts the document prints on its TOTAL lines.  The 2026-11-19 count was
+# 157 decided lettings, left ungated because most were a few tenths of a
+# percent off; the audit of the extreme tails then found that all 5 tail
+# lettings marked covers_document were parse errors (Celina Ousley Park,
+# Frisco 3rd & Maple and Research Rd, Mesquite 24-7401, Southlake TW King:
+# alternates or an extra-work item summed in, item 1 or seven items lost), and
+# the Cedar Hill Complete Streets 2A wrong winner above is one of the 157 --
+# SYB sums lowest at $3,540,098.54 over 147 rows each while the tab prints
+# TOTAL BASE BID $3,613,710.17 for Axis and $3,628,082.94 for SYB.  Item
+# counts cannot see a schedule that has the right number of lines and the
+# wrong lines.
+#
+# And a match must be the bidder's OWN total, not any amount on the page.
+# Dallas County's Riverfront Blvd passed as printed_total because Harper's
+# sum ($103,991,724.50, alternates summed in) fell within 0.05% of RAGLE's
+# printed total ($103,984,035.18); Harper's own was $99,196,865.85.  The
+# document does not say which column an amount sits under, so the proof is
+# that the winner's total is printed TO THE DOLLAR, or -- for a match that is
+# only near -- that the RUNNER-UP's total is printed too, at a different
+# amount: a parse that is right prints every bidder's total, and two
+# coincidences in one letting are not plausible.  A bidder's total may be its base bid or its
+# base plus every section it priced (a 'TOTAL BASE BID' that includes the
+# alternates, as Dallas County's Rowlett Rd prints).
+#
+# So, where the document prints its bidders' totals (two or more amounts on
+# TOTAL lines): the winner's and the runner-up's totals both printed ->
+# printed_total; anything else -> total_mismatch, GATED.  Where it does not,
+# as before: a printed amount (a recommendation letter's award) proves the
+# winner, else item coverage decides (covers_document / partial).
 COVER_MIN = 0.8
 DOC_MIN_ITEMS = 3
 TOTAL_TOL = 0.0005          # of the printed amount, never under one dollar
 
 
-GATED = ("partial",)                        # the statuses that remove the winner
+# the statuses that remove the winner (and with it every letting-level use)
+GATED = ("partial", "total_mismatch", "unit_price_agreement", "on_call_quantities")
 
 
-def completeness(winner_totals, items_read, doc):
+def completeness(winner_totals, items_read, doc, runner_up_totals=None):
     """(status, coverage) for a decided letting.  doc: {'items': n,
     'totals': [amounts printed off the item lines, dollars],
-    'total_lines': [amounts on TOTAL lines]} or None.  status is
-    'printed_total', 'covers_document', 'unverifiable', 'no_document_facts',
-    or 'partial' (GATED: the one that removes the winner)."""
+    'total_lines': [amounts on TOTAL lines]} or None.  winner_totals /
+    runner_up_totals: the candidate totals of the winner and of the
+    second-lowest bidder.  status is 'printed_total', 'covers_document',
+    'unverifiable', 'no_document_facts', or one of GATED ('partial',
+    'total_mismatch')."""
     if doc is None:
         return "no_document_facts", None
     n = doc.get("items") or 0
     cov = (items_read / n) if n >= DOC_MIN_ITEMS else None
     printed = list(doc.get("totals") or ()) + list(doc.get("total_lines") or ())
-    for t in winner_totals:
-        if t and t > 0 and any(abs(t - p) <= max(1.0, TOTAL_TOL * p) for p in printed):
+
+    def near(t, p):
+        return abs(t - p) <= max(1.0, TOTAL_TOL * p)
+
+    def hit(ts, avoid=None):
+        for t in ts or ():
+            if t and t > 0:
+                for p in printed:
+                    if near(t, p) and (avoid is None or not near(avoid, p)):
+                        return p
+        return None
+    pw = hit(winner_totals)
+    if len(set(doc.get("total_lines") or ())) >= 2:
+        # the document prints its bidders' totals: each must be its own.  To
+        # the dollar is proof on its own; only NEAR (within TOTAL_TOL, as
+        # Harper's $7,689 off Ragle's printed total) needs the runner-up's
+        # total printed too, at a different amount.
+        exact = pw is not None and any(t and abs(t - pw) <= 1.0 for t in winner_totals)
+        if pw is not None and (exact or runner_up_totals is None
+                               or hit(runner_up_totals, avoid=pw) is not None):
             return "printed_total", cov
+        return "total_mismatch", cov
+    if pw is not None:
+        return "printed_total", cov
     if cov is None:
         return "unverifiable", None
     return ("covers_document" if cov >= COVER_MIN else "partial"), cov
+
+
+# ---- a letting whose total is not the price of a project -------------------
+# Its unit prices are real bids; its sum is not a job, so it must not be
+# scored or calibrated as a letting (tail audit 2026-11-20).  Two kinds:
+#
+#  * a UNIT-PRICE AGREEMENT: every quantity 1 on measured units.  Coppell
+#    Q-0325-02 (pavement panel replacement) prints 1 LF / 1 SY / 1 CY on every
+#    line and the council awarded a not-to-exceed $2.5M; its 'total' ($11,504
+#    low) is a sum of unit prices.  Detected conservatively: at least
+#    UPA_MIN_ITEMS items, at least UPA_ONE_SHARE of them at quantity 1, and at
+#    least half of those on a measured unit (not LS / EA / allowance), so a
+#    lump-sum pump station (8 lines, mostly 1 LS) is not one.
+#  * ON-CALL / annual / as-needed contracts with notional quantities (Frisco
+#    2025 On-Call Concrete Repair, tiered quantity bands): the title says so
+#    (parse_bidtabs.contract_hint, or the file name), or the owner's record
+#    does (NOT_A_PROJECT_TOTAL: NRH 6347 prints only 'UTILITY STREET CUT &
+#    CONCRETE REPAIRS'; council item 6347 awards two non-exclusive annual
+#    on-call contracts, NTE $350,000 a year each).
+# The existing gate does the rest: no winner, so no is_low_bidder, so nothing
+# letting-level reads it (municipal_letting_totals, the back-tests), while
+# every unit price stays in the all-bids pool.
+UPA_MIN_ITEMS = 6
+UPA_ONE_SHARE = 0.9
+_UPA_LUMP_UNITS = {"", "LS", "EA", "ALLOW", "ALW", "LOT", "JOB", "AL", "LSUM"}
+ON_CALL_RE = re.compile(
+    r"\bon[\s-]?call\b|\bindefinite[\s-]+(?:delivery|quantit)|"
+    r"\b(?:annual|term)\s+(?:contract|agreement|requirements?)\b|"
+    r"\bunit[\s-]+price\s+(?:contract|agreement)\b|\bprice\s+agreement\b|"
+    r"\brequirements?\s+contract\b", re.I)       # = parse_bidtabs.CONTRACT_HINT_RE
+NOT_A_PROJECT_TOTAL = {
+    "external/legistar/nrhtx/2025-01-07_6347_BId_Tab.pdf":
+        ("on_call_quantities", "NRH council item 6347: two non-exclusive annual on-call "
+                               "street-cut repair contracts, NTE $350,000/yr each"),
+}
+
+
+def unit_price_agreement(rows):
+    """True for a schedule of measured items all at quantity 1 (see above).
+    rows: dicts with item_no, desc_norm, unit, quantity."""
+    q = collections.defaultdict(list)
+    unit = {}
+    for r in rows:
+        k = (r.get("item_no") or "", r.get("desc_norm") or "")
+        try:
+            v = float(r.get("quantity"))
+        except (TypeError, ValueError):
+            continue
+        if v != v:
+            continue
+        q[k].append(v)
+        unit[k] = (r.get("unit") or "").upper()
+    if len(q) < UPA_MIN_ITEMS:
+        return False
+    ones = [k for k, v in q.items() if sorted(v)[len(v) // 2] == 1.0]
+    if len(ones) < UPA_ONE_SHARE * len(q):
+        return False
+    measured = [k for k in ones if unit.get(k, "") not in _UPA_LUMP_UNITS]
+    return len(measured) >= 0.5 * len(ones)
+
+
+def not_a_project_total(src_file, rows, doc):
+    """'unit_price_agreement', 'on_call_quantities' or '' for a letting."""
+    f = (src_file or "").replace("\\", "/")
+    if f in NOT_A_PROJECT_TOTAL:
+        return NOT_A_PROJECT_TOTAL[f][0]
+    if (doc or {}).get("contract_hint") == "on_call" or ON_CALL_RE.search(
+            re.sub(r"[_]+", " ", os.path.basename(f))):
+        return "on_call_quantities"
+    if unit_price_agreement(rows):
+        return "unit_price_agreement"
+    return ""
 
 
 def _r(b, ino, q, u, f="f", sh="s", d=None):
@@ -537,10 +659,50 @@ def _selftest():
     chk("14d two item lines cannot be counted against",
         completeness([100.0], 2, {"items": 2, "totals": []}), ("unverifiable", None))
     chk("14e no facts, no gate", completeness([100.0], 2, None), ("no_document_facts", None))
-    chk("14f all items read, printed totals other numbers: not gated (see above)",
+    chk("14f all items read, printed totals other numbers: gated since 2026-11-20",
         completeness([3540098.54], 147, {"items": 150, "totals": [3613710.17, 3628082.94],
                                          "total_lines": [3613710.17, 3628082.94]})[0],
-        "covers_document")
+        "total_mismatch")
+    # 14h Riverfront Blvd: the winner's sum sits on the RUNNER-UP's printed
+    #     total and the runner-up's on nothing -- not proof, gated
+    rf = {"items": 300, "totals": [99196865.85, 103984035.18, 99979953.78, 105272603.97],
+          "total_lines": [99196865.85, 103984035.18, 99979953.78, 105272603.97]}
+    chk("14h a total that is another bidder's is not proof",
+        completeness([103991724.50], 290, rf, [109640704.53])[0], "total_mismatch")
+    chk("14i both own totals printed proves it",
+        completeness([99196865.85], 290, rf, [103984035.18])[0], "printed_total")
+    chk("14j runner-up on the winner's amount is not a second proof",
+        completeness([99196600.00], 290, rf, [99196800.00])[0], "total_mismatch")
+    chk("14j2 the winner's own total to the dollar is proof alone",
+        completeness([99196865.85], 290, rf, [101000000.00])[0], "printed_total")
+    chk("14k base + alternates printed as the total counts",
+        completeness([1.0, 99979953.78], 290, rf, [105272603.97])[0], "printed_total")
+    chk("14l no TOTAL lines: an award amount alone still proves it",
+        completeness([672774.0], 20, {"items": 21, "totals": [672774.0], "total_lines": []},
+                     [700000.0])[0], "printed_total")
+    chk("14m no TOTAL lines, nothing printed: coverage decides as before",
+        completeness([500.0], 20, {"items": 21, "totals": [], "total_lines": [672774.0]},
+                     [700000.0])[0], "covers_document")
+    # 15 not a project total
+    upa = [{"item_no": str(i), "desc_norm": "d%d" % i, "unit": u, "quantity": 1}
+           for i, u in enumerate(["SY", "LF", "CY", "SY", "LF", "EA", "SY", "LF"])]
+    chk("15a quantity 1 on measured units is a unit-price agreement",
+        unit_price_agreement(upa), True)
+    pump = [{"item_no": "A-%02d" % i, "desc_norm": "p%d" % i, "unit": u, "quantity": q}
+            for i, (u, q) in enumerate([("LS", 1), ("LF", 144), ("LS", 1), ("LS", 1),
+                                        ("EA", 4), ("LS", 1), ("LS", 1), ("LS", 1)])]
+    chk("15b a lump-sum pump station is not", unit_price_agreement(pump), False)
+    lumps = [{"item_no": str(i), "desc_norm": "l%d" % i, "unit": "LS", "quantity": 1}
+             for i in range(10)]
+    chk("15c all lump sums is a lump-sum job, not an agreement", unit_price_agreement(lumps), False)
+    chk("15d five items is too few to say", unit_price_agreement(upa[:5]), False)
+    chk("15e on-call by file name",
+        not_a_project_total("external/frisco/2025-08-21_Bid_2506-096_On_Call_Concrete_Repair_Bid_Tabulation.pdf",
+                            pump, {}), "on_call_quantities")
+    chk("15f on-call by the document's title", not_a_project_total("x/y.pdf", pump,
+                                                                  {"contract_hint": "on_call"}),
+        "on_call_quantities")
+    chk("15g a project is none of these", not_a_project_total("x/y.pdf", pump, {}), "")
     chk("14g a TOTAL-line amount alone proves it",
         completeness([3613710.17], 30, {"items": 150, "totals": [],
                                         "total_lines": [3613710.17]})[0], "printed_total")
@@ -569,6 +731,9 @@ def main():
     # (keep_row not applied): the completeness gate counts what the parse
     # holds against what the document prints, alternates included
     read_rows = collections.defaultdict(collections.Counter)
+    # ... and the dollars READ per sheet and bidder over every section, so a
+    # bidder's total can be its base plus what it priced besides (completeness)
+    read_amt = collections.defaultdict(lambda: collections.defaultdict(float))
     with open(os.path.join(clean, "line_items.csv"), encoding="utf-8-sig",
               newline="") as f:
         for r in csv.DictReader(f):
@@ -582,6 +747,17 @@ def main():
             bk = bidder_identity.key_of(r.get("bidder") or "") if priced else ""
             if bk:
                 read_rows[(r["src_file"], r["src_sheet"])][bk] += 1
+                try:
+                    e = float(r.get("extended_reported") or "nan")
+                except ValueError:
+                    e = float("nan")
+                if not (e == e):
+                    try:
+                        e = float(r.get("quantity") or "nan") * float(r["unit_price"])
+                    except (TypeError, ValueError):
+                        e = float("nan")
+                if e == e and r.get("ext_mismatch") != "Y":
+                    read_amt[(r["src_file"], r["src_sheet"])][bk] += e
             if not keep_row(r, rejected):
                 continue
             raw.append(r)
@@ -596,7 +772,8 @@ def main():
                     "items": int(r.get("doc_items") or 0),
                     "totals": [float(x) for x in (r.get("printed_totals") or "").split()],
                     "total_lines": [float(x) for x in
-                                    (r.get("total_line_amounts") or "").split()]}
+                                    (r.get("total_line_amounts") or "").split()],
+                    "contract_hint": r.get("contract_hint") or ""}
     else:
         print("!! %s is missing -- the completeness gate is OFF for this run" % fp)
     print("rows rejected before any comparison:", dict(rejected.most_common()))
@@ -669,6 +846,11 @@ def main():
         w = winner_of_letting(rs, decl.get(k))
         w.update({"completeness": "", "doc_coverage": None, "items_read": None,
                   "doc_items": None})
+        # a letting whose total is not a project (not_a_project_total)
+        npt = not_a_project_total(k[0], rs, (facts or {}).get(k[0])) if w["winner"] else ""
+        if npt:
+            w.update({"completeness": npt, "winner": None, "basis": "not_a_project_total"})
+            gate[npt] += 1
         if w["winner"] and facts is not None:
             per = collections.Counter()
             for sk in {(r["src_file"], r["src_sheet"]) for r in rs}:
@@ -692,15 +874,44 @@ def main():
                     except (TypeError, ValueError):
                         pass
             doc = facts.get(k[0])
+            # every bidder's dollars over every section of the letting's sheets
+            allsec = collections.defaultdict(float)
+            for sk in {(r["src_file"], r["src_sheet"]) for r in rs}:
+                for bk, v in read_amt.get(sk, {}).items():
+                    allsec[bk] += v
+            # the runner-up: the second-lowest total the winner was proved against
+            tt = w["totals"] or w["raw_totals"]
+            ru = sorted((v, b) for b, v in tt.items() if b != w["winner"])
+            ru_tot = None
+            if ru:
+                rb = ru[0][1]
+                ru_ext = 0.0
+                for r in rs:
+                    if r["bidder"] != rb:
+                        continue
+                    try:
+                        e = float(r.get("extended_reported") or "nan")
+                    except ValueError:
+                        e = float("nan")
+                    if e == e and e > 0:
+                        ru_ext += e
+                    else:
+                        try:
+                            ru_ext += float(r["quantity"]) * float(r["unit_price"])
+                        except (TypeError, ValueError):
+                            pass
+                ru_tot = [tt.get(rb), w["raw_totals"].get(rb), ru_ext,
+                          allsec.get(bidder_identity.key_of(rb))]
             st, cov = completeness(
                 [(w["totals"] or {}).get(w["winner"]), w["raw_totals"].get(w["winner"]),
-                 ext_tot], items_read, doc)
+                 ext_tot, allsec.get(bidder_identity.key_of(w["winner"]))], items_read, doc,
+                ru_tot)
             w.update({"completeness": st, "doc_coverage": cov, "items_read": items_read,
                       "doc_items": (doc or {}).get("items")})
             gate[st] += 1
             if st in GATED:
                 w["winner"] = None
-                w["basis"] = "partial_schedule"
+                w["basis"] = "partial_schedule" if st == "partial" else st
         res[k] = w
         basis[w["basis"]] += 1
     if gate:
