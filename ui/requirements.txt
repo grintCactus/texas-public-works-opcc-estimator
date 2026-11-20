@@ -1,0 +1,11 @@
+# Only fastapi had to be installed on this machine; everything else was
+# already present for the ETL. Versions are the ones verified here.
+fastapi>=0.110          # 0.163.2 verified
+uvicorn>=0.27           # 0.41.0  verified
+python-multipart>=0.0.9 # 0.0.29  verified -- required for file uploads
+pandas>=2.0             # 2.3.3
+numpy>=1.26             # 2.4.2
+pyarrow>=14             # 23.0.1  -- Parquet cache for master_panel
+openpyxl>=3.1           # 3.1.5   -- .xlsx takeoffs
+pdfplumber>=0.11        # 0.11.9  -- PDF text layer + word coordinates
+python-docx>=1.0        # 1.2.0   -- .docx takeoffs

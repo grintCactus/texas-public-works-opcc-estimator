@@ -1,0 +1,24 @@
+# Versions as installed on the Windows PC (Python 3.14) on 2026-11-19.
+# On the Mac:  python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+# If a pinned version has no wheel for the Mac's Python, relax that line to >= and note it.
+# (All pins installed unchanged on the Mac's Python 3.12.9.  The python.org build has
+#  no CA bundle: PIP_CERT=/etc/ssl/cert.pem pip install --use-deprecated=legacy-certs ...)
+# Not pip packages: pdftotext (poppler) and Tesseract live in tools/ -- see tools/README.txt.
+pandas==2.3.3
+numpy==2.4.2
+openpyxl==3.1.5
+pdfplumber==0.11.9
+pdfminer.six==20251230
+pypdfium2==5.6.0
+PyMuPDF==1.27.1
+scipy==1.18.0
+scikit-learn==1.9.0
+pyarrow==23.0.1
+python-dateutil==2.9.0.post0
+pytz==2026.1.post1
+tzdata==2025.3
+# OCR engines for src/ocr_scans.py, which keeps the best reading per scan:
+# Apple Vision (macOS only, replaces the Windows-only src/_win_ocr.ps1 bridge) and RapidOCR.
+pyobjc-framework-Vision; sys_platform == "darwin"
+pyobjc-framework-Quartz; sys_platform == "darwin"
+rapidocr-onnxruntime==1.4.4

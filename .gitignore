@@ -1,0 +1,36 @@
+# Python environment and local tool binaries (rebuild with requirements.txt / tools/README.txt)
+.venv/
+tools/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Data: several GB, and data/ holds the company's own bid files (test-only, kept local).
+# Only the locked test set's registry and documentation are versioned.
+data/*
+!data/test_holdout/
+
+# Working area: scratch runs and data snapshots (tens of GB)
+handoff/
+
+# Outputs built mostly from company files (kept local)
+reports/opcc_benchmark.md
+reports/opcc_analysis.md
+reports/segment_and_company_test.md
+reports/streambank_opcc_accuracy.md
+reports/measurements/company_*
+
+# Local Claude Code state
+.claude/
+
+# Files uploaded through the UI (include company files)
+ui/.inbox/
+# UI caches (full copies of data tables, include company rows)
+ui/.cache/
+# Run logs (list every input file, including company files)
+reports/measurements/*.log
+
+# Internal handbook (mentions company projects; kept local)
+docs/HANDBOOK_internal.md
+# Record of a locked-test-set run (kept local)
+reports/measurements/holdout_confirm_*

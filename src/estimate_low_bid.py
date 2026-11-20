@@ -1,0 +1,2766 @@
+"""The estimator: market median -> expected low bid, with a calibrated interval.
+
+Everything else in this project produces a piece of this.  price_reference.csv
+gives the market level, price_by_quantity_band_family.csv the quantity shape,
+price_time_index.csv / index_by_market.csv the escalation,
+competition_discount_municipal.csv and _pooled.csv the competition discount.
+This joins them, and the joining is where the mistakes live.
+
+THE DISCOUNT GOES ON THE TOTAL, NOT ON EACH UNIT PRICE.
+
+That is measured, not assumed.  The discount was calibrated as a project-level
+order statistic -- the winner's total over the median bidder's total -- so
+spreading it across unit prices assumes the winner discounts every line item
+alike, and that assumption was tested rather than argued.
+
+Two corrections to how this was first written, both found by adversarial
+verification and both worth keeping on the record.  First, the two routes were
+NOT given an identical price level: they differed by a median 2.16%, so the
+original framing ("holding the price level exact") overstated the test.
+Second, the item-level ratios once cited as the mechanism -- 0.24 for mowing
+per mile, 0.61 for lump-sum mobilisation, 0.82 for subgrade stabilisation, out
+of unbalanced_bidding.csv -- are COMPOSITION ARTEFACTS, not within-letting
+discounts.  Measured inside a letting the same three are 0.951 / 0.875 / 0.945.
+The dramatic numbers came from comparing a winner's items against a different
+mix of other bidders' items.
+
+The conclusion survives both corrections, re-run on the 831 lettings where
+both routes are computable and fed the identical per-item price level:
+
+    route                              lettings   est/actual   median |error|
+    total x f(n_bidders)                    831       0.9861            6.5%
+    unit price x family ratio               831       0.9956            8.4%
+    no discount at all                    2,040       1.1560           15.6%
+
+Total placement wins on 517 of those 831 lettings, sign test p = 1.9e-12, and
+still wins when route B is re-armed with out-of-fold family ratios.  It also
+wins on coverage: route B can fully price only 41% of lettings, and 7 of the
+157 municipal ones, because the family ratios are TxDOT-derived and transfer
+to municipal work at r = 0.211.  Leaving the discount out is not an option --
+it costs a systematic +15.6%.  unbalanced_bidding.csv answers a different
+question, which line items a winner loads, and is not an input here.
+
+One thing the placement test cannot show: this advantage is measured with the
+price level known.  End to end it is the PRICE LEVEL, not the placement, that
+dominates -- see the interval section below.
+
+MUNICIPAL WORK USES THE MUNICIPAL DISCOUNT -- FOR ITS CENTRE, NOT ITS SPREAD.
+
+This claim was published wrong first and the correction is the interesting
+part.  The original read: municipal table 0.9973 / 7.1% median error against
+pooled 1.0175 / 7.6%, on 157 municipal lettings.  That comparison was circular.
+156 of those 157 lettings were in the 278 the municipal table was fitted from,
+and the headline was not even a measurement: with f_bin set to the median of
+the same ratios it is scored against, median(f_bin / ratio_i) is exactly 1.0000
+by construction.  The 0.9973 was a memorised 1.0.
+
+Measured out of fold instead, each test letting removed from the fit:
+
+    discount table                   est/actual   median |error|
+    nine-bin municipal                   0.9975            7.09%
+    pooled x one municipal shift         1.0016            7.59%
+    pooled, unshifted                    1.0230            6.41%
+
+So: the municipal table buys an UNBIASED CENTRE and costs about 0.7 points of
+spread.  It does not buy accuracy -- the unshifted pooled table has the lowest
+error of the three.  That trade is taken deliberately, because a bid estimate
+that runs 2.3% high loses jobs it would have won, while a slightly wider spread
+around the right centre does not.
+
+The nine per-bidder-count bins are gone.  Over 400 half-splits the one-shift
+version beat them on error in exactly 200 of 400 -- a coin flip -- so the nine
+parameters, fitted on as few as 7 lettings each, bought nothing that one
+parameter fitted on all 278 does not.  competition_discount_municipal.csv is
+now the pooled table times a single measured factor (0.9775), with n=1 forced
+to 1.0 because a sole bid has no order statistic to discount.
+
+That the two markets differ at all is separately supported and survives: at
+matched bidder counts the municipal ratio is lower in 9 of 9 bins (sign test
+p = 0.0039; stratified Wilcoxon over 270 lettings p = 4.4e-07).  Municipal bids
+are more dispersed (sigma 0.151 vs 0.143) and the low bid is an order
+statistic, so more dispersion pushes the minimum further below the median.
+
+THE INTERVAL IS THE WHOLE PIPELINE'S ERROR, NOT THE DISCOUNT'S.
+
+Not an assembled sigma either: combining a price-level sigma with a discount
+sigma would need their correlation and would double-count the part of the price
+error that averages out across a schedule.  `calibrate()` measures realised
+est/actual quantiles and `estimate()` inverts them, so the interval is
+calibrated by construction and moves when the data moves.
+
+The first version of this calibrated on the DISCOUNT ALONE -- it handed each
+letting its own median bidder total as the price level, exact, and measured
+only what f(n) did to it.  That gave 6.9% median error and an interval to
+match, and the interval was wrong, because a real estimate does not know the
+letting's own totals.  It substitutes family medians out of price_reference for
+every line item, and that substitution carries far more error than the discount
+does.  Running the full path on a real 144-item DFW stormwater letting returned
+$2,949,114 against an actual winning total of $2,150,000 -- 37% high, outside
+the 80% band the discount-only calibration had printed.
+
+So `calibrate()` now runs the whole path: it rebuilds each real letting's
+schedule from the panel, prices every item from price_reference exactly as a
+user would, totals it, applies f(n), and compares against the identified
+winner's total.  `mode="discount_only"` keeps the old measurement, because the
+two together say something neither says alone -- the gap between them is the
+price-level substitution error, which is where the accuracy is actually lost
+and therefore where the next work belongs.
+
+Both are IN-SAMPLE on the price level: a letting's own rows helped form the
+family medians it is then priced against, so the full-path number is optimistic
+too.  It is reported as a floor on the error, not as the error.
+
+A price already on a winning or contract basis must never be discounted again.
+price_reference.csv is built from `comp` in build_master.py, which is 598,326
+rows all carrying price_basis='all_bids' -- no contract prices, so the discount
+applies.  `assert_all_bids_basis()` re-checks that at load time instead of
+trusting this comment.
+"""
+import bisect
+import collections
+import csv
+import math
+import os
+import re
+import statistics
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import item_tokens  # noqa: E402
+import qty_shape  # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CLEAN = os.path.join(ROOT, "data", "clean")
+
+MUNICIPAL_SOURCES = {"city_bidtab"}
+# A bidder count this far from the nearest calibrated bin is not covered.  The
+# discount flattens above ~8 bidders, so extrapolating two bins is tolerable
+# and extrapolating five is not.
+MAX_BIN_DISTANCE = 2
+
+# A letting is scored only when its schedule has at least this many items.  A
+# one-line tab is a total-only or lump-sum award, not an item schedule, and the
+# estimator's input IS an item schedule: the two public lettings that scored
+# 119x and 31x out of fold (Mesquite 2022-062, Collin 2023-138 DRAFT) each
+# parsed to a single item (reports/opcc_benchmark.md, section 6, item 14).
+MIN_SCHEDULE_ITEMS = 3
+
+# OWNER-SET MONEY: allowances, contingencies, force accounts.  The owner writes
+# the amount into the bid form and every bidder copies it, so it is not a price
+# anybody bid.  Measured on the public tabs: of 224 allowance-worded items quoted
+# by two or more bidders, 200 carry one identical amount (185 of 202 in the
+# parser's `contingency` family); most of the rest are percentage contingencies
+# or ordinary items that merely say "allow".  Pricing such a line off OTHER
+# projects' allowances returns some other owner's figure: the Carrollton tab
+# writes a $20,000 sprinkler allowance as 20,000 x $1 under unit ALLOW, and the
+# family median per ALLOW unit ($11,616.53) made it $232 million
+# (reports/opcc_benchmark.md, 2.4).  So an owner-set amount is taken at face
+# value and kept OUT of the competition discount, and an allowance-like line
+# with no amount is priced as before but flagged.  No rule reads a quantity as
+# dollars: that convention occurs in 0 of the 72 public ALLOW items, so the
+# amount has to be given, never guessed.
+ALLOWANCE_UNITS = {"ALLOW", "ALLOWANCE", "ALW", "ALLW", "DOL"}
+ALLOWANCE_RE = re.compile(
+    r"\b(?:allowances?|contingenc\w*|force\s*accounts?|cash\s+allow\w*)\b",
+    re.I)
+
+
+def allowance_like(family, unit, description=""):
+    """An item worded or filed as owner-set money."""
+    return ((family or "") == "contingency"
+            or (unit or "").strip().upper() in ALLOWANCE_UNITS
+            or bool(ALLOWANCE_RE.search(description or "")))
+
+
+def is_owner_fixed(unit_prices, family, unit, description=""):
+    """Owner-set money recognised from the bids themselves: two or more bidders
+    quoting one identical amount on an allowance-like line.  Used where the
+    bids are known (the back-tests); a user's schedule says so by giving the
+    amount instead."""
+    ps = [p for p in unit_prices if p]
+    return (len(ps) >= 2 and max(ps) - min(ps) <= 0.01
+            and allowance_like(family, unit, description))
+
+
+def owner_fixed_amount(item):
+    """The face value of an owner-set line in a schedule, or None.
+
+    Taken only when the schedule gives it: an `amount`, or a unit_price on a
+    line that is allowance-like (or marked owner_fixed).  A unit price on an
+    ordinary line is ignored -- prices are estimated, never read off the input.
+    """
+    amt = _f(item.get("amount"))
+    if amt and amt > 0:
+        return float(amt)
+    up = _f(item.get("unit_price"))
+    q = _f(item.get("quantity"), 0.0) or 0.0
+    if up and up > 0 and q > 0 and (
+            item.get("owner_fixed")
+            or allowance_like(item.get("family"), item.get("unit"),
+                              item.get("description") or "")):
+        return float(up) * q
+    return None
+
+
+def _centre(trip):
+    """The level correction: the factor on the competitively bid part of each
+    estimate that puts the median of (part x factor + owner-set money) / actual
+    at exactly 1.  With no owner-set money it is 1 / median ratio, the old
+    definition; with it, the face-value amounts are left alone, because no
+    correction belongs on money nobody estimated.  `trip` is a list of
+    (discounted_estimate, owner_fixed, actual)."""
+    lo, hi = 0.05, 20.0
+    for _ in range(80):
+        mid = math.sqrt(lo * hi)
+        m = statistics.median([(c * mid + fx) / w for c, fx, w in trip])
+        if m < 1.0:
+            lo = mid
+        else:
+            hi = mid
+    return math.sqrt(lo * hi)
+
+
+def _f(v, default=None):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return default
+    return x if x == x else default
+
+
+def _read(path, **kw):
+    p = os.path.join(CLEAN, path)
+    if not os.path.exists(p):
+        return []
+    with open(p, encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+class Tables:
+    """Everything the estimator reads, loaded once, with what is missing said
+    out loud rather than silently defaulted."""
+
+    def __init__(self):
+        self.missing = []
+        self.notes = []
+
+        self.ref = {}
+        for r in _read("price_reference.csv"):
+            k = (r["item_family"], r["unit"], r.get("size_bucket") or "")
+            self.ref[k] = r
+        if not self.ref:
+            self.missing.append("price_reference.csv")
+
+        # The band-keyed reference, tried FIRST where it has support.  Measured
+        # leave-one-letting-out on the 1,935 lettings both keys can price:
+        # median |error| 32.6% -> 28.6% municipal, 50.1% -> 30.8% TxDOT, and on
+        # TxDOT the bias goes 1.4231 -> 0.9742.  It is a fallback chain and not
+        # a replacement because it costs coverage: municipal lettings that can
+        # be fully priced drop from 121 to 88.
+        # Token-keyed reference, tried before the band one.  Identity is a
+        # word set with a Jaccard threshold, because 84.4% of municipal
+        # descriptions appear in exactly one letting and an equality join
+        # therefore finds nothing.  Measured leave-one-letting-out: municipal
+        # 28.5% -> 23.9%, TxDOT 30.9% -> 24.5%.
+        self.ref_tok = {}
+        self.tok_inv = collections.defaultdict(
+            lambda: collections.defaultdict(list))
+        for r in _read("price_reference_tokens.csv"):
+            t = frozenset((r.get("tok") or "").split())
+            if not t:
+                continue
+            k = (t, r.get("unit") or "", r.get("qty_band") or "")
+            self.ref_tok[k] = r
+            for w in t:
+                self.tok_inv[k[1]][w].append(k)
+        if not self.ref_tok:
+            self.notes.append(
+                "price_reference_tokens.csv absent -- items will be priced "
+                "from family medians, which measured 4.6 points worse on "
+                "municipal work and 6.4 on TxDOT")
+
+        self.ref_band = {}
+        for r in _read("price_reference_band.csv"):
+            k = (r["item_family"], r["unit"], r.get("size_bucket") or "",
+                 r.get("qty_band") or "")
+            self.ref_band[k] = r
+        if not self.ref_band:
+            self.notes.append(
+                "price_reference_band.csv absent -- every item will be priced "
+                "from the pooled family median and scaled by a band shape "
+                "multiplier, which measured 4 to 19 points worse")
+
+        self.shape = {}
+        for r in _read("price_by_quantity_band_family.csv"):
+            self.shape[(r["item_family"], r["unit"], r["qty_band"])] = r
+        if not self.shape:
+            self.missing.append("price_by_quantity_band_family.csv")
+
+        # Escalation.  index_by_market.csv is preferred because the two markets
+        # do not escalate alike -- statewide fell 12.5% in 2025->2026 while DFW
+        # municipal fell 7.3% -- but its municipal arm has been missing the
+        # recent years, so the fallback is explicit and reported, never silent.
+        self.index = collections.defaultdict(dict)
+        # index_by_market.csv carries a competition_scope column, written by
+        # another script.  Reading it without filtering means two rows can
+        # share a (market, to) key and the index becomes whichever one was
+        # written last -- silently, and the two arms do not agree.  Prefer the
+        # scope that matches the price pool, say which was taken, and never
+        # overwrite a key.
+        rows_ix = _read("index_by_market.csv")
+        scopes = {(r.get("competition_scope") or "") for r in rows_ix}
+        pick = next((w for w in ("competitive_only", "competitive", "all", "")
+                     if w in scopes), None)
+        if pick is None and scopes:
+            pick = sorted(scopes)[0]
+        self.index_scope = pick
+        if len([w for w in scopes if w]) > 1:
+            self.notes.append("index_by_market.csv has scopes %r; took %r"
+                              % (sorted(scopes), pick))
+        for r in rows_ix:
+            if (r.get("competition_scope") or "") != pick:
+                continue
+            y = str(r.get("to") or "").strip()
+            v = _f(r.get("index"))
+            mk = r.get("market") or "?"
+            if not (y and v):
+                continue
+            if y in self.index[mk] and abs(self.index[mk][y] - v) > 1e-9:
+                self.notes.append(
+                    "index_by_market.csv: duplicate (%s, %s) with different "
+                    "values %.4f and %.4f -- kept the first, the file needs a "
+                    "unique key" % (mk, y, self.index[mk][y], v))
+                continue
+            self.index[mk][y] = v
+        for r in _read("price_time_index.csv"):
+            y = str(r.get("to") or "").strip()
+            v = _f(r.get("index"))
+            if y and v:
+                self.index["_default"][y] = v
+        if not self.index:
+            self.missing.append("price_time_index.csv / index_by_market.csv")
+
+        self.disc = {}
+        self.disc_muni = {}
+        for name, into in (("competition_discount_pooled.csv", self.disc),
+                           ("competition_discount_municipal.csv",
+                            self.disc_muni)):
+            for r in _read(name):
+                n = _f(r.get("n_bidders"))
+                v = _f(r.get("low_over_median"))
+                if n and v:
+                    into[int(n)] = {
+                        "f": v, "p25": _f(r.get("p25")), "p75": _f(r.get("p75")),
+                        "lettings": int(_f(r.get("lettings"), 0) or 0)}
+            if not into:
+                self.missing.append(name)
+
+        self.borrow_sigma = {}
+        for r in _read("qty_shape_borrow_sigma.csv"):
+            d = _f(r.get("band_distance"))
+            s = _f(r.get("sigma_log"))
+            if d is not None and s is not None:
+                self.borrow_sigma[int(d)] = s
+
+        self.calib = {}
+        for r in _read("estimator_calibration.csv"):
+            self.calib[r["market"]] = r
+
+    # -- the basis check, run rather than asserted in a comment -------------
+    def assert_all_bids_basis(self):
+        """price_reference must be built from all-bids rows only.  If a
+        contract or winning price got into the pool, the discount below is
+        applied to a number that already contains it."""
+        seen = collections.Counter()
+        p = os.path.join(CLEAN, "master_panel.csv")
+        if not os.path.exists(p):
+            self.notes.append("master_panel.csv absent; basis unverified")
+            return None
+        csv.field_size_limit(10 ** 8)
+        with open(p, encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f):
+                if r.get("source_set") != "external":
+                    continue
+                if (r.get("is_engineer_estimate") or "").lower() in (
+                        "true", "1", "yes"):
+                    continue
+                if r.get("competition_class") != "competitive":
+                    continue
+                if r.get("project_kind") != "construction":
+                    continue
+                if r.get("price_basis") == "uneven_proposal":
+                    continue
+                seen[r.get("price_basis") or ""] += 1
+        bad = {k: v for k, v in seen.items() if k != "all_bids"}
+        if bad:
+            self.notes.append("PRICE BASIS CONTAMINATED: %r -- the discount "
+                              "would be applied twice on those rows" % bad)
+        return seen
+
+
+def discount(tab, n_bidders, market):
+    """f(n), with the table chosen by market and the choice reported."""
+    table = tab.disc_muni if market == "municipal" and tab.disc_muni else tab.disc
+    which = ("municipal" if table is tab.disc_muni else "pooled")
+    if not table:
+        return None
+    if n_bidders is not None and n_bidders <= 1:
+        # One bid is not a competition and there is no order statistic to
+        # discount.  The municipal table has no 1-bidder row, so letting
+        # MAX_BIN_DISTANCE reach the 2-bidder bin invented a 7.4% discount on
+        # a sole bid.
+        return {"f": 1.0, "p25": 1.0, "p75": 1.0, "bin": 1,
+                "table": which, "lettings": 0, "extrapolated": False,
+                "note": "single bid: no competition, no discount"}
+    k = min(table, key=lambda x: abs(x - n_bidders))
+    if abs(k - n_bidders) > MAX_BIN_DISTANCE:
+        return None
+    row = table[k]
+    return {"f": row["f"], "p25": row["p25"], "p75": row["p75"],
+            "bin": k, "table": which, "lettings": row["lettings"],
+            "extrapolated": k != n_bidders}
+
+
+def market_index_key(tab, market):
+    """Which arm of index_by_market.csv belongs to this market.
+
+    Not a hardcoded "Municipal": the market labels in that file are written by
+    another script, and if a label changes, a hardcoded lookup misses silently
+    and the estimator borrows the statewide escalation for municipal work.  The
+    two are not interchangeable -- statewide fell 12.5% in 2025->2026 while DFW
+    municipal fell 7.3% -- so the match is made on the labels actually present
+    and a miss is reported rather than absorbed.
+    """
+    want = "municipal" if market == "municipal" else "txdot"
+    for k in tab.index:
+        if k.startswith("_"):
+            continue
+        if k.strip().lower() == want:
+            return k
+    return None
+
+
+def _index_at(d, year):
+    """The index at a possibly FRACTIONAL year.
+
+    vintage_year is dollar-weighted, so 516 of 761 price_reference rows (67.8%)
+    carry a fraction -- 2023.82 means the dollars behind that price sit four
+    fifths of the way through 2023.  Truncating it to "2023" escalated every
+    such price from the start of its vintage year and so billed it an extra
+    fraction of a year of index movement: median +4.06% per row, worst +24.97%,
+    and on the full-path back-test over 2,034 real lettings the median
+    est/actual sat at 1.1766 instead of 1.1001 and the median error at 35.2%
+    instead of 33.4%.  Interpolated geometrically, because an index compounds.
+    """
+    try:
+        # Rounded first: pandas writes a cell whose dollars all sit in 2021
+        # as 2020.9999999999998, which floors to 2020 -- and on an arm with
+        # no 2020 entry (Municipal) that silently switches the escalation to
+        # the _default index.
+        y = round(float(year), 6)
+    except (TypeError, ValueError):
+        return None
+    lo = int(math.floor(y))
+    frac = y - lo
+    a = d.get(str(lo))
+    if a is None or a <= 0:
+        return None
+    if frac <= 1e-9:
+        return a
+    b = d.get(str(lo + 1))
+    if b is None or b <= 0:
+        # No next year to interpolate into: use the floor and let the caller
+        # see the shortfall rather than inventing a rate.
+        return a
+    return a * (b / a) ** frac
+
+
+def _carry_to(d, to_year):
+    """The arm `d` with its last level carried FLAT to `to_year` when the
+    index stops before that year, plus the last year it really has (None
+    when nothing was carried).
+
+    Without this, a year the index has no row for got NO escalation at all:
+    every item was priced at its vintage and years of index movement
+    silently dropped out.  Replayed forward -- each letting priced only from
+    lettings dated before it -- that hit the first TxDOT lettings of every
+    January (P50 at 0.68 of the low bid), and it would hit EVERY letting
+    priced to 2027 until the index has a 2027 row.  Flat, because a level
+    nobody has measured yet is not a trend anybody can defend.  Every arm is
+    carried, so municipal work stays on the municipal arm instead of jumping
+    to _default the day a statewide letting opens the new year.  Measured
+    forward on the 2024-26 lettings: TxDOT P80 misses 21.8% -> 21.4%,
+    municipal unchanged (22.4%).
+
+    NARROW since 2026-11-19 (see escalation): it is applied only when NO arm
+    of the index has to_year at all.
+    """
+    try:
+        y = int(math.floor(round(float(to_year), 6)))
+    except (TypeError, ValueError):
+        return d, None
+    yrs = [int(k) for k in d if str(k).isdigit()]
+    if not yrs or max(yrs) >= y:
+        return d, None
+    last = max(yrs)
+    out = dict(d)
+    for yy in range(last + 1, y + 1):
+        out[str(yy)] = d[str(last)]
+    return out, last
+
+
+def _carry_note(esc, to_year):
+    return ("index carried flat from %s to %s: the %s arm has no later row"
+            % (esc["carried_from"], to_year, esc["basis"]))
+
+
+def _any_arm_has_year(index, to_year):
+    try:
+        y = str(int(math.floor(round(float(to_year), 6))))
+    except (TypeError, ValueError):
+        return False
+    return any(isinstance(d, dict) and y in d for d in (index or {}).values())
+
+
+def escalation(tab, from_year, to_year, market):
+    """index(to) / index(from), market-specific where the market has it.
+
+    from_year may be fractional; to_year is the calendar year being priced.
+
+    Carrying a year the index lacks (_carry_to) is NARROW: only when no arm of
+    the index has to_year at all -- e.g. every letting priced to 2027 before
+    the index has a 2027 row, which otherwise got no escalation whatsoever.
+    When any arm has the year, the arms are used as they are (the market arm
+    if it has the year, else _default), exactly as before the carry existed.
+    Why narrow (forward-floor verification, 2026-11-19): carrying every arm
+    that stops early, which the pre-registered remedy did, cost 4.0 points of
+    in-band share against the guard alone on the same 2024-26 municipal
+    lettings (90% CI -8.0 to -0.8) without improving the floor; on those
+    lettings the narrow carry changes only one letting and scores exactly as
+    the guard alone (19.2% under, 8.8% in band), and it changes the same 12
+    TxDOT lettings as the full carry.  It was proposed AFTER seeing those
+    results, so it is registered for an out-of-sample check on lettings from
+    2027-01 on (reports/forward_floor_integration.md).  The result says when
+    it carried, in `carried_from`.
+    """
+    if from_year in (None, "") or not to_year:
+        return None
+    key = market_index_key(tab, market)
+    carry = not _any_arm_has_year(tab.index, to_year)
+    tried = []
+    for src in ([key] if key else []) + ["_default"]:
+        if carry:
+            d, carried = _carry_to(tab.index.get(src) or {}, to_year)
+        else:
+            d, carried = tab.index.get(src) or {}, None
+        a = _index_at(d, from_year)
+        b = _index_at(d, to_year)
+        if a and b and a > 0:
+            return {"factor": b / a, "basis": src, "borrowed": src != key,
+                    "market_arm_found": key is not None,
+                    "from_year": from_year, "carried_from": carried}
+        tried.append(src)
+    return {"factor": None, "basis": None, "borrowed": None,
+            "market_arm_found": key is not None, "tried": tried,
+            "available_markets": sorted(k for k in tab.index
+                                        if not k.startswith("_"))}
+
+
+def item_market_price(tab, family, unit, quantity, size_bucket="",
+                      to_year=None, market="municipal",
+                      description=""):
+    """The ALL-BIDS market unit price for one pay item, escalated and
+    quantity-adjusted.  No discount here -- that belongs on the total."""
+    out = {"family": family, "unit": unit, "quantity": quantity,
+           "price": None, "why": [], "usable": None, "price_key": None}
+
+    # Tier 0: token identity.  Jaccard-weighted median over the reference
+    # cells whose words match this item's, in the same unit and quantity band,
+    # with dimensions as a hard constraint (18-inch pipe is not 24-inch pipe
+    # however many trade words they share).
+    qb0 = qty_shape.band_of(quantity) if quantity and quantity > 0 else ""
+    if qb0 and unit and tab.ref_tok:
+        t = item_tokens.tokens(description or "")
+        if t:
+            cand = set()
+            for w in t:
+                for k in tab.tok_inv.get(unit, {}).get(w, ()):
+                    if k[2] == qb0:
+                        cand.add(k)
+            hits = []
+            for k in cand:
+                j = item_tokens.similar(t, k[0])
+                if j <= 0:
+                    continue
+                row = tab.ref_tok[k]
+                pv = _f(row.get("price_median"))
+                np_ = _f(row.get("n_projects")) or 0
+                if pv and pv > 0 and np_ >= 2:
+                    hits.append((j, pv, row))
+            if hits:
+                # Equal-price cells can carry different vintages, and a sort
+                # on price alone left the pick to the candidate SET's order,
+                # which moves with PYTHONHASHSEED: 37-38 of 241 public
+                # municipal lettings changed total between runs with another
+                # hash seed, by up to 0.85%.
+                hits.sort(key=lambda x: (x[1],
+                                         _f(x[2].get("vintage_year")) or 0.0,
+                                         x[2].get("tok") or ""))
+                tw = sum(h[0] for h in hits)
+                acc = 0.0
+                pick = hits[len(hits) // 2]
+                for h in hits:
+                    acc += h[0]
+                    if acc >= tw / 2:
+                        pick = h
+                        break
+                p = pick[1]
+                row = pick[2]
+                out["price_key"] = "token_jaccard"
+                out["token_match_jaccard"] = round(pick[0], 4)
+                out["token_candidates"] = len(hits)
+                out["usable"] = row.get("usable")
+                out["n_projects"] = _f(row.get("n_projects"))
+                out["n_owners"] = _f(row.get("n_owners"))
+                out["qty_band"] = qb0
+                v = row.get("vintage_year")
+                esc = escalation(tab, v, to_year, market) if to_year else None
+                if esc and esc.get("factor"):
+                    p *= esc["factor"]
+                    out["escalation"] = esc["factor"]
+                    out["escalation_basis"] = esc["basis"]
+                    if esc.get("borrowed"):
+                        out["why"].append("escalation BORROWED from %s"
+                                          % esc["basis"])
+                    if esc.get("carried_from"):
+                        out["why"].append(_carry_note(esc, to_year))
+                elif to_year:
+                    out["why"].append("no index path %s -> %s" % (v, to_year))
+                out["vintage_year"] = v
+                out["price"] = p
+                out["why"].append(
+                    "matched on item words, Jaccard %.2f over %d candidate "
+                    "cells" % (pick[0], len(hits)))
+                return out
+
+    # Tier 1: the band-keyed reference, where it has >= 2 lettings behind it.
+    # Priced from other lettings' items in the SAME quantity band rather than
+    # from a pooled median scaled into that band -- measured 4 points better on
+    # municipal and 19 on TxDOT, matched population, leave-one-letting-out.
+    qb = qty_shape.band_of(quantity) if quantity and quantity > 0 else ""
+    rb_row = None
+    if qb and tab.ref_band:
+        rb_row = (tab.ref_band.get((family, unit, size_bucket, qb))
+                  or tab.ref_band.get((family, unit, "", qb)))
+        if rb_row is not None and (_f(rb_row.get("n_projects")) or 0) < 2:
+            rb_row = None
+    if rb_row is not None:
+        p = _f(rb_row.get("price_median"))
+        if p and p > 0:
+            out["price_key"] = "family+unit+size+band"
+            out["usable"] = rb_row.get("usable")
+            out["n_projects"] = _f(rb_row.get("n_projects"))
+            out["n_owners"] = _f(rb_row.get("n_owners"))
+            out["qty_band"] = qb
+            v = rb_row.get("vintage_year")
+            esc = escalation(tab, v, to_year, market) \
+                if to_year else None
+            if esc and esc.get("factor"):
+                p *= esc["factor"]
+                out["escalation"] = esc["factor"]
+                out["escalation_basis"] = esc["basis"]
+                if esc.get("borrowed"):
+                    out["why"].append("escalation BORROWED from %s"
+                                      % esc["basis"])
+                if esc.get("carried_from"):
+                    out["why"].append(_carry_note(esc, to_year))
+            elif to_year:
+                out["why"].append("no index path %s -> %s" % (v, to_year))
+            out["vintage_year"] = v
+            out["price"] = p
+            # No band shape adjustment here, on purpose: the band is already
+            # in the key, so applying a multiplier on top would move the price
+            # out of the band it was just measured in.
+            return out
+
+    # Tier 2: the pooled family median, scaled into this item's band.
+    if not unit:
+        # Distinguish a parse failure from a coverage gap: "no price_reference
+        # entry" sends the reader hunting for missing data when the line item
+        # simply has no unit on it.
+        out["why"].append("no unit on this line item -- cannot be priced")
+        return out
+    if not family:
+        out["why"].append("no item_family on this line item -- cannot be "
+                          "priced")
+        return out
+    row = tab.ref.get((family, unit, size_bucket))
+    if row is None:
+        # "" is not a neutral bucket, it is the leftovers: rows whose size was
+        # not parsed. Prefer the best-evidenced vetted bucket for this
+        # family+unit over it, and say which was substituted.
+        cands = [(k, v) for k, v in tab.ref.items()
+                 if k[0] == family and k[1] == unit]
+        vetted = [(k, v) for k, v in cands
+                  if (v.get("usable") == "yes" and k[2])]
+        pick = max(vetted, key=lambda kv: _f(kv[1].get("n_projects")) or 0)             if vetted else None
+        if pick is not None:
+            row = pick[1]
+            out["why"].append("size_bucket %r not in the reference; "
+                              "substituted the best-evidenced bucket %r (%s "
+                              "projects)" % (size_bucket, pick[0][2],
+                                             pick[1].get("n_projects")))
+        else:
+            row = tab.ref.get((family, unit, ""))
+            if row is not None:
+                out["why"].append(
+                    "size_bucket %r not in the reference; fell back to the "
+                    "UNSIZED bucket, which is the rows whose size could not "
+                    "be parsed" % (size_bucket,))
+    if row is None:
+        out["why"].append("no price_reference entry")
+        return out
+    out["price_key"] = "family+unit+size"
+    base = _f(row.get("price_median"))
+    if not base or base <= 0:
+        out["why"].append("price_median missing")
+        return out
+    out["usable"] = row.get("usable")
+    out["n_projects"] = _f(row.get("n_projects"))
+    out["n_owners"] = _f(row.get("n_owners"))
+    p = base
+
+    # quantity shape, relative to the band the reference price sits in
+    ref_qty = _f(row.get("qty_median"))
+    rb = qty_shape.band_of(ref_qty) if ref_qty and ref_qty > 0 else ""
+    if qb and rb and qb != rb:
+        a = tab.shape.get((family, unit, qb))
+        b = tab.shape.get((family, unit, rb))
+        ma, mb = _f(a.get("shape_multiplier")) if a else None, \
+            _f(b.get("shape_multiplier")) if b else None
+        if ma and mb and mb > 0:
+            p *= ma / mb
+            out["qty_factor"] = ma / mb
+            dist = abs(qty_shape.BAND_INDEX.get(qb, 0)
+                       - qty_shape.BAND_INDEX.get(rb, 0))
+            out["qty_sigma"] = tab.borrow_sigma.get(dist)
+            out["why"].append("quantity band %s vs reference %s" % (qb, rb))
+        else:
+            out["why"].append("no shape multiplier for band %s; quantity "
+                              "effect NOT applied" % qb)
+    out["qty_band"] = qb
+
+    v = row.get("vintage_year")
+    esc = escalation(tab, v, to_year, market) if to_year else None
+    if esc and esc.get("factor"):
+        p *= esc["factor"]
+        out["escalation"] = esc["factor"]
+        out["escalation_basis"] = esc["basis"]
+        if esc.get("borrowed"):
+            # Loud, because the two markets do not escalate alike and this is
+            # the step that silently substitutes one for the other.
+            out["why"].append(
+                "escalation BORROWED from %s%s -- DFW municipal and statewide "
+                "do not move together" % (esc["basis"],
+                                          "" if esc.get("market_arm_found")
+                                          else "; no municipal arm in the "
+                                               "index at all"))
+        if esc.get("carried_from"):
+            out["why"].append(_carry_note(esc, to_year))
+    elif to_year:
+        extra = ""
+        if esc and not esc.get("market_arm_found"):
+            extra = " (index has arms %r, none matching this market)" % (
+                esc.get("available_markets"),)
+        out["why"].append("no index path %s -> %s; price left at vintage%s"
+                          % (v, to_year, extra))
+    out["vintage_year"] = v
+    out["price"] = p
+    return out
+
+
+def estimate(tab, items, n_bidders, market="municipal", to_year=None):
+    """items: [{family, unit, quantity, size_bucket?}]  ->  expected low bid.
+
+    Returns the market total, the discount actually used, the point estimate
+    and a calibrated interval -- plus a per-item trace, because an estimate
+    nobody can take apart is an estimate nobody can defend in a bid review.
+    """
+    # The market argument picks the discount table, so a typo in it silently
+    # swaps DFW municipal work onto the statewide highway discount.  Validate
+    # rather than default.
+    mk = (market or "").strip().lower()
+    if mk not in ("municipal", "txdot"):
+        raise ValueError(
+            "market must be 'municipal' or 'txdot', got %r -- it selects the "
+            "competition discount table and a wrong value changes the "
+            "estimate" % (market,))
+    market = mk
+
+    trace = []
+    total = 0.0
+    fixed_total = 0.0
+    priced = unpriced = n_fixed = 0
+    for it in items:
+        q = _f(it.get("quantity"), 0.0) or 0.0
+        fx = owner_fixed_amount(it)
+        if fx:
+            # Owner-set money is copied into every bid, not bid: face value,
+            # outside the competition discount (see ALLOWANCE_UNITS).
+            trace.append({
+                "item": it.get("item_no") or it.get("description") or "",
+                "family": it.get("family") or "", "unit": it.get("unit") or "",
+                "quantity": q, "price": None, "fixed_amount": fx,
+                "price_key": "owner_fixed", "usable": "yes",
+                "allowance_like": True,
+                "why": ["owner-set amount %.2f taken at face value; not "
+                        "estimated and not discounted" % fx]})
+            fixed_total += fx
+            priced += 1
+            n_fixed += 1
+            continue
+        r = item_market_price(tab, it["family"], it["unit"], q,
+                              it.get("size_bucket") or "", to_year, market,
+                              it.get("description") or "")
+        r["item"] = it.get("item_no") or it.get("description") or ""
+        r["allowance_like"] = allowance_like(it.get("family"), it.get("unit"),
+                                             it.get("description") or "")
+        trace.append(r)
+        if r["price"] and q > 0:
+            total += r["price"] * q
+            priced += 1
+        else:
+            unpriced += 1
+
+    out = {"market_total": total, "fixed_total": fixed_total,
+           "n_fixed": n_fixed, "n_items": len(items), "priced": priced,
+           "unpriced": unpriced, "trace": trace, "expected_low": None,
+           "warnings": []}
+    # Nothing priced is a refusal, not a bid of zero.  A total of 0.00 printed
+    # under "EXPECTED LOW BID" is the worst possible failure mode here.  Owner-
+    # set amounts alone are not an estimate either: nobody bid them.
+    if total <= 0:
+        out["warnings"].append(
+            "NOT A SINGLE item could be priced -- there is no estimate here, "
+            "and the market total of %.2f is not one%s"
+            % (total, (" (owner-set amounts of %.2f alone are not a bid)"
+                       % fixed_total) if fixed_total else ""))
+        return out
+    if unpriced:
+        out["warnings"].append(
+            "%d of %d items could not be priced; the total covers only the "
+            "rest and is NOT a project estimate" % (unpriced, len(items)))
+
+    # EVERY per-item degradation has to reach the caller.  `usable` was being
+    # recorded in the trace and never checked, and the trace's own `why` notes
+    # never reached `warnings`: over the 2,034-letting back-test, 1,972
+    # lettings returned warnings == [] while 37.9% of the estimated dollars
+    # came off reference rows the file itself flags thin / no / unclassified.
+    # An estimate that looks clean while a third of its money rests on rows
+    # marked unusable is worse than one that refuses.
+    def _share(pred):
+        d = sum((t["price"] or 0) * (t["quantity"] or 0)
+                for t in trace if t.get("price") and pred(t))
+        return d, (100.0 * d / total if total > 0 else 0.0)
+
+    bad_d, bad_p = _share(lambda t: t.get("usable") != "yes")
+    if bad_d > 0:
+        n_bad = sum(1 for t in trace
+                    if t.get("price") and t.get("usable") != "yes")
+        out["warnings"].append(
+            "%d items / %.1f%% of the money (%.2f) is priced off reference "
+            "rows marked %s -- not usable='yes'. Treat this as an order of "
+            "magnitude, not a bid."
+            % (n_bad, bad_p, bad_d,
+               "/".join(sorted({str(t.get("usable")) for t in trace
+                                if t.get("price")
+                                and t.get("usable") != "yes"}))))
+    noshape_d, noshape_p = _share(
+        lambda t: any("quantity effect NOT applied" in w or
+                      "no shape multiplier" in w for w in t["why"]))
+    if noshape_p >= 1.0:
+        out["warnings"].append(
+            "%.1f%% of the money had NO quantity adjustment applied -- the "
+            "family has no band table, and unit price moves with quantity by "
+            "more than it moves with anything else here" % noshape_p)
+    noesc_d, noesc_p = _share(
+        lambda t: any(w.startswith("no index path") for w in t["why"]))
+    if noesc_p >= 1.0:
+        out["warnings"].append(
+            "%.1f%% of the money was NOT escalated -- no index path from its "
+            "vintage to %s, so it is priced at its vintage"
+            % (noesc_p, to_year))
+    carry_d, carry_p = _share(
+        lambda t: any(w.startswith("index carried flat") for w in t["why"]))
+    if carry_p >= 1.0:
+        out["warnings"].append(
+            "%.1f%% of the money was escalated to %s on an index whose last "
+            "row is earlier; that level was carried flat, so any move since "
+            "is NOT in this estimate" % (carry_p, to_year))
+    borrow_d, borrow_p = _share(
+        lambda t: any("BORROWED" in w for w in t["why"]))
+    if borrow_p >= 1.0:
+        out["warnings"].append(
+            "%.1f%% of the money was escalated on ANOTHER market's index; "
+            "DFW municipal and statewide do not move together" % borrow_p)
+    sub_d, sub_p = _share(
+        lambda t: any("UNSIZED bucket" in w or "substituted the best" in w
+                      for w in t["why"]))
+    if sub_p >= 1.0:
+        out["warnings"].append(
+            "%.1f%% of the money is priced from a different size bucket than "
+            "the item's own" % sub_p)
+    out["degraded_dollar_share"] = round(bad_p / 100.0, 4)
+    al_d, al_p = _share(lambda t: t.get("allowance_like"))
+    if al_d > 0:
+        n_al = sum(1 for t in trace
+                   if t.get("price") and t.get("allowance_like"))
+        out["warnings"].append(
+            "%d item(s), %.1f%% of the money (%.2f), look like owner-set "
+            "allowances or contingencies and were priced off OTHER projects' "
+            "amounts -- give each one's amount (an 'amount' column, or the "
+            "unit price on the line) so it is taken at face value"
+            % (n_al, al_p, al_d))
+    d = discount(tab, n_bidders, market)
+    if not d:
+        out["warnings"].append(
+            "no competition discount within %d bins of %s bidders -- refusing "
+            "to extrapolate; the market total above has NO discount in it"
+            % (MAX_BIN_DISTANCE, n_bidders))
+        return out
+    out["discount"] = d
+    if d["extrapolated"]:
+        out["warnings"].append("bidder count %s priced off the %d-bidder bin"
+                               % (n_bidders, d["bin"]))
+    if d["lettings"] < 20:
+        out["warnings"].append("that discount bin rests on %d lettings"
+                               % d["lettings"])
+    out["expected_low"] = total * d["f"]
+
+    c = tab.calib.get(market) or tab.calib.get("all")
+    if c:
+        lc = _f(c.get("level_correction"))
+        if lc and lc > 0 and abs(lc - 1.0) > 1e-9:
+            out["expected_low"] *= lc
+            out["level_correction"] = lc
+            out["warnings"].append(
+                "centred by x%.4f, a factor measured out of fold because the "
+                "uncorrected path runs %s on this market; it moves the centre "
+                "only and does not narrow the interval"
+                % (lc, "low" if lc > 1 else "high"))
+    # Owner-set money goes on last: no discount and no centring belong on an
+    # amount nobody estimated or bid.
+    if fixed_total:
+        out["expected_low"] += fixed_total
+    if c and total > 0:
+        # calibration holds quantiles of est/actual, so actual = est / ratio
+        for lo_k, hi_k, name in (("p25", "p75", "p50_band"),
+                                 ("p10", "p90", "p80_band")):
+            lo, hi = _f(c.get(lo_k)), _f(c.get(hi_k))
+            if lo and hi and lo > 0 and hi > 0:
+                if c.get("quantiles_basis") == "centred":
+                    # quantiles of the centred ratio, the one the estimate
+                    # above actually has: invert them directly
+                    out[name] = (out["expected_low"] / hi,
+                                 out["expected_low"] / lo)
+                else:
+                    # older files hold quantiles of the UNCORRECTED ratio, so
+                    # the centring factor has to come back out of them or the
+                    # band would be shifted twice
+                    lcf = out.get("level_correction") or 1.0
+                    out[name] = (out["expected_low"] / (hi * lcf),
+                                 out["expected_low"] / (lo * lcf))
+        # 宁高勿低: the user's rule is that an estimate must not come in under
+        # the low bid -- at least 80% of the time -- and should stay close when
+        # over.  The figure that meets the first half is the estimate divided
+        # by a low quantile of the centred est/actual ratio.  A file written by
+        # calibrate_forward() carries that quantile as p_not_under, at the
+        # level its not-under guard chose (never above the 20th percentile);
+        # an older file has only p20.  How close it stays is the calibration's
+        # spread, reported beside it, not hidden in it.
+        p20 = _f(c.get("p_not_under")) or _f(c.get("p20"))
+        if c.get("quantiles_basis") == "centred" and p20 and p20 > 0:
+            out["p80_multiplier"] = 1.0 / p20
+            out["expected_low_p80"] = out["expected_low"] / p20
+            lvl = _f(c.get("not_under_level"))
+            if lvl:
+                out["not_under_level"] = lvl
+        out["calibration_n"] = _f(c.get("n"))
+        out["calibration_market"] = c.get("market")
+    else:
+        out["warnings"].append("no calibration for market %r; point estimate "
+                               "only, no interval" % market)
+    return out
+
+
+# ---------------------------------------------------------------------------
+def _letting_totals(keep_items=False):
+    """Real lettings with an identified winner: (market, n, winner_total,
+    median_total[, schedule]).  The back-test population.
+
+    With keep_items, each letting also carries the winner's own schedule --
+    family, unit, size_bucket, quantity and the bid year -- so the full
+    estimator path can be run against it.
+    """
+    csv.field_size_limit(10 ** 8)
+    rows = collections.defaultdict(list)
+    sched = collections.defaultdict(dict)
+    # every bidder's unit price per item, to recognise owner-set money, and
+    # the winner's own amount on each item, to take it at face value
+    prices = collections.defaultdict(lambda: collections.defaultdict(list))
+    win_amt = collections.defaultdict(dict)
+    years = {}
+    p = os.path.join(CLEAN, "master_panel.csv")
+    with open(p, encoding="utf-8-sig", newline="") as f:
+        for r in csv.DictReader(f):
+            if r.get("source_set") != "external":
+                continue
+            if (r.get("is_engineer_estimate") or "").lower() in (
+                    "true", "1", "yes"):
+                continue
+            if r.get("competition_class") != "competitive":
+                continue
+            if r.get("project_kind") != "construction":
+                continue
+            if r.get("price_basis") == "uneven_proposal":
+                continue
+            if r.get("is_low_bidder") not in ("True", "False"):
+                continue
+            q, u = _f(r.get("quantity")), _f(r.get("unit_price"))
+            if not q or not u or q <= 0 or u <= 0:
+                continue
+            mk = ("municipal" if r.get("source") in MUNICIPAL_SOURCES
+                  else "txdot")
+            key = (mk, r.get("project_key"))
+            rows[key].append(
+                (r.get("bidder_norm") or r.get("bidder"), q * u,
+                 r.get("is_low_bidder") == "True"))
+            if keep_items:
+                ik = (r.get("item_key") or "", r.get("item_family") or "",
+                      r.get("unit") or "", r.get("size_bucket") or "",
+                      (r.get("desc_norm") or "").strip())
+                prices[key][ik].append(u)
+            if keep_items and r.get("is_low_bidder") == "True":
+                # The winner's schedule IS the letting's schedule; one row per
+                # item key so a repeated item number does not double the
+                # quantity.
+                sched[key][ik] = sched[key].get(ik, 0.0) + q
+                win_amt[key][ik] = win_amt[key].get(ik, 0.0) + q * u
+                years[key] = str(r.get("bid_date") or "")[:4]
+    out = []
+    for (mk, pk), rs in rows.items():
+        bt = collections.defaultdict(float)
+        win = set()
+        for b, v, w in rs:
+            bt[b] += v
+            if w:
+                win.add(b)
+        if len(win) != 1 or len(bt) < 2:
+            continue
+        w = next(iter(win))
+        if bt.get(w, 0.0) <= 0:
+            continue
+        med = statistics.median(bt.values())
+        if med <= 0:
+            continue
+        if keep_items:
+            items = []
+            for ik, q in sched[(mk, pk)].items():
+                _, f_, u_, sb, dn = ik
+                it = {"family": f_, "unit": u_, "size_bucket": sb,
+                      "quantity": q, "description": dn}
+                # owner-set money is known before the bids open, so passing
+                # its face value in is what a user's schedule would do too
+                if is_owner_fixed(prices[(mk, pk)].get(ik, ()), f_, u_, dn):
+                    it["amount"] = win_amt[(mk, pk)].get(ik, 0.0)
+                items.append(it)
+            out.append((mk, len(bt), bt[w], med, items,
+                        years.get((mk, pk), "")))
+        else:
+            out.append((mk, len(bt), bt[w], med))
+    return out
+
+
+def calibrate_full_path(write=True, to_year=None, limit=None):
+    """The honest calibration: run the WHOLE estimator against real lettings.
+
+    Each letting's schedule is rebuilt from the winner's own line items, every
+    item is priced out of price_reference exactly as a user's schedule would
+    be, the total is discounted by f(n), and the result is compared with the
+    winner's actual total.  This is what the estimator's error really is; the
+    discount-only figure is what it would be if the price level were known.
+
+    Escalation is deliberately run to each letting's OWN year, not to today:
+    the question is whether the estimator reproduces that letting's price, and
+    escalating it to 2026 would be scoring it against a market it never saw.
+    """
+    tab = Tables()
+    tab.calib = {}                      # no interval needed while calibrating
+    lets = _letting_totals(keep_items=True)
+    if limit:
+        lets = lets[:limit]
+    per = collections.defaultdict(list)
+    cov = collections.Counter()
+    for mk, n, wt, med, items, yr in lets:
+        if not items:
+            continue
+        if len(items) < MIN_SCHEDULE_ITEMS:
+            cov["under_%d_items" % MIN_SCHEDULE_ITEMS] += 1
+            continue
+        r = estimate(tab, items, n, mk, to_year or yr or None)
+        if not r.get("expected_low"):
+            cov["no_estimate"] += 1
+            continue
+        # A schedule we could only half price cannot be scored against a full
+        # total -- that would read as the estimator being cheap.
+        if r["priced"] < 0.9 * max(r["n_items"], 1):
+            cov["under_90pct_priced"] += 1
+            continue
+        cov["scored"] += 1
+        per[mk].append(r["expected_low"] / wt)
+        per["all"].append(r["expected_low"] / wt)
+    rows = []
+    for mk, v in sorted(per.items()):
+        if len(v) < 30:
+            continue
+        v.sort()
+        q = lambda p: v[int(p * (len(v) - 1))]
+        err = sorted(abs(x - 1) for x in v)
+        rows.append({"market": mk, "n": len(v),
+                     "median_ratio": round(statistics.median(v), 6),
+                     "median_abs_error": round(statistics.median(err), 6),
+                     "p10": round(q(.10), 6), "p25": round(q(.25), 6),
+                     "p75": round(q(.75), 6), "p90": round(q(.90), 6),
+                     "discount_table": ("municipal" if mk == "municipal"
+                                        and tab.disc_muni else "pooled"),
+                     "mode": "full_path",
+                     # _letting_totals admits source_set == 'external' only,
+                     # so the company's eight tabulations are not in this
+                     # calibration -- they are what it will be scored against.
+                     "train_scope": "public_external_only"})
+    if write and rows:
+        with open(os.path.join(CLEAN, "estimator_calibration.csv"), "w",
+                  encoding="utf-8-sig", newline="") as f:
+            wr = csv.DictWriter(f, fieldnames=list(rows[0]))
+            wr.writeheader()
+            wr.writerows(rows)
+    return rows, cov
+
+
+def calibrate_out_of_fold(write=True, per_letting=None):
+    """The interval, measured with every letting held out of its own price.
+
+    calibrate_full_path() still reads price_reference.csv, which was built from
+    all the lettings including the one being scored, so its quantiles are
+    optimistic -- measured: the stated 50% band actually holds 45.5% of
+    held-out lettings and the 80% band 76.9%, and median absolute error runs
+    32.4% in-sample against 34.6% leave-one-out.  A band that claims 50% and
+    delivers 45% is the kind of number a bid gets lost on.
+
+    So the three reference tables are rebuilt here at their stage-1 grain
+    from exactly build_master's pool, the letting under test is left out of
+    every cell, and the letting is priced by estimate() ITSELF on those
+    held-out tables (HeldOutTables).  It used to be priced by a re-written
+    three-tier rule that differed from item_market_price in four places --
+    token hits counted per letting instead of per cell, no unsized-band
+    fallback, a 2-letting floor and no size substitution or shape on the
+    family tier, and NO ESCALATION -- plus a held-out discount instead of the
+    table and a slightly different row pool (q > 0 only, unit-less rows
+    kept).  Measured on the 216 public municipal lettings (reports/
+    segment_and_company_test.md, section 3): the missing escalation alone
+    moved the centring factor from 1.06 to 1.10, so the published constants
+    put production's own P50 about 4% high and its P80 under the low bid on
+    14% of held-out lettings, not 20%.  The index and the discount table are
+    fitted on all lettings; one letting barely moves either, and escalating
+    on the TxDOT arm, which no municipal letting helped fit, keeps most of
+    the escalation's gain.
+    """
+    tab = Tables()
+    pool = _reference_pool()
+    cells = _reference_cells(pool)
+    cov = collections.Counter()
+    cov["reference_rebuild_mismatch"] = _check_reference_cells(tab, cells)
+    if cov["reference_rebuild_mismatch"]:
+        print("WARNING: %d published reference rows are not reproduced by "
+              "the held-out builder -- build_master and _reference_cells "
+              "have drifted, and this calibration no longer measures the "
+              "tables estimate() reads" % cov["reference_rebuild_mismatch"])
+
+    # The scored population is unchanged: q > 0 rows, one identified
+    # winner, at least two bidders.  The winner's schedule keeps each row's
+    # own quantity, because item_market_price bands on the line's quantity.
+    lets = collections.defaultdict(
+        lambda: {"bt": collections.defaultdict(float), "win": set(),
+                 "sched": {}, "mk": "", "rows": collections.defaultdict(list),
+                 "prices": collections.defaultdict(list), "wamt": {},
+                 "yr": collections.Counter()})
+    for mk, pk, fam, un, sz, q, u, w, b, dn, ow, yr in pool:
+        if q is None or q <= 0:
+            continue
+        d = lets[pk]
+        d["mk"] = mk
+        d["bt"][b] += q * u
+        k = (fam, un, sz, qty_shape.band_of(q), dn)
+        d["prices"][k].append(u)
+        if w:
+            d["win"].add(b)
+            d["sched"][k] = d["sched"].get(k, 0.0) + q
+            d["rows"][k].append(q)
+            d["wamt"][k] = d["wamt"].get(k, 0.0) + q * u
+            d["yr"][yr] += 1
+    del pool
+
+    trips = collections.defaultdict(list)
+    for pk, d in lets.items():
+        if len(d["win"]) != 1 or len(d["bt"]) < 2 or not d["sched"]:
+            continue
+        wt = d["bt"].get(next(iter(d["win"])), 0.0)
+        if wt <= 0 or statistics.median(d["bt"].values()) <= 0:
+            continue
+        mk, n, sched = d["mk"], len(d["bt"]), d["sched"]
+        if len(sched) < MIN_SCHEDULE_ITEMS:
+            cov["under_%d_items" % MIN_SCHEDULE_ITEMS] += 1
+            continue
+        items, keys = [], []
+        for k in sched:
+            fam, un, sz, bd, dn = k
+            if is_owner_fixed(d["prices"].get(k, ()), fam, un, dn):
+                # known before the bids open: face value, as a user's
+                # schedule passes it
+                items.append({"family": fam, "unit": un, "size_bucket": sz,
+                              "quantity": sched[k], "description": dn,
+                              "amount": d["wamt"].get(k, 0.0)})
+                keys.append(k)
+                cov["owner_fixed_items"] += 1
+                continue
+            for qr in d["rows"][k]:
+                items.append({"family": fam, "unit": un, "size_bucket": sz,
+                              "quantity": qr, "description": dn})
+                keys.append(k)
+        yr = d["yr"].most_common(1)[0][0] if d["yr"] else ""
+        # THE production path, on tables that never saw this letting:
+        # same tiers, same fallbacks, same escalation to the letting's own
+        # year, same discount table
+        r = estimate(HeldOutTables(tab, cells, pk), items, n, mk, yr or None)
+        if r.get("expected_low") is None:
+            cov["no_estimate"] += 1
+            continue
+        ok = collections.defaultdict(lambda: True)
+        for k, t in zip(keys, r["trace"]):
+            if not (t.get("fixed_amount") or t.get("price")):
+                ok[k] = False
+        pr = sum(1 for k in sched if ok[k])
+        tot, fixed = r["market_total"], r["fixed_total"]
+        if pr < 0.9 * len(sched) or tot <= 0:
+            cov["under_90pct_priced"] += 1
+            continue
+        fa = r["discount"]["f"]
+        cov["scored"] += 1
+        if fixed:
+            cov["lettings_with_owner_fixed"] += 1
+        trips[mk].append((tot * fa, fixed, wt))
+        trips["all"].append((tot * fa, fixed, wt))
+        # optional per-letting record for analysis (the user's target is
+        # scored per letting); pass a list to receive it
+        if per_letting is not None:
+            per_letting.append({"project_key": pk, "market": mk,
+                                "n_bidders": n, "bid_part": tot * fa,
+                                "owner_fixed": fixed, "actual_low": wt,
+                                "n_items": len(sched)})
+
+    rows_out = []
+    for mk, trip in sorted(trips.items()):
+        if len(trip) < 30:
+            continue
+        raw = sorted((c + fx) / w for c, fx, w in trip)
+        med = statistics.median(raw)
+        # One measured parameter that moves the CENTRE and nothing else.  Out
+        # of fold the uncorrected path runs low on municipal work and about
+        # right on TxDOT, and a bid estimate that is systematically low wins
+        # jobs at a loss -- the mirror of the +2.3% problem the discount shift
+        # fixes.  Fitted on held-out lettings, so it is not the estimator
+        # marking its own homework; it does NOT make the estimate more
+        # accurate.  It is solved on the bid part only (_centre), so owner-set
+        # money stays at face value.
+        lc = _centre(trip)
+        cen = sorted((c * lc + fx) / w for c, fx, w in trip)
+        q = lambda pp: cen[int(pp * (len(cen) - 1))]
+        rows_out.append({"market": mk, "n": len(trip),
+                         "median_ratio": round(med, 6),
+                         # error of the UNcentred path, comparable with the
+                         # figures published before centring existed
+                         "median_abs_error": round(statistics.median(
+                             [abs(x - 1) for x in raw]), 6),
+                         # error of what estimate() actually prints
+                         "median_abs_error_centred": round(statistics.median(
+                             [abs(x - 1) for x in cen]), 6),
+                         "over_share_centred": round(
+                             sum(1 for x in cen if x >= 1.0) / len(cen), 6),
+                         "p10": round(q(.10), 6), "p20": round(q(.20), 6),
+                         "p25": round(q(.25), 6), "p75": round(q(.75), 6),
+                         "p80": round(q(.80), 6), "p90": round(q(.90), 6),
+                         # estimate() inverts p10..p90 directly when they are
+                         # quantiles of the centred ratio
+                         "quantiles_basis": "centred",
+                         "level_correction": round(lc, 6),
+                         "lettings_with_owner_fixed": sum(
+                             1 for _, fx, _ in trip if fx),
+                         "min_schedule_items": MIN_SCHEDULE_ITEMS,
+                         "discount_table": "production_table",
+                         "mode": "out_of_fold_production_path",
+                         "train_scope": "public_external_only"})
+    if write and rows_out:
+        with open(os.path.join(CLEAN, "estimator_calibration.csv"), "w",
+                  encoding="utf-8-sig", newline="") as f:
+            wr = csv.DictWriter(f, fieldnames=list(rows_out[0]))
+            wr.writeheader()
+            wr.writerows(rows_out)
+    return rows_out, cov
+
+
+_UNCLASSIFIED = ("other", "", "trm", "needs_review")
+
+
+def _year(v):
+    y = _f(v)
+    return y if y is not None and 1990 <= y <= 2100 else None
+
+
+def _reference_pool():
+    """build_master's `comp`, read back from the panel: the rows every
+    published reference table is built from.  Quantity is NOT filtered (the
+    family table keeps rows without one) and a row without a unit is dropped,
+    as pandas drops a NaN group key."""
+    csv.field_size_limit(10 ** 8)
+    seen = {}
+    intern = lambda x: seen.setdefault(x, x)  # noqa: E731
+    rows = []
+    with open(os.path.join(CLEAN, "master_panel.csv"), encoding="utf-8-sig",
+              newline="") as f:
+        for r in csv.DictReader(f):
+            if r.get("source_set") != "external":
+                continue
+            if (r.get("is_engineer_estimate") or "").lower() in (
+                    "true", "1", "yes"):
+                continue
+            if r.get("competition_class") != "competitive":
+                continue
+            if r.get("project_kind") != "construction":
+                continue
+            if r.get("price_basis") == "uneven_proposal":
+                continue
+            u = _f(r.get("unit_price"))
+            if not u or u <= 0:
+                continue
+            rows.append((
+                "municipal" if r.get("source") in MUNICIPAL_SOURCES
+                else "txdot", intern(r.get("project_key")),
+                intern(r.get("item_family") or ""), intern(r.get("unit") or ""),
+                intern(r.get("size_bucket") or ""), _f(r.get("quantity")), u,
+                r.get("is_low_bidder") == "True",
+                intern(r.get("bidder_norm") or r.get("bidder")),
+                intern((r.get("desc_norm") or "").strip()),
+                intern(r.get("owner") or ""), intern(str(r.get("year") or ""))))
+    return rows
+
+
+def _reference_cells(rows):
+    """The three published tables at their stage-1 grain -- per cell, per
+    letting: (median price, median quantity, year, owner), grouped by (cell,
+    letting, year) as build_master groups -- so any one letting can be left
+    out of every cell."""
+    s1 = {"fam": {}, "band": {}, "tok": {}}
+    tokc = {}
+    for mk, pk, fam, un, sz, q, u, w, b, dn, ow, yr in rows:
+        if not un:
+            continue
+        bd = qty_shape.band_of(q) if q is not None else ""
+        t = tokc.get(dn)
+        if t is None:
+            t = tokc[dn] = item_tokens.tokens(dn)
+        for name, key, ok in (("fam", (fam, un, sz), True),
+                              ("band", (fam, un, sz, bd), bool(bd)),
+                              ("tok", (t, un, bd), bool(t and bd))):
+            if not ok:
+                continue
+            g = s1[name].get((key, pk, yr))
+            if g is None:
+                g = s1[name][(key, pk, yr)] = ([], [], ow)
+            g[0].append(u)
+            if q is not None:
+                g[1].append(q)
+    cells = {}
+    for name, st in s1.items():
+        out = cells[name] = {}
+        for (key, pk, yr), (us, qs, ow) in st.items():
+            out.setdefault(key, {}).setdefault(pk, []).append(
+                (statistics.median(us),
+                 statistics.median(qs) if qs else None, _year(yr), ow))
+    inv = collections.defaultdict(lambda: collections.defaultdict(list))
+    for k, by in cells["tok"].items():
+        if len(by) >= 2:             # fewer can never reach the table
+            for w in k[0]:
+                inv[k[1]][w].append(k)
+    cells["tok_inv"] = inv
+    return cells
+
+
+def _held_out_row(by, drop, family=None, tok=None):
+    """One table row, as build_master would write it without `drop`."""
+    es = [e for pk, v in by.items() if pk != drop for e in v]
+    if not es:
+        return None
+    n = len(by) - (1 if drop in by else 0)
+    yw = [(e[2], e[1] * e[0]) for e in es
+          if e[2] is not None and e[1] is not None and e[1] * e[0] > 0]
+    vint = None
+    if yw:
+        # dollar-weighted (src/vintage.py), exact when the years agree
+        y0 = min(y for y, _ in yw)
+        vint = y0 + (math.fsum((y - y0) * w for y, w in yw)
+                     / math.fsum(w for _, w in yw))
+    qs = [e[1] for e in es if e[1] is not None]
+    return {"n_projects": n, "n_owners": len({e[3] for e in es}),
+            "price_median": statistics.median([e[0] for e in es]),
+            "qty_median": statistics.median(qs) if qs else None,
+            "vintage_year": vint, "tok": tok or "",
+            "usable": ("unclassified" if family in _UNCLASSIFIED
+                       else "yes" if n >= 5 else "thin" if n >= 3 else "no")}
+
+
+class _HeldOutMap:
+    """A reference table without one letting: .get() answers as the
+    published table would (a cell under `minn` lettings is absent), [k]
+    returns the row whatever its count (item_market_price indexes token
+    cells directly and checks n_projects itself)."""
+
+    def __init__(self, cells, drop, minn, kind, full):
+        self._c, self._d, self._m, self._kind = cells, drop, minn, kind
+        self._full = full               # rows with nothing held out, shared
+        self._memo = {}
+
+    def __getitem__(self, k):
+        by = self._c.get(k)
+        if by is None:
+            raise KeyError(k)
+        memo = self._full if self._d not in by else self._memo
+        r = memo.get(k)
+        if r is None and k not in memo:
+            r = memo[k] = _held_out_row(
+                by, self._d,
+                family=None if self._kind == "tok" else k[0],
+                tok=" ".join(sorted(k[0])) if self._kind == "tok" else None)
+        if r is None:
+            raise KeyError(k)
+        return r
+
+    def get(self, k, default=None):
+        try:
+            r = self[k]
+        except KeyError:
+            return default
+        return r if r["n_projects"] >= self._m else default
+
+    def items(self):
+        rows = []
+        for k in self._c:
+            r = self.get(k)
+            if r is not None:
+                rows.append((k, r))
+        # the published CSV's order (usable, then n_projects descending),
+        # with the key as a stable last resort
+        rows.sort(key=lambda kv: (kv[1]["usable"], -kv[1]["n_projects"],
+                                  tuple(map(str, kv[0]))))
+        return rows
+
+    def __bool__(self):
+        return bool(self._c)
+
+
+class HeldOutTables:
+    """Tables, with one letting left out of every reference cell.  estimate()
+    and item_market_price() run on it UNCHANGED, so the calibration prices
+    each item by exactly the rule production uses -- tiers, fallbacks,
+    shape, escalation and the discount table included."""
+
+    def __init__(self, tab, cells, drop):
+        self.missing, self.notes = [], []
+        for a in ("shape", "index", "disc", "disc_muni", "borrow_sigma",
+                  "index_scope"):
+            setattr(self, a, getattr(tab, a, None))
+        self.calib = {}                 # no interval while calibrating
+        full = cells.setdefault("_full", {"tok": {}, "band": {}, "fam": {}})
+        self.ref_tok = _HeldOutMap(cells["tok"], drop, 2, "tok", full["tok"])
+        self.ref_band = _HeldOutMap(cells["band"], drop, 2, "band",
+                                    full["band"])
+        self.ref = _HeldOutMap(cells["fam"], drop, 1, "fam", full["fam"])
+        self.tok_inv = cells["tok_inv"]
+
+
+def _check_reference_cells(tab, cells):
+    """Nothing held out, the rebuilt cells must BE the published tables;
+    if build_master's grouping drifts from this copy, say so."""
+    view = HeldOutTables(tab, cells, None)
+    bad = 0
+    for pub, mine in ((tab.ref_tok, view.ref_tok),
+                      (tab.ref_band, view.ref_band), (tab.ref, view.ref)):
+        for k, r in pub.items():
+            m = mine.get(k)
+            if m is None or int(_f(r.get("n_projects"), 0)) != m["n_projects"] \
+                    or abs(_f(r.get("price_median")) / m["price_median"]
+                           - 1) > 1e-9:
+                bad += 1
+    return bad
+
+
+# ---------------------------------------------------------------------------
+# FORWARD CALIBRATION AND THE NOT-UNDER GUARD
+#
+# calibrate_out_of_fold() prices each letting on tables that hold every OTHER
+# letting -- including the ones bid AFTER it -- with an index and a discount
+# fitted on all years.  A new letting is never priced that way: everything it
+# is priced from is older than it.  Replayed honestly forward (reference
+# cells, all three index arms and the discount table refitted on lettings
+# dated strictly before each letting, constants fitted on the earlier
+# forward-scored lettings only), the 125 public municipal lettings of
+# 2024-26 came out (stage-2 remedies, pre-registered, fwd/remedies/):
+#
+#   constants                              P80 under low   P80/low in [1,1.13]
+#   fixed 20th percentile, expanding            22.4%             13.6%
+#   + not-under guard                           19.2%              8.8%
+#   + guard + flat carry (_carry_to)            19.2%              4.8%
+#   (TxDOT, 632 lettings: 21.8% / 12.0% -> 18.8% / 12.0% with both)
+#
+# The fixed 20th percentile let 22.4% of new lettings come in over the
+# not-under figure; holding the floor costs in-band share, and no fixed level
+# did it more cheaply (the 17th percentile was the first to hold, at 6.4%).
+# The carry costs the guarded rule 4 points of in-band share here: it moved
+# five January 2025 municipal lettings from the _default arm to the
+# municipal arm (4-13% lower), one P80 from 1.07 to 0.93 of its low bid, and
+# that miss lowered the guard's level for the rest of 2025.  Leaving any one
+# other letting out of the guard's updates does not close the gap (4.0-8.8%
+# against 7.2-9.6%).  It stays because without it every letting priced to
+# 2027 gets NO escalation until the index has a 2027 row; carrying only
+# where no arm has the year is the narrower fix, not yet tested.
+
+NEVER = "9999-12-31"
+FORWARD_MIN_PRIOR = 40       # constants need this many earlier lettings
+FORWARD_MIN_PAIRS = 10       # index_by_market.MIN_PAIRS_YOY; build_master's
+                             # price_time_index uses 10 as well
+NOT_UNDER_FLOOR = 0.20       # the user's floor: P80 under the low bid on <= 20% of lettings
+# What the guard AIMS at, below the floor.  An adaptive rule aimed exactly at
+# 20% sits on the line and is over it about half the time: on the final Mac
+# data (2026-11-19 20:19 rebuild) it gave municipal 2024-26 21.0% under (2026:
+# 25.0%) after 19.1% on the data an hour earlier.  Aiming at 16% leaves a
+# margin of about one year's sampling error (n ~ 60, se ~ 5 points).  Chosen
+# AFTER seeing that run -- the first level at which every year of both
+# markets stayed at or under 20% -- so it is registered for a check on the
+# 2027 lettings (reports/forward_floor_integration.md).
+GUARD_TARGET = 0.16
+GUARD_GAMMA = {"municipal": 0.02, "txdot": 0.004}   # ~1 / scored lettings
+GUARD_ALPHA_MIN = 0.02                               # per year
+
+
+def _avail_date(dates, precs):
+    """One date per letting key: when it could first have been seen.
+
+    The LATEST bid_date it carries (a key is complete only once all its parts
+    are bid, and the later date can only withhold data, never leak it); an
+    'approx' YYYY-01-01 is a year-only placeholder and counts as mid-year,
+    YYYY-07-01; no date -> NEVER (never a reference, never scored)."""
+    ds = sorted(d for d in dates if d and len(d) == 10)
+    if not ds:
+        return NEVER
+    d = ds[-1]
+    if "approx" in precs and "precise" not in precs and d[5:] == "01-01":
+        return d[:4] + "-07-01"
+    return d
+
+
+def _letting_dates():
+    """_avail_date of every external key, one streamed pass."""
+    csv.field_size_limit(10 ** 8)
+    dates = collections.defaultdict(set)
+    precs = collections.defaultdict(set)
+    with open(os.path.join(CLEAN, "master_panel.csv"), encoding="utf-8-sig",
+              newline="") as f:
+        rd = csv.reader(f)
+        h = next(rd)
+        i_s, i_k, i_d, i_p = (h.index(k) for k in (
+            "source_set", "project_key", "bid_date", "date_precision"))
+        for row in rd:
+            if row[i_s] != "external":
+                continue
+            dates[row[i_k]].add(row[i_d])
+            precs[row[i_k]].add(row[i_p])
+    return {pk: _avail_date(dates[pk], precs[pk]) for pk in dates}
+
+
+def _chain(s1f, adjacent):
+    """Stage 2 of index_by_market.chained_index (adjacent=True) and of
+    build_master's price_time_index (False), on stage-1 project medians."""
+    if not len(s1f):
+        return {}
+    yr = (s1f.groupby(["item_key", "year"])
+          .agg(price=("p", "median"), n=("project_key", "nunique"))
+          .reset_index())
+    if yr.empty:
+        return {}
+    piv = yr.pivot(index="item_key", columns="year", values="price")
+    years = sorted(c for c in piv.columns if str(c).isdigit())
+    out, lvl = {}, 100.0
+    for a, b in zip(years, years[1:]):
+        if adjacent and int(b) != int(a) + 1:
+            continue
+        pair = piv[[a, b]].dropna()
+        pair = pair[(pair[a] > 0) & (pair[b] > 0)]
+        if len(pair) < FORWARD_MIN_PAIRS:
+            out[str(b)] = lvl
+            continue
+        lvl *= float((pair[b] / pair[a]).median())
+        out[str(b)] = lvl
+    return out
+
+
+class _ForwardIndex:
+    """The three escalation arms Tables loads, refitted on the lettings
+    dated strictly before D: Municipal and TxDOT as index_by_market.py
+    builds them, _default as build_master.py builds price_time_index.csv.
+    Stage 1 is a per-(item, year, project) median and a project is wholly
+    before D or not, so it is computed once and cut per date.  Checked
+    against the published files on all data and against chained_index() on
+    a truncated panel (fwd/build/s2_index_disc.py)."""
+
+    ARMS = ("Municipal", "TxDOT", "_default")
+
+    def __init__(self, avail):
+        import numpy as np
+        import pandas as pd
+        self.np = np
+        use = ["source", "source_set", "project_key", "year", "item_key",
+               "unit_price", "competition_class", "project_kind",
+               "date_precision", "is_engineer_estimate", "price_basis"]
+        m = pd.read_csv(os.path.join(CLEAN, "master_panel.csv"),
+                        encoding="utf-8-sig", low_memory=False,
+                        usecols=lambda c: c in use,
+                        dtype={"year": str, "item_key": str,
+                               "project_key": str})
+        ee = m.is_engineer_estimate.fillna(False).astype(bool)
+        precise = m.date_precision == "precise"
+        cols = ["item_key", "year", "project_key", "unit_price"]
+        # index_by_market.main()'s filters
+        yr = m.year.fillna("").astype(str).str.replace(r"\.0$", "",
+                                                         regex=True)
+        im = (yr.str.match(r"^20\d\d$", na=False) & (m.unit_price > 0)
+              & ~ee & (m.project_kind == "construction")
+              & (m.price_basis == "all_bids"))
+        is_tx = m.source.isin(["txdot", "txdot_archive"])
+        muni = m.loc[im & ~is_tx & precise & (m.source_set == "external"),
+                     cols].assign(year=yr)
+        tx = m.loc[im & is_tx & precise, cols].assign(year=yr)
+        # build_master's price_time_index base
+        bm = (~ee & (m.unit_price > 0) & (m.source_set == "external")
+              & (m.competition_class == "competitive")
+              & (m.project_kind == "construction")
+              & (m.price_basis != "uneven_proposal"))
+        pkeys = set(m.loc[bm & precise, "project_key"].unique())
+        base = m.loc[bm & m.project_key.isin(pkeys)
+                     & m.year.str.match(r"^20\d\d$", na=False)
+                     & (m.item_key.astype(str) != ""), cols]
+        del m, ee, precise, yr, im, is_tx, bm
+        self.S1, self.SD = {}, {}
+        for arm, df in (("Municipal", muni), ("TxDOT", tx),
+                        ("_default", base)):
+            s1 = (df.groupby(["item_key", "year", "project_key"])
+                  .agg(p=("unit_price", "median")).reset_index())
+            s1["D"] = s1.project_key.map(avail).fillna(NEVER)
+            s1.sort_values("D", inplace=True, kind="mergesort")
+            s1.reset_index(drop=True, inplace=True)
+            self.S1[arm], self.SD[arm] = s1, s1.D.values
+        self._sig, self._res = None, None
+
+    def at(self, D):
+        """{arm: {to_year: level}} from projects dated strictly before D."""
+        sig = tuple(int(self.np.searchsorted(self.SD[a], D, side="left"))
+                    for a in self.ARMS)
+        if sig != self._sig:
+            res = {}
+            for arm, k in zip(self.ARMS, sig):
+                o = _chain(self.S1[arm].iloc[:k], adjacent=(arm != "_default"))
+                if o:
+                    res[arm] = o
+            self._sig, self._res = sig, res
+        return self._res
+
+
+def _parse_totals(s):
+    out = []
+    for part in str(s).split(";"):
+        if ":" not in part:
+            continue
+        try:
+            f = float(part.split(":", 1)[1])
+        except ValueError:
+            continue
+        if f > 0:
+            out.append(f)
+    return out
+
+
+class _ForwardDiscount:
+    """competition_and_crosswalk.py's two discount tables, refitted on the
+    lettings dated strictly before D: the pooled low/median by bidder count
+    (bins with >= 10 lettings) and the municipal table = pooled x one shift
+    (median municipal ratio over the nearest pooled bin within 2; n = 1
+    forced to 1.0; only once >= 20 municipal and >= 20 TxDOT lettings exist).
+    Checked against both published CSVs on all data."""
+
+    def __init__(self, avail):
+        import numpy as np
+        import pandas as pd
+        self.np = np
+        lr = []
+        a = pd.read_csv(os.path.join(CLEAN, "txdot_archive_project_totals.csv"),
+                        encoding="utf-8-sig")
+        for r in a.itertuples(index=False):
+            b = _parse_totals(r.bidder_totals)
+            if len(b) < 1:
+                continue
+            lr.append(("archive", str(r.bid_date)[:10], len(b), min(b),
+                       float(np.median(b))))
+        c = pd.read_csv(os.path.join(CLEAN, "txdot_letting_spread.csv"),
+                        encoding="utf-8-sig")
+        for r in c.itertuples(index=False):
+            lr.append(("current", str(r.bid_date)[:10], int(r.n_bidders),
+                       float(r.low), float(r.median)))
+        mm = pd.read_csv(os.path.join(CLEAN, "municipal_letting_totals.csv"),
+                         encoding="utf-8-sig",
+                         dtype={"year": str, "source_set": str})
+        mm = mm[mm.source_set == "external"]
+        mm = mm[(mm.low > 0) & (mm["median"] > 0) & (mm.n_bidders >= 2)]
+        for r in mm.itertuples(index=False):
+            d = avail.get(r.letting_id)
+            if d is None:
+                d = (str(r.bid_date)[:10] if isinstance(r.bid_date, str)
+                     and len(str(r.bid_date)) >= 10 else NEVER)
+            lr.append(("municipal", d, int(r.n_bidders), float(r.low),
+                       float(getattr(r, "median"))))
+        ld = pd.DataFrame(lr, columns=["src", "D", "n_bidders", "low",
+                                       "median"])
+        ld["D"] = ld.D.where(ld.D.str.match(r"^\d{4}-\d\d-\d\d$"), NEVER)
+        ld["lom"] = ld.low / ld["median"]
+        self.LD = ld.sort_values("D", kind="mergesort").reset_index(drop=True)
+        self.LDD = self.LD.D.values
+        self._k, self._res = None, None
+
+    def at(self, D):
+        """(pooled, municipal) tables from lettings dated strictly before D."""
+        k = int(self.np.searchsorted(self.LDD, D, side="left"))
+        if k != self._k:
+            self._k, self._res = k, self._fit(self.LD.iloc[:k])
+        return self._res
+
+    def _fit(self, d):
+        np = self.np
+        pooled = {}
+        for n, g in d.groupby("n_bidders"):
+            if len(g) < 10:
+                continue
+            v = g.lom.values
+            pooled[int(n)] = {"f": float(np.median(v)),
+                              "p25": float(np.quantile(v, .25)),
+                              "p75": float(np.quantile(v, .75)),
+                              "lettings": int(len(g))}
+        mu = d[d.src == "municipal"]
+        t = d[d.src != "municipal"]
+        muni = {}
+        if len(mu) >= 20 and len(t) >= 20 and pooled:
+            def fp(n):
+                kk = min(pooled, key=lambda x: abs(x - n))
+                return pooled[kk]["f"] if abs(kk - n) <= 2 else None
+            rel = [r.lom / fp(r.n_bidders) for r in mu.itertuples(index=False)
+                   if fp(r.n_bidders)]
+            shift = float(np.median(rel)) if rel else 1.0
+            for n, row in pooled.items():
+                if n <= 1:
+                    muni[n] = {"f": 1.0, "p25": 1.0, "p75": 1.0,
+                               "lettings": row["lettings"]}
+                else:
+                    muni[n] = {"f": row["f"] * shift,
+                               "p25": row["p25"] * shift,
+                               "p75": row["p75"] * shift,
+                               "lettings": row["lettings"]}
+        return pooled, muni
+
+
+_FWD_HEAVY = frozenset(("price_median", "qty_median", "vintage_year",
+                        "n_owners"))
+_FWD_EMPTY = {"n_projects": 0, "n_owners": 0, "price_median": None,
+              "qty_median": None, "vintage_year": None, "tok": "",
+              "usable": "no"}
+
+
+class _LazyRow(dict):
+    """A reference row whose cheap fields exist at once and whose medians are
+    computed on first access: the family-table scan (size substitution) reads
+    only n_projects/usable of every row."""
+    __slots__ = ("_fill",)
+
+    def __init__(self, cheap, fill):
+        super().__init__(cheap)
+        self._fill = fill
+
+    def _ensure(self):
+        f = self._fill
+        if f is not None:
+            self._fill = None
+            dict.update(self, f())
+
+    def get(self, k, default=None):
+        if k in _FWD_HEAVY:
+            self._ensure()
+        return dict.get(self, k, default)
+
+    def __getitem__(self, k):
+        if k in _FWD_HEAVY:
+            self._ensure()
+        return dict.__getitem__(self, k)
+
+
+def _fwd_heavy(by, pks):
+    """_held_out_row's medians, owners and vintage over the lettings pks."""
+    es = [e for pk in pks for e in by[pk]]
+    yw = [(e[2], e[1] * e[0]) for e in es
+          if e[2] is not None and e[1] is not None and e[1] * e[0] > 0]
+    vint = None
+    if yw:
+        y0 = min(y for y, _ in yw)
+        vint = y0 + (math.fsum((y - y0) * w for y, w in yw)
+                     / math.fsum(w for _, w in yw))
+    qs = [e[1] for e in es if e[1] is not None]
+    return {"n_owners": len({e[3] for e in es}),
+            "price_median": statistics.median([e[0] for e in es]),
+            "qty_median": statistics.median(qs) if qs else None,
+            "vintage_year": vint}
+
+
+class _FwdKind:
+    """One reference table over all cutoffs: per cell the lettings sorted by
+    availability date, so the cell at D is a prefix (the last prefix per
+    cell is memoised; cutoffs are visited in date order)."""
+
+    def __init__(self, cells_kind, kind, minn, avail):
+        self.c, self.kind, self.minn, self.av = cells_kind, kind, minn, avail
+        self.order, self.last = {}, {}
+
+    def row(self, k, D):
+        by = self.c.get(k)
+        if by is None:
+            raise KeyError(k)
+        o = self.order.get(k)
+        if o is None:
+            lst = sorted(by, key=lambda pk: (self.av.get(pk, NEVER), pk))
+            o = self.order[k] = ([self.av.get(pk, NEVER) for pk in lst], lst)
+        L = bisect.bisect_left(o[0], D)
+        hit = self.last.get(k)
+        if hit is not None and hit[0] == L:
+            return hit[1]
+        if L == 0:
+            r = None
+        else:
+            fam = None if self.kind == "tok" else k[0]
+            tok = " ".join(sorted(k[0])) if self.kind == "tok" else None
+            cheap = {"n_projects": L, "tok": tok or "",
+                     "usable": ("unclassified" if fam in _UNCLASSIFIED
+                                else "yes" if L >= 5 else "thin" if L >= 3
+                                else "no")}
+            r = _LazyRow(cheap, (lambda by=by, o=o, L=L:
+                                 _fwd_heavy(by, o[1][:L])))
+        self.last[k] = (L, r)
+        return r
+
+
+class _FwdMap:
+    """One _FwdKind at one cutoff, with _HeldOutMap's interface."""
+
+    def __init__(self, fk, D):
+        self.fk, self.D = fk, D
+        self._items = None
+
+    def __getitem__(self, k):
+        r = self.fk.row(k, self.D)
+        return _FWD_EMPTY if r is None else r
+
+    def get(self, k, default=None):
+        try:
+            r = self.fk.row(k, self.D)
+        except KeyError:
+            return default
+        if r is None or r["n_projects"] < self.fk.minn:
+            return default
+        return r
+
+    def items(self):
+        if self._items is None:
+            rows = []
+            for k in self.fk.c:
+                r = self.get(k)
+                if r is not None:
+                    rows.append((k, r))
+            rows.sort(key=lambda kv: (kv[1]["usable"], -kv[1]["n_projects"],
+                                      tuple(map(str, kv[0]))))
+            self._items = rows
+        return self._items
+
+    def __bool__(self):
+        return bool(self.fk.c)
+
+
+def _forward_kinds(cells, avail):
+    return {"tok": _FwdKind(cells["tok"], "tok", 2, avail),
+            "band": _FwdKind(cells["band"], "band", 2, avail),
+            "fam": _FwdKind(cells["fam"], "fam", 1, avail)}
+
+
+class ForwardTables:
+    """Tables as they stood on date D: reference cells holding only lettings
+    available strictly before D (the letting under test, dated D, is out of
+    its own cells, and so is everything after it), the escalation index and
+    the discount refitted the same way.  The quantity-shape table stays the
+    published one (it moves no 2022-26 municipal dollar).  estimate() runs
+    on it unchanged."""
+
+    def __init__(self, tab, kinds, tok_inv, D, index, disc_pooled,
+                 disc_muni):
+        self.missing, self.notes = [], []
+        self.shape = getattr(tab, "shape", None) or {}
+        self.borrow_sigma = getattr(tab, "borrow_sigma", None) or {}
+        self.index_scope = getattr(tab, "index_scope", None)
+        self.index = {k: dict(v) for k, v in index.items()}
+        self.disc = dict(disc_pooled)
+        self.disc_muni = dict(disc_muni)
+        self.calib = {}
+        self.ref_tok = _FwdMap(kinds["tok"], D)
+        self.ref_band = _FwdMap(kinds["band"], D)
+        self.ref = _FwdMap(kinds["fam"], D)
+        self.tok_inv = tok_inv
+        self.D = D
+
+
+def _guard_step(alpha, errs, gamma, target=GUARD_TARGET,
+                lo=GUARD_ALPHA_MIN, hi=NOT_UNDER_FLOOR):
+    """One update of the not-under guard after a letting date closes: down
+    by gamma x (1 - target) per letting the P80 came in under, up by
+    gamma x target per letting it did not, kept in [lo, hi].
+
+    It AIMS at `target` (16%) but may relax back up to the plain 20th
+    percentile (`hi`), never beyond: the not-under figure is never narrower
+    than the plain P80.  Capping at the target as well cost 6.8 points of
+    in-band share on the 2026-11-19 Mac data (municipal 2024-26 8.0% against
+    14.8%) for under-shares of 16.5% against 17.0%, both inside the floor."""
+    s = 0.0
+    for e in errs:
+        s += target - (1.0 if e else 0.0)
+    return min(hi, max(lo, alpha + gamma * s))
+
+
+def _not_under_guard(trip, gamma, target=GUARD_TARGET):
+    """The quantile level the not-under figure divides by, chosen online.
+
+    Adaptive conformal inference (Gibbs & Candes 2021), one-sided: walking
+    the forward-scored lettings in date order, each date's lettings get
+    P80 = P50 / (the alpha-quantile of the centred ratios of every earlier
+    letting), centring fitted on those same earlier lettings; after the date
+    closes, alpha moves down for each P80 that came in under the low bid and
+    back up for each that did not (_guard_step).  Capped at the 20th
+    percentile, so the guard only ever WIDENS the fixed rule, and only after
+    misses.  Uncapped (two-sided), the low-miss year 2023 narrowed it and
+    2024 then missed 25.5%.  gamma ~ 1 / lettings scored per year, so a
+    year running one point over the floor moves alpha about one point.
+    `trip`: (date, discounted bid part, owner-set money, actual low) sorted
+    by date.  Returns the level after the last letting, and what it did."""
+    alpha = target
+    n = under = 0
+    i = 0
+    while i < len(trip):
+        D = trip[i][0]
+        j = i
+        while j < len(trip) and trip[j][0] == D:
+            j += 1
+        if i >= FORWARD_MIN_PRIOR:
+            prior = [(c, fx, w) for _, c, fx, w in trip[:i]]
+            lc = _centre(prior)
+            rs = sorted((c * lc + fx) / w for c, fx, w in prior)
+            p = rs[int(alpha * (len(rs) - 1))]
+            errs = [(c * lc + fx) / w / p < 1.0 for _, c, fx, w in trip[i:j]]
+            n += len(errs)
+            under += sum(errs)
+            alpha = _guard_step(alpha, errs, gamma, target)
+        i = j
+    return {"alpha": alpha, "n_scored": n,
+            "under_share": (under / n) if n else None}
+
+
+def calibrate_forward(write=True, per_letting=None):
+    """The interval, measured as a NEW letting meets it: every letting priced
+    by estimate() itself on ForwardTables at its own date (reference cells,
+    index and discount from lettings dated strictly before it), centring and
+    quantiles fitted on all of those forward-scored lettings, and the
+    not-under figure's quantile chosen by the guard.  The population and the
+    filters are calibrate_out_of_fold's, line for line.  This is what main()
+    writes to estimator_calibration.csv."""
+    tab = Tables()
+    avail = _letting_dates()
+    findex = _ForwardIndex(avail)
+    fdisc = _ForwardDiscount(avail)
+    pool = _reference_pool()
+    cells = _reference_cells(pool)
+    cov = collections.Counter()
+    cov["reference_rebuild_mismatch"] = _check_reference_cells(tab, cells)
+    kinds = _forward_kinds(cells, avail)
+    lets = collections.defaultdict(
+        lambda: {"bt": collections.defaultdict(float), "win": set(),
+                 "sched": {}, "mk": "", "rows": collections.defaultdict(list),
+                 "prices": collections.defaultdict(list), "wamt": {},
+                 "yr": collections.Counter()})
+    for mk, pk, fam, un, sz, q, u, w, b, dn, ow, yr in pool:
+        if q is None or q <= 0:
+            continue
+        d = lets[pk]
+        d["mk"] = mk
+        d["bt"][b] += q * u
+        k = (fam, un, sz, qty_shape.band_of(q), dn)
+        d["prices"][k].append(u)
+        if w:
+            d["win"].add(b)
+            d["sched"][k] = d["sched"].get(k, 0.0) + q
+            d["rows"][k].append(q)
+            d["wamt"][k] = d["wamt"].get(k, 0.0) + q * u
+            d["yr"][yr] += 1
+    del pool
+    todo = []
+    for pk, d in lets.items():
+        if len(d["win"]) != 1 or len(d["bt"]) < 2 or not d["sched"]:
+            continue
+        wt = d["bt"].get(next(iter(d["win"])), 0.0)
+        if wt <= 0 or statistics.median(d["bt"].values()) <= 0:
+            continue
+        if len(d["sched"]) < MIN_SCHEDULE_ITEMS:
+            cov["under_%d_items" % MIN_SCHEDULE_ITEMS] += 1
+            continue
+        todo.append(pk)
+    todo.sort(key=lambda pk: (avail.get(pk, NEVER), pk))
+    trips = collections.defaultdict(list)
+    ft_d, ft = None, None
+    for pk in todo:
+        D = avail.get(pk, NEVER)
+        if D == NEVER:
+            cov["no_date"] += 1
+            continue
+        d = lets[pk]
+        mk, n, sched = d["mk"], len(d["bt"]), d["sched"]
+        wt = d["bt"][next(iter(d["win"]))]
+        items, keys = [], []
+        for k in sched:
+            fam, un, sz, bd, dn = k
+            if is_owner_fixed(d["prices"].get(k, ()), fam, un, dn):
+                items.append({"family": fam, "unit": un, "size_bucket": sz,
+                              "quantity": sched[k], "description": dn,
+                              "amount": d["wamt"].get(k, 0.0)})
+                keys.append(k)
+                continue
+            for qr in d["rows"][k]:
+                items.append({"family": fam, "unit": un, "size_bucket": sz,
+                              "quantity": qr, "description": dn})
+                keys.append(k)
+        yr = d["yr"].most_common(1)[0][0] if d["yr"] else ""
+        if D != ft_d:
+            pooled, muni = fdisc.at(D)
+            ft_d, ft = D, ForwardTables(tab, kinds, cells["tok_inv"], D,
+                                        findex.at(D), pooled, muni)
+        r = estimate(ft, items, n, mk, yr or None)
+        if r.get("expected_low") is None:
+            cov["no_estimate"] += 1
+            continue
+        ok = collections.defaultdict(lambda: True)
+        for k, t in zip(keys, r["trace"]):
+            if not (t.get("fixed_amount") or t.get("price")):
+                ok[k] = False
+        pr = sum(1 for k in sched if ok[k])
+        tot, fixed = r["market_total"], r["fixed_total"]
+        if pr < 0.9 * len(sched) or tot <= 0:
+            cov["under_90pct_priced"] += 1
+            continue
+        fa = r["discount"]["f"]
+        cov["scored"] += 1
+        trips[mk].append((D, tot * fa, fixed, wt))
+        trips["all"].append((D, tot * fa, fixed, wt))
+        if per_letting is not None:
+            per_letting.append({"project_key": pk, "market": mk, "date": D,
+                                "n_bidders": n, "bid_part": tot * fa,
+                                "owner_fixed": fixed, "actual_low": wt,
+                                "n_items": len(sched)})
+
+    rows_out = []
+    for mk, trip in sorted(trips.items()):
+        if len(trip) < 30:
+            continue
+        trip.sort(key=lambda t: t[0])           # stable: (date, key) order
+        plain = [(c, fx, w) for _, c, fx, w in trip]
+        raw = sorted((c + fx) / w for c, fx, w in plain)
+        lc = _centre(plain)
+        cen = sorted((c * lc + fx) / w for c, fx, w in plain)
+        q = lambda pp: cen[int(pp * (len(cen) - 1))]
+        g = (_not_under_guard(trip, GUARD_GAMMA[mk]) if mk in GUARD_GAMMA
+             else None)
+        lvl = g["alpha"] if g else GUARD_TARGET
+        rows_out.append({"market": mk, "n": len(trip),
+                         "median_ratio": round(statistics.median(raw), 6),
+                         "median_abs_error": round(statistics.median(
+                             [abs(x - 1) for x in raw]), 6),
+                         "median_abs_error_centred": round(statistics.median(
+                             [abs(x - 1) for x in cen]), 6),
+                         "over_share_centred": round(
+                             sum(1 for x in cen if x >= 1.0) / len(cen), 6),
+                         "p10": round(q(.10), 6), "p20": round(q(.20), 6),
+                         "p25": round(q(.25), 6), "p75": round(q(.75), 6),
+                         "p80": round(q(.80), 6), "p90": round(q(.90), 6),
+                         "quantiles_basis": "centred",
+                         "level_correction": round(lc, 6),
+                         # the not-under figure divides by this
+                         "p_not_under": round(q(lvl), 6),
+                         "not_under_level": round(lvl, 6),
+                         "not_under_rule": "guard" if g else "fixed_p20",
+                         "guard_gamma": GUARD_GAMMA.get(mk, ""),
+                         "guard_scored": g["n_scored"] if g else "",
+                         "guard_under_share": (round(g["under_share"], 6)
+                                               if g and g["under_share"]
+                                               is not None else ""),
+                         "first_date": trip[0][0], "last_date": trip[-1][0],
+                         "lettings_with_owner_fixed": sum(
+                             1 for _, _, fx, _ in trip if fx),
+                         "min_schedule_items": MIN_SCHEDULE_ITEMS,
+                         "discount_table": "forward_refit",
+                         "mode": "forward_production_path",
+                         "train_scope": "public_external_only"})
+    if write and rows_out:
+        with open(os.path.join(CLEAN, "estimator_calibration.csv"), "w",
+                  encoding="utf-8-sig", newline="") as f:
+            wr = csv.DictWriter(f, fieldnames=list(rows_out[0]))
+            wr.writeheader()
+            wr.writerows(rows_out)
+    return rows_out, cov
+
+
+def calibrate(write=True):
+    """Measure the realised est/actual distribution and write the interval
+    table the estimator inverts.
+
+    The price level is held EXACT here -- the letting's own median bidder total
+    stands in for the market median -- so what is being calibrated is the
+    discount's own spread, which is the part that does not average out over a
+    schedule.  An estimate built from price_reference instead would fold in
+    family-level reference error and make the interval market-specific in a way
+    none of this data supports.
+    """
+    tab = Tables()
+    lets = _letting_totals()
+    per = collections.defaultdict(list)
+    for mk, n, wt, med in lets:
+        d = discount(tab, n, mk)
+        if not d:
+            continue
+        per[mk].append((med * d["f"]) / wt)
+        per["all"].append((med * d["f"]) / wt)
+    rows = []
+    for mk, v in sorted(per.items()):
+        if len(v) < 30:
+            continue
+        v.sort()
+        q = lambda p: v[int(p * (len(v) - 1))]
+        err = sorted(abs(x - 1) for x in v)
+        rows.append({"market": mk, "n": len(v),
+                     "median_ratio": round(statistics.median(v), 6),
+                     "median_abs_error": round(statistics.median(err), 6),
+                     "p10": round(q(.10), 6), "p25": round(q(.25), 6),
+                     "p75": round(q(.75), 6), "p90": round(q(.90), 6),
+                     "discount_table": ("municipal" if mk == "municipal"
+                                        and tab.disc_muni else "pooled")})
+    if write and rows:
+        with open(os.path.join(CLEAN, "estimator_calibration.csv"), "w",
+                  encoding="utf-8-sig", newline="") as f:
+            wr = csv.DictWriter(f, fieldnames=list(rows[0]))
+            wr.writeheader()
+            wr.writerows(rows)
+    return rows
+
+
+def _selftest():
+    ok = True
+
+    def chk(name, got, want):
+        nonlocal ok
+        if got != want:
+            ok = False
+            print("FAIL %-44s got %r want %r" % (name, got, want))
+        else:
+            print("pass %-44s %r" % (name, got))
+
+    t = Tables.__new__(Tables)
+    t.missing, t.notes = [], []
+    t.ref = {("gabion_wall", "CY", ""): {
+        "price_median": "400", "qty_median": "245", "vintage_year": "2025",
+        "usable": "yes", "n_projects": "9", "n_owners": "4"}}
+    t.shape = {("gabion_wall", "CY", "200-1000"): {"shape_multiplier": "1.0"},
+               ("gabion_wall", "CY", "1000-5000"): {"shape_multiplier": "0.8"}}
+    t.index = {"Municipal": {"2025": 140.3, "2026": 130.0},
+               "TxDOT": {"2025": 159.8, "2026": 139.8}, "_default": {}}
+    t.disc = {4: {"f": 0.872, "p25": 0.796, "p75": 0.926, "lettings": 488}}
+    t.disc_muni = {4: {"f": 0.826, "p25": 0.773, "p75": 0.896, "lettings": 32}}
+    t.borrow_sigma = {1: 0.2638}
+    t.calib = {"municipal": {"market": "municipal", "n": "155", "p10": "0.85",
+                             "p25": "0.928", "p75": "1.053", "p90": "1.15"}}
+    t.ref_band = {}
+    t.ref_tok = {}
+    t.tok_inv = collections.defaultdict(
+        lambda: collections.defaultdict(list))
+
+    # 1 the municipal market must draw the municipal table
+    chk("1 municipal uses municipal table",
+        discount(t, 4, "municipal")["table"], "municipal")
+    chk("1 txdot uses pooled table",
+        discount(t, 4, "txdot")["table"], "pooled")
+
+    # 2 a bidder count far from any bin is refused, not extrapolated
+    chk("2 refuses distant bidder count", discount(t, 12, "municipal"), None)
+    chk("2 allows 2 bins out", discount(t, 6, "municipal")["bin"], 4)
+
+    # 3 escalation is market-specific, and says when it is borrowed
+    e = escalation(t, "2025", "2026", "municipal")
+    chk("3 municipal escalation", round(e["factor"], 4),
+        round(130.0 / 140.3, 4))
+    chk("3 not borrowed", e["borrowed"], False)
+    e2 = escalation(t, "2025", "2026", "txdot")
+    chk("3 txdot escalation differs", round(e2["factor"], 4),
+        round(139.8 / 159.8, 4))
+    # 3b if another script renames the market arm, the miss must be REPORTED,
+    #    not absorbed by silently borrowing the statewide index
+    t3 = Tables.__new__(Tables)
+    for k, v in vars(t).items():
+        setattr(t3, k, v)
+    t3.index = {"Statewide": {"2025": 159.8, "2026": 139.8},
+                "_default": {"2025": 159.8, "2026": 139.8}}
+    chk("3b missing municipal arm detected",
+        market_index_key(t3, "municipal"), None)
+    e3 = escalation(t3, "2025", "2026", "municipal")
+    chk("3b borrow is flagged", e3["borrowed"], True)
+    chk("3b and says the arm is absent", e3["market_arm_found"], False)
+    r3b = estimate(t3, [{"family": "gabion_wall", "unit": "CY",
+                         "quantity": 245}], 4, "municipal", "2026")
+    chk("3b the trace says BORROWED out loud",
+        any("BORROWED" in w for w in r3b["trace"][0]["why"]), True)
+    # a renamed arm must not change which DISCOUNT table is used
+    chk("3b discount table unaffected by index naming",
+        r3b["discount"]["table"], "municipal")
+
+    # 3b0 the token tier runs BEFORE the band tier, matches on words, and
+    #     refuses a dimension mismatch however many trade words are shared
+    t0 = Tables.__new__(Tables)
+    for k, v in vars(t).items():
+        setattr(t0, k, v)
+    tok18 = frozenset(item_tokens.tokens("18 in rcp storm sewer pipe").
+                      __iter__())
+    tok24 = frozenset(item_tokens.tokens("24 in rcp storm sewer pipe").
+                      __iter__())
+    t0.ref_tok = {
+        (tok18, "LF", "200-1000"): {
+            "price_median": "120", "n_projects": "6", "usable": "yes",
+            "n_owners": "3", "vintage_year": "2025"}}
+    t0.tok_inv = collections.defaultdict(lambda: collections.defaultdict(list))
+    for w in tok18:
+        t0.tok_inv["LF"][w].append((tok18, "LF", "200-1000"))
+    # same words, same dimension -> priced off the token cell
+    r_a = item_market_price(t0, "storm_pipe", "LF", 500, "", "2026",
+                            "municipal", "storm sewer pipe rcp 18 inch")
+    chk("3b0 token tier prices a reworded match",
+        r_a["price_key"], "token_jaccard")
+    chk("3b0 and records the similarity",
+        r_a["token_match_jaccard"] is not None, True)
+    # 24-inch must NOT borrow the 18-inch price
+    r_b = item_market_price(t0, "storm_pipe", "LF", 500, "", "2026",
+                            "municipal", "storm sewer pipe rcp 24 inch")
+    chk("3b0 a dimension mismatch is refused, not priced",
+        r_b["price_key"] != "token_jaccard", True)
+    # and a cell with one letting behind it is not a reference
+    t0.ref_tok[(tok18, "LF", "200-1000")]["n_projects"] = "1"
+    r_c = item_market_price(t0, "storm_pipe", "LF", 500, "", "2026",
+                            "municipal", "storm sewer pipe rcp 18 inch")
+    chk("3b0 one letting is not a token reference",
+        r_c["price_key"] != "token_jaccard", True)
+
+    # 3c the band-keyed reference is tried FIRST, and when it answers, the
+    #    band shape multiplier must NOT also be applied -- the band is already
+    #    in the key, so scaling on top moves the price out of the band it was
+    #    measured in.
+    t4 = Tables.__new__(Tables)
+    for k, v in vars(t).items():
+        setattr(t4, k, v)
+    t4.ref_band = {("gabion_wall", "CY", "", "200-1000"): {
+        "price_median": "390", "qty_median": "245", "vintage_year": "2025",
+        "usable": "yes", "n_projects": "6", "n_owners": "3"}}
+    r3c = item_market_price(t4, "gabion_wall", "CY", 245, "", "2026",
+                            "municipal")
+    chk("3c band tier used when available", r3c["price_key"],
+        "family+unit+size+band")
+    chk("3c no shape multiplier on top", "qty_factor" in r3c, False)
+    chk("3c band price, escalated once", round(r3c["price"], 4),
+        round(390 * (130.0 / 140.3), 4))
+    #    a band with too little behind it must fall back, not be used
+    t4.ref_band = {("gabion_wall", "CY", "", "200-1000"): {
+        "price_median": "390", "n_projects": "1", "usable": "no"}}
+    r3d = item_market_price(t4, "gabion_wall", "CY", 245, "", "2026",
+                            "municipal")
+    chk("3d one letting is not a reference", r3d["price_key"],
+        "family+unit+size")
+
+    # 3e a lone bidder gets no discount, and is not extrapolated into the
+    #    2-bidder bin
+    d1 = discount(t, 1, "municipal")
+    chk("3e single bid is not discounted", (d1["f"], d1["extrapolated"]),
+        (1.0, False))
+
+    # 3f fractional vintage_year must be honoured, not truncated.  2025.8
+    #    against an index falling 140.3 -> 130.0 is only 0.2 of a year of
+    #    decline away from 2026, not a whole one.
+    e_frac = escalation(t, "2025.8", "2026", "municipal")
+    e_floor = escalation(t, "2025", "2026", "municipal")
+    chk("3f fraction gives less escalation than the floor",
+        round(e_frac["factor"], 6) > round(e_floor["factor"], 6), True)
+    chk("3f and it interpolates geometrically",
+        round(e_frac["factor"], 6),
+        round(130.0 / (140.3 * (130.0 / 140.3) ** 0.8), 6))
+
+    # 3g an unusable reference row must raise a DOLLAR-WEIGHTED warning, not
+    #    sit silently in the trace
+    t5 = Tables.__new__(Tables)
+    for k, v in vars(t).items():
+        setattr(t5, k, v)
+    t5.ref = {("gabion_wall", "CY", ""): {
+        "price_median": "400", "qty_median": "245", "vintage_year": "2025",
+        "usable": "thin", "n_projects": "3", "n_owners": "2"}}
+    t5.ref_band = {}
+    r5 = estimate(t5, [{"family": "gabion_wall", "unit": "CY",
+                        "quantity": 245}], 4, "municipal", "2026")
+    chk("3g unusable row warns, with the dollar share",
+        any("not usable='yes'" in w for w in r5["warnings"]), True)
+    chk("3g and the share is reported", r5["degraded_dollar_share"], 1.0)
+
+    # 3h nothing priceable is a refusal, never a bid of 0.00
+    r6 = estimate(t, [{"family": "unobtainium", "unit": "EA", "quantity": 1}],
+                  4, "municipal", "2026")
+    chk("3h nothing priced -> no estimate", r6["expected_low"], None)
+    chk("3h and says so", any("NOT A SINGLE item" in w
+                              for w in r6["warnings"]), True)
+
+    # 3i the market argument: case and whitespace are normalised to the right
+    #    table (helpful), while a value that is not a market RAISES rather than
+    #    quietly falling through to the pooled discount (dangerous).
+    r8 = estimate(t, [{"family": "gabion_wall", "unit": "CY",
+                       "quantity": 245}], 4, "  Municipal ", "2026")
+    chk("3i 'Municipal' normalises to the municipal table",
+        r8["discount"]["table"], "municipal")
+    try:
+        estimate(t, [{"family": "gabion_wall", "unit": "CY",
+                      "quantity": 245}], 4, "city", "2026")
+        chk("3i an unknown market raises", "accepted", "raised")
+    except ValueError:
+        chk("3i an unknown market raises", "raised", "raised")
+
+    # 3j a line item with no unit is a parse failure, not a coverage gap
+    r7 = item_market_price(t, "gabion_wall", "", 245, "", "2026", "municipal")
+    chk("3j blank unit gets its own reason",
+        any("no unit on this line item" in w for w in r7["why"]), True)
+
+    # 4 the discount lands on the TOTAL exactly once
+    items = [{"family": "gabion_wall", "unit": "CY", "quantity": 245}]
+    r = estimate(t, items, 4, "municipal", "2026")
+    base = 400 * (130.0 / 140.3)
+    chk("4 market total has no discount in it",
+        round(r["market_total"], 4), round(base * 245, 4))
+    chk("4 expected low = total x f once",
+        round(r["expected_low"], 4), round(base * 245 * 0.826, 4))
+
+    # 5 two items: one discount, not two
+    items2 = items + [{"family": "gabion_wall", "unit": "CY", "quantity": 245}]
+    r2 = estimate(t, items2, 4, "municipal", "2026")
+    chk("5 discount applied once for two items",
+        round(r2["expected_low"] / r["expected_low"], 6), 2.0)
+
+    # 6 an unpriceable item must not be silently dropped from a total that is
+    #   then presented as the project estimate
+    r3 = estimate(t, items + [{"family": "unobtainium", "unit": "EA",
+                               "quantity": 1}], 4, "municipal", "2026")
+    chk("6 unpriced item counted", (r3["priced"], r3["unpriced"]), (1, 1))
+    chk("6 and warned about",
+        any("could not be priced" in w for w in r3["warnings"]), True)
+
+    # 7 quantity band shifts the price, in the measured direction
+    r4 = estimate(t, [{"family": "gabion_wall", "unit": "CY",
+                       "quantity": 2000}], 4, "municipal", "2026")
+    chk("7 bigger quantity prices lower per unit",
+        round(r4["trace"][0]["qty_factor"], 4), 0.8)
+    chk("7 and carries the borrow sigma",
+        r4["trace"][0]["qty_sigma"], 0.2638)
+
+    # 8 the interval inverts the calibration: actual = est / ratio
+    chk("8 interval from calibration",
+        tuple(round(x / r["expected_low"], 4) for x in r["p50_band"]),
+        (round(1 / 1.053, 4), round(1 / 0.928, 4)))
+    chk("8 band straddles the estimate",
+        r["p50_band"][0] < r["expected_low"] < r["p50_band"][1], True)
+
+    # 9 no discount table -> no estimate, and a warning, never a bare total
+    t2 = Tables.__new__(Tables)
+    for k, v in vars(t).items():
+        setattr(t2, k, v)
+    t2.disc, t2.disc_muni = {}, {}
+    r5 = estimate(t2, items, 4, "municipal", "2026")
+    chk("9 refuses without a discount", r5["expected_low"], None)
+    chk("9 and says the total is undiscounted",
+        any("NO discount" in w for w in r5["warnings"]), True)
+
+    # 10 owner-set money: recognised narrowly, taken at face value, kept out
+    #    of the discount, and never inferred from a quantity
+    chk("10 contingency family is allowance-like",
+        allowance_like("contingency", "LS", ""), True)
+    chk("10 an ALLOW unit is allowance-like",
+        allowance_like("other", "ALLOW", "repair/adjustment of sprinkler"), True)
+    chk("10 'to allow' in a description is not an allowance",
+        allowance_like("needs_review", "EA",
+                       "inlet top adjustment including core to allow flex "
+                       "base to drain"), False)
+    chk("10 an amount is face value", owner_fixed_amount({"amount": "20000"}),
+        20000.0)
+    chk("10 unit price on an ALLOW line is face value",
+        owner_fixed_amount({"family": "other", "unit": "ALLOW",
+                            "quantity": 20000, "unit_price": 1}), 20000.0)
+    chk("10 a unit price on an ordinary line is ignored",
+        owner_fixed_amount({"family": "storm_pipe", "unit": "LF",
+                            "quantity": 100, "unit_price": 50}), None)
+    chk("10 an ALLOW line with no amount is not given one",
+        owner_fixed_amount({"family": "other", "unit": "ALLOW",
+                            "quantity": 20000}), None)
+    r10 = estimate(t, items + [{"family": "other", "unit": "ALLOW",
+                                "quantity": 20000, "unit_price": 1,
+                                "description": "sprinkler repair allowance"}],
+                   4, "municipal", "2026")
+    chk("10 face value added once and undiscounted",
+        round(r10["expected_low"] - r["expected_low"], 4), 20000.0)
+    chk("10 and the market total does not contain it",
+        round(r10["market_total"], 4), round(r["market_total"], 4))
+    t6 = Tables.__new__(Tables)
+    for k, v in vars(t).items():
+        setattr(t6, k, v)
+    t6.ref = dict(t.ref)
+    t6.ref[("contingency", "LS", "")] = {
+        "price_median": "50000", "qty_median": "1", "vintage_year": "2025",
+        "usable": "yes", "n_projects": "9", "n_owners": "4"}
+    r11 = estimate(t6, items + [{"family": "contingency", "unit": "LS",
+                                 "quantity": 1,
+                                 "description": "construction contingency"}],
+                   4, "municipal", "2026")
+    chk("10 an allowance priced off other projects is flagged",
+        any("owner-set allowances" in w for w in r11["warnings"]), True)
+    chk("10 bids prove owner-set money when identical",
+        is_owner_fixed([50000, 50000, 50000], "contingency", "LS",
+                       "construction contingency"), True)
+    chk("10 not when the amounts differ (a percentage contingency)",
+        is_owner_fixed([219097.5, 320000], "contingency", "LS",
+                       "construction contingency"), False)
+    chk("10 not on a single bid", is_owner_fixed([50000], "contingency", "LS",
+                                                 ""), False)
+    chk("10 not on an ordinary line that happens to tie",
+        is_owner_fixed([100, 100], "storm_pipe", "LF", "18 in rcp"), False)
+
+    # 11 the centring factor: 1/median without owner-set money, and with it the
+    #    median of the centred ratio lands on 1 while the money stays put
+    chk("11 centre is 1/median with no owner-set money",
+        round(_centre([(0.9, 0.0, 1.0), (1.1, 0.0, 1.0), (1.2, 0.0, 1.0)]), 6),
+        round(1 / 1.1, 6))
+    trip = [(0.5, 0.4, 1.0), (0.7, 0.0, 1.0), (1.3, 0.1, 1.0)]
+    lcx = _centre(trip)
+    chk("11 with owner-set money the centred median is 1",
+        round(statistics.median([(c * lcx + fx) / w for c, fx, w in trip]), 6),
+        1.0)
+
+    # 12 a centred calibration file is inverted directly, not de-centred twice
+    t7 = Tables.__new__(Tables)
+    for k, v in vars(t).items():
+        setattr(t7, k, v)
+    t7.calib = {"municipal": {"market": "municipal", "n": "132",
+                              "p10": "0.8", "p25": "0.9", "p75": "1.1",
+                              "p90": "1.25", "level_correction": "1.08",
+                              "quantiles_basis": "centred"}}
+    r12 = estimate(t7, items, 4, "municipal", "2026")
+    chk("12 centred quantiles invert directly",
+        tuple(round(x / r12["expected_low"], 4) for x in r12["p50_band"]),
+        (round(1 / 1.1, 4), round(1 / 0.9, 4)))
+    #    no p20 in the file -> no not-under figure is invented
+    chk("12 no p20, no not-under estimate", "expected_low_p80" in r12, False)
+    t7.calib["municipal"]["p20"] = "0.8"
+    r13 = estimate(t7, items, 4, "municipal", "2026")
+    chk("13 not-under estimate = estimate / p20",
+        round(r13["expected_low_p80"] / r13["expected_low"], 6),
+        round(1 / 0.8, 6))
+
+    # 14 a year past the index's last row is carried flat -- never priced
+    #    at its vintage with the escalation silently dropped -- and said so
+    e14 = escalation(t, "2025", "2027", "municipal")
+    chk("14 a year past the index is carried flat",
+        round(e14["factor"], 6), round(130.0 / 140.3, 6))
+    chk("14 and the result says from which year", e14["carried_from"], 2026)
+    chk("14 a year the index has carries nothing",
+        escalation(t, "2025", "2026", "municipal")["carried_from"], None)
+    chk("14 the market arm is kept, not borrowed", e14["borrowed"], False)
+    r14 = estimate(t, items, 4, "municipal", "2027")
+    chk("14 the trace says the level was carried",
+        any(w.startswith("index carried flat")
+            for w in r14["trace"][0]["why"]), True)
+    chk("14 and the estimate warns in dollars",
+        any("carried flat" in w for w in r14["warnings"]), True)
+    chk("14 same money as the last year's level",
+        round(r14["market_total"], 4),
+        round(estimate(t, items, 4, "municipal", "2026")["market_total"], 4))
+
+    # 15 the not-under guard: widens after a miss, recovers after a hit,
+    #    never narrower than its target quantile, never below 0.02
+    T15 = GUARD_TARGET
+    a15 = round(T15 - 0.02 * (1 - T15), 6)
+    chk("15 a miss lowers the level by gamma x (1 - target)",
+        round(_guard_step(T15, [True], 0.02), 6), a15)
+    chk("15 a hit raises it by gamma x target",
+        round(_guard_step(a15, [False], 0.02), 6), round(a15 + 0.02 * T15, 6))
+    chk("15 after hits it relaxes above the target",
+        round(_guard_step(T15, [False, False], 0.02), 6),
+        round(T15 + 2 * 0.02 * T15, 6))
+    chk("15 but never above the plain 20th percentile",
+        round(_guard_step(NOT_UNDER_FLOOR, [False, False], 0.02), 6),
+        round(NOT_UNDER_FLOOR, 6))
+    chk("15 the target sits below the user's 20% floor",
+        GUARD_TARGET < NOT_UNDER_FLOOR, True)
+    chk("15 never below 0.02", round(_guard_step(0.03, [True] * 5, 0.02), 6),
+        0.02)
+    #    end to end: 40 calibration lettings, then three misses and a hit
+    trip15 = [("2020-%02d-%02d" % (1 + i // 28, 1 + i % 28),
+               0.8 + 0.4 * i / 39, 0.0, 1.0) for i in range(40)]
+    trip15 += [("2021-01-0%d" % (i + 1), c, 0.0, 1.0)
+               for i, c in enumerate((0.5, 0.5, 0.5, 3.0))]
+    g15 = _not_under_guard(trip15, 0.02)
+    chk("15 three misses and a hit", round(g15["alpha"], 6),
+        round(T15 - 3 * 0.02 * (1 - T15) + 0.02 * T15, 6))
+    chk("15 scored only once 40 earlier lettings exist",
+        (g15["n_scored"], round(g15["under_share"], 6)), (4, 0.75))
+    chk("15 a hit after the 40th letting relaxes it by gamma x target",
+        round(_not_under_guard(trip15[:40] + [("2021-01-01", 3.0, 0.0, 1.0)],
+                               0.02)["alpha"], 6), round(T15 + 0.02 * T15, 6))
+
+    # 16 a forward calibration file: estimate() divides by its p_not_under
+    t7.calib["municipal"]["p_not_under"] = "0.7"
+    t7.calib["municipal"]["not_under_level"] = "0.17"
+    r16 = estimate(t7, items, 4, "municipal", "2026")
+    chk("16 not-under estimate = estimate / p_not_under",
+        round(r16["expected_low_p80"] / r16["expected_low"], 6),
+        round(1 / 0.7, 6))
+    chk("16 and the guard's level is reported", r16["not_under_level"], 0.17)
+
+    # 17 forward tables hold only lettings dated strictly before D
+    c17 = {"fam": {("gabion_wall", "CY", ""): {
+        "A": [(100.0, 50.0, 2024.0, "o1")],
+        "B": [(300.0, 50.0, 2025.0, "o2")]}}, "band": {}, "tok": {}}
+    k17 = _forward_kinds(c17, {"A": "2024-03-01", "B": "2025-03-01"})
+    key17 = ("gabion_wall", "CY", "")
+
+    def at17(D):
+        r_ = ForwardTables(t, k17, {}, D, t.index, t.disc,
+                           t.disc_muni).ref.get(key17)
+        return None if r_ is None else (r_["n_projects"], r_["price_median"])
+    chk("17 before every letting: no reference", at17("2024-01-01"), None)
+    chk("17 a later letting is not seen", at17("2025-01-01"), (1, 100.0))
+    chk("17 nor one dated D itself", at17("2025-03-01"), (1, 100.0))
+    chk("17 and once both are earlier, both count", at17("2025-06-01"),
+        (2, 200.0))
+
+    print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
+    return ok
+
+
+def main():
+    tab = Tables()
+    if tab.missing:
+        print("MISSING INPUTS:", tab.missing)
+    seen = tab.assert_all_bids_basis()
+    if seen:
+        print("price pool basis:", dict(seen))
+    for n in tab.notes:
+        print("NOTE:", n)
+    def show(title, rows):
+        print("=== %s ===" % title)
+        print("%-12s %6s %12s %14s %8s %8s %8s %8s  %s"
+              % ("market", "n", "median", "median|err|", "p10", "p25", "p75",
+                 "p90", "discount"))
+        for r in rows:
+            print("%-12s %6d %12.4f %13.1f%% %8.3f %8.3f %8.3f %8.3f  %s"
+                  % (r["market"], r["n"], r["median_ratio"],
+                     100 * r["median_abs_error"], r["p10"], r["p25"],
+                     r["p75"], r["p90"], r["discount_table"]))
+        print()
+
+    print()
+    # The discount's own spread, with the price level handed to it exact.  Not
+    # the estimator's error -- kept because the GAP between the two is the
+    # price-level substitution error, and that gap is the thing worth working
+    # on next.
+    d_only = calibrate(write=False)
+    show("discount only, price level held exact (NOT the estimator's error)",
+         d_only)
+
+    fp, cov = calibrate_full_path(write=False)
+    show("FULL PATH, in-sample (reads the reference it helped build)", fp)
+    print("scoring coverage:", dict(cov))
+    print()
+    rows, cov2 = calibrate_out_of_fold(write=False)
+    show("OUT OF FOLD (leave-one-out; NOT written -- later lettings inform "
+         "each price)", rows)
+    print("scoring coverage:", dict(cov2))
+    print()
+    rows_f, cov3 = calibrate_forward()
+    show("FORWARD (written): every letting priced only from lettings dated "
+         "before it", rows_f)
+    print("scoring coverage:", dict(cov3))
+    for r in rows_f:
+        if r.get("not_under_rule") == "guard":
+            print("  %s not-under guard: level %.3f, divide by %.4f (the "
+                  "plain 20th percentile is %.4f); %d forward lettings "
+                  "scored, %.1f%% came in under their P80"
+                  % (r["market"], r["not_under_level"], r["p_not_under"],
+                     r["p20"], r["guard_scored"],
+                     100 * r["guard_under_share"]))
+    a = next((r for r in fp if r["market"] == "all"), None)
+    b = next((r for r in rows if r["market"] == "all"), None)
+    if a and b:
+        print()
+        print("in-sample optimism: %.1f%% -> %.1f%% median error once a "
+              "letting cannot see itself. The interval below is written from "
+              "the OUT-OF-FOLD quantiles."
+              % (100 * a["median_abs_error"], 100 * b["median_abs_error"]))
+    if d_only and rows:
+        a = next((r for r in d_only if r["market"] == "all"), None)
+        b = next((r for r in rows if r["market"] == "all"), None)
+        if a and b:
+            print()
+            print("the price level, not the discount, is where the accuracy "
+                  "goes: %.1f%% -> %.1f%% median error once family medians "
+                  "replace the letting's own totals."
+                  % (100 * a["median_abs_error"],
+                     100 * b["median_abs_error"]))
+    print()
+    print("-> data/clean/estimator_calibration.csv  (FORWARD quantiles and "
+          "the not-under guard; the interval estimate() prints comes from "
+          "these)")
+    return rows_f
+
+
+def run_schedule(path, n_bidders, market="municipal", to_year=None):
+    """Price a real bid schedule from a CSV and print the estimate with its
+    whole derivation, item by item.
+
+    Columns read: item_family, unit, quantity, and optionally item_no,
+    description, size_bucket -- plus `amount` (or `unit_price`, or
+    owner_fixed=yes) for owner-set money: an allowance, contingency or force
+    account is taken at that face value and kept out of the discount.  A
+    unit_price on an ordinary line is ignored; prices are estimated, not read.
+    An estimate nobody can take apart is an estimate nobody can defend in a bid
+    review, so every item prints what happened to it, including the items that
+    could not be priced and why.
+    """
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        items = []
+        for r in csv.DictReader(f):
+            items.append({
+                "item_no": (r.get("item_no") or "").strip(),
+                "description": (r.get("description") or "").strip(),
+                "family": (r.get("item_family") or "").strip(),
+                "unit": (r.get("unit") or "").strip(),
+                "quantity": _f(r.get("quantity"), 0.0),
+                "size_bucket": (r.get("size_bucket") or "").strip(),
+                "amount": _f(r.get("amount")),
+                "unit_price": _f(r.get("unit_price")),
+                "owner_fixed": (r.get("owner_fixed") or "").strip().lower()
+                in ("1", "true", "yes", "y")})
+    tab = Tables()
+    if tab.missing:
+        print("MISSING INPUTS:", tab.missing)
+    r = estimate(tab, items, n_bidders, market, to_year)
+
+    print("%-5s %-26s %-8s %12s %12s %14s  %s"
+          % ("item", "family", "unit", "quantity", "unit price", "extended",
+             "notes"))
+    for t in r["trace"]:
+        if t.get("fixed_amount"):
+            ext, ps = t["fixed_amount"], "OWNER-SET"
+        else:
+            ext = ((t["price"] * t["quantity"])
+                   if t["price"] and t["quantity"] else None)
+            ps = ("%.2f" % t["price"]) if t["price"] else "NOT PRICED"
+        print("%-5s %-26s %-8s %12s %12s %14s  %s"
+              % (str(t.get("item") or "")[:5], t["family"][:26], t["unit"][:8],
+                 ("%.2f" % t["quantity"]) if t["quantity"] else "-",
+                 ps, ("%.2f" % ext) if ext else "-",
+                 "; ".join(t["why"])[:72]))
+    print()
+    print("items priced %d of %d" % (r["priced"], r["n_items"]))
+    print("market total (all-bids level, NO discount)   %18.2f"
+          % r["market_total"])
+    if r.get("fixed_total"):
+        print("owner-set amounts (face value, no discount)  %18.2f   [%d items]"
+              % (r["fixed_total"], r.get("n_fixed", 0)))
+    d = r.get("discount")
+    if d:
+        print("competition discount  f(%s) = %.4f   [%s table, %d-bidder bin, "
+              "%d lettings]"
+              % (n_bidders, d["f"], d["table"], d["bin"], d["lettings"]))
+    if r["expected_low"] is not None:
+        print("EXPECTED LOW BID                             %18.2f"
+              % r["expected_low"])
+        if r.get("expected_low_p80"):
+            print("NOT-UNDER ESTIMATE (low bid at or below it in 80%% of "
+                  "lettings)  %12.2f   [x%.3f]"
+                  % (r["expected_low_p80"], r["p80_multiplier"]))
+        for k, lab in (("p50_band", "50% of lettings land in"),
+                       ("p80_band", "80% of lettings land in")):
+            if r.get(k):
+                print("  %-28s %16.2f  ~ %.2f" % (lab, r[k][0], r[k][1]))
+        if r.get("calibration_n"):
+            print("  interval calibrated on %d real lettings (%s market)"
+                  % (r["calibration_n"], r.get("calibration_market")))
+    for w in r["warnings"]:
+        print("WARNING: %s" % w)
+    return r
+
+
+if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(0 if _selftest() else 1)
+    if "--schedule" in sys.argv:
+        a = sys.argv
+        sched = a[a.index("--schedule") + 1]
+        nb = int(a[a.index("--bidders") + 1]) if "--bidders" in a else 4
+        mk = a[a.index("--market") + 1] if "--market" in a else "municipal"
+        yr = a[a.index("--year") + 1] if "--year" in a else None
+        run_schedule(sched, nb, mk, yr)
+        sys.exit(0)
+    if not _selftest():
+        print("\nself-tests failed -- not calibrating")
+        sys.exit(1)
+    print()
+    main()
