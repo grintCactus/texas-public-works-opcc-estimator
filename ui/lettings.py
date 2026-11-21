@@ -230,11 +230,52 @@ def load_mirror(path: str = None) -> Dict[str, str]:
     return out
 
 
+#: The harvest manifests' links, precomputed for a deployment that ships
+#: data/clean without data/external (the public demo; written by
+#: deploy/tools/build_bundle.py from load_manifest_links() itself):
+#: {"version": 1, "links": {<key as load_manifest_links returns it>:
+#: {"url", "kind"}}}. Used when BID_UI_SOURCE_LINKS names it, or in public
+#: mode when data/clean/source_links.json exists.
+LINKS_FILE = os.path.join(DATA_DIR, "clean", "source_links.json")
+LINKS_ENV = "BID_UI_SOURCE_LINKS"
+
+
+def _public() -> bool:
+    try:
+        import public_mode
+    except ImportError:
+        return False
+    return public_mode.enabled()
+
+
+def load_links_file(path: str) -> Optional[Dict[str, dict]]:
+    """The precomputed manifest links, or None when the file is absent or
+    not valid. Only http(s) links are kept."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    links = d.get("links") if isinstance(d, dict) else None
+    if not isinstance(links, dict):
+        return None
+    out = {}
+    for k, v in links.items():
+        if not isinstance(k, str) or not isinstance(v, dict):
+            continue
+        url = safe_url(v.get("url") or "")
+        if url:
+            out[k] = {"url": url,
+                      "kind": str(v.get("kind") or "public source document")[:80]}
+    return out
+
+
 class SourceLinks:
     """Where a letting came from, in the order the page shows it: its local
-    copy under data/external (when the file is there), its public page (when
-    a manifest or project_metadata.csv records one), and its copy in the
-    public GitHub data repository (when ui/public_mirror.json maps it)."""
+    copy under data/external (when the file is there; never in public mode),
+    its public page (when a manifest or project_metadata.csv records one),
+    and its copy in the public GitHub data repository (when
+    ui/public_mirror.json maps it)."""
 
     def __init__(self, external_dir: str = None):
         self.external_dir = external_dir
@@ -260,7 +301,13 @@ class SourceLinks:
     def links(self) -> Dict[str, dict]:
         with self._lock:
             if self._links is None:
-                self._links = load_manifest_links(self.external_dir)
+                pre = None
+                p = os.environ.get(LINKS_ENV) or (LINKS_FILE if _public()
+                                                  else "")
+                if p:
+                    pre = load_links_file(p)
+                self._links = (pre if pre is not None
+                               else load_manifest_links(self.external_dir))
             return self._links
 
     def get(self, pk: str, meta: Optional[dict] = None) -> dict:
@@ -278,7 +325,9 @@ class SourceLinks:
                 kind = source_kind({"source_kind": meta.get("source_group")},
                                    host_of(url))
         host = host_of(url) if url else ""
-        local = resolve_source(f) if f.startswith("external/") else None
+        # public mode serves no local files: the source page and the mirror
+        local = (resolve_source(f) if f.startswith("external/")
+                 and not _public() else None)
         mirror = self.mirror().get(f, "") if f.startswith("external/") else ""
         return {
             "document": f.rsplit("/", 1)[-1] if f.startswith("external/") else pk,

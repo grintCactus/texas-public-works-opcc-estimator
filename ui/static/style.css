@@ -651,6 +651,15 @@ tr.judgrow > td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .btn.twisty { padding: 0 5px; margin-right: 4px; }
 .small { font-size: 10.5px; }
 
+/* -------------------------------------------------------- public demo */
+/* The server marks the page <html data-public="1"> in public-demo mode
+   (ui/public_mode.py): local-only features (Claude reading, the bid-tab
+   inbox) are hidden before the first paint and the upload notice shows. */
+
+html:not([data-public="1"]) .public-only { display: none !important; }
+html[data-public="1"] .local-only { display: none !important; }
+.public-banner { margin-bottom: 12px; }
+
 /* ---------------------------------------------------------- narrow screens */
 
 @media (max-width: 760px) {

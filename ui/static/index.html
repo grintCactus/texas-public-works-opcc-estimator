@@ -49,6 +49,19 @@
 
 <main>
 
+<!-- ====================================================== PUBLIC DEMO -->
+<div class="notice caution public-only public-banner" id="public-banner" role="note">
+  <span class="ic">!</span>
+  <div class="body-txt">
+    <b>Public demo.</b> Files you upload are processed on this server and not
+    stored. Do not upload confidential documents.
+    Corrections and saved worksheets stay in this browser. Method, accuracy
+    and source code:
+    <a id="public-repo" href="https://github.com/grintCactus/texas-public-works-opcc-estimator"
+       target="_blank" rel="noopener noreferrer">GitHub</a>.
+  </div>
+</div>
+
 <!-- ============================================================ INPUT -->
 <section class="panel" id="sec-input">
   <h2><span class="secnum">1</span>Takeoff
@@ -74,7 +87,7 @@
             <div class="big">Drop a takeoff here, or click to choose</div>
             <div class="small">Excel (.xlsx) &middot; CSV &middot; PDF (text layer or scanned, read offline) &middot; Word (.docx)</div>
           </div>
-          <div class="claudebox" id="claude-box">
+          <div class="claudebox local-only" id="claude-box">
             <button class="btn sm" id="btn-claude" type="button">Read a PDF with Claude&hellip;</button>
             <span class="muted-note" id="claude-note"></span>
             <input type="file" id="claude-input" hidden accept=".pdf,application/pdf">
@@ -82,6 +95,8 @@
           <input type="file" id="file-input" hidden
                  accept=".xlsx,.xlsm,.csv,.txt,.tsv,.pdf,.docx,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp">
           <div id="file-status" style="margin-top:9px"></div>
+          <div class="muted-note public-only">Files you upload are processed on this
+            server and not stored. Do not upload confidential documents.</div>
           <div class="muted-note">Column order does not matter. A price or amount
             column in the file is ignored &mdash; prices are estimated, never read.</div>
         </div>
@@ -293,7 +308,7 @@
   </div>
 </section>
 
-<details class="fold panel-fold" id="bidtab-fold">
+<details class="fold panel-fold local-only" id="bidtab-fold">
   <summary>Add a historical bid tabulation (staged for the next data rebuild)</summary>
   <div class="panel">
     <div class="body">

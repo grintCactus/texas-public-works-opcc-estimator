@@ -63,7 +63,14 @@ Routes (JSON in, JSON out unless noted):
                               backend; sends the document)
   POST /api/claude/read?consent=yes    multipart "file" -> lines read by
                               Claude, as a takeoff parse (sends the document)
+  GET  /api/health            {ok, ready} -- for container health checks
 Everything else is served from ui/static/ (uncached).
+
+Public-demo mode (BIDEST_PUBLIC=1, ui/public_mode.py) turns off the Claude
+reader, the bid-tab inbox, every route that writes on the server (the
+corrections memory and saved worksheets move to the browser) and local
+original files, and adds the access code, rate limits, the upload cap and
+security headers. Off by default: nothing above changes without it.
 
 `dispatch()` is the whole API as a plain function, so the test suite calls
 it directly and also through a real socket.
@@ -95,6 +102,7 @@ if _HERE not in sys.path:
 import engine_production as ep  # noqa: E402
 import exporter  # noqa: E402
 import intake  # noqa: E402
+import public_mode as pm  # noqa: E402
 import upstream  # noqa: E402
 from ingest import bidtab, claude_reader, ocr as ocr_mod, takeoff  # noqa: E402
 
@@ -192,12 +200,18 @@ def _json_body(body: bytes) -> dict:
     return d
 
 
+def _max_upload() -> int:
+    """The upload cap: 64 MB locally, BIDEST_MAX_UPLOAD_MB (25) in public
+    mode."""
+    return pm.CFG.max_upload_bytes if pm.enabled() else MAX_UPLOAD_BYTES
+
+
 def _uploaded_file(headers, query, body) -> Tuple[str, bytes]:
     """(file name, bytes) from a multipart/form-data body (field "file"), or
     from a raw body with ?name=."""
-    if len(body) > MAX_UPLOAD_BYTES:
+    if len(body) > _max_upload():
         raise ApiError(413, "File is larger than %d MB."
-                       % (MAX_UPLOAD_BYTES // (1024 * 1024)))
+                       % (_max_upload() // (1024 * 1024)))
     ctype = headers.get("Content-Type") or ""
     if ctype.lower().startswith("multipart/form-data"):
         msg = email.parser.BytesParser(policy=email.policy.HTTP).parsebytes(
@@ -219,6 +233,9 @@ def _uploaded_file(headers, query, body) -> Tuple[str, bytes]:
 
 
 def _with_temp(name: str, data: bytes, fn):
+    """Run fn(path) on a temporary copy of an upload, deleted afterwards.
+    In public mode tempfile's directory is RAM-backed when the machine has
+    one (ui/public_mode.py), so the copy never reaches a disk there."""
     suffix = os.path.splitext(name)[1][:12]
     fd, path = tempfile.mkstemp(suffix=suffix, prefix="takeoff_")
     try:
@@ -249,7 +266,7 @@ def route(method: str, path: str):
 @route("GET", "/api/status")
 def r_status(req):
     st = ENGINE.status()
-    return {
+    out = {
         "ready": bool(st["state"]["ready"]),
         "version": VERSION,
         "engine": st["state"],
@@ -260,15 +277,34 @@ def r_status(req):
         "item_accuracy": st["item_accuracy"],
         "upstream": upstream.status(),
         "ocr": ocr_mod.status(),
-        "bidtab_import": bidtab.available(),
+        "bidtab_import": pm.BIDTAB_OFF if pm.enabled() else bidtab.available(),
         "history_search": dict(_matching_state),
         "xlsx_export": exporter.xlsx_available(),
-        "corrections": CORRECTIONS.status(),
+        "corrections": (_browser_corrections_status() if pm.enabled()
+                        else CORRECTIONS.status()),
         "claude_reader": _claude_status(),
     }
+    if pm.enabled():
+        if isinstance(out["data"], dict):
+            out["data"] = dict(out["data"], clean_dir="data/clean (public "
+                                                      "bundle)")
+        out["public"] = pm.status()
+    return out
+
+
+@route("GET", "/api/health")
+def r_health(req):
+    return {"ok": True, "ready": bool(ENGINE.state.get("ready")),
+            "references": bool(ENGINE.refs_state.get("ready"))}
+
+
+def _browser_corrections_status():
+    return {"mode": "browser", "file": "", "entries": None, "error": ""}
 
 
 def _claude_status():
+    if pm.enabled():
+        return dict(pm.CLAUDE_OFF)
     try:
         return claude_reader.status()
     except Exception as e:  # noqa: BLE001 - the page must load regardless
@@ -313,7 +349,12 @@ def r_classify(req):
     lines = [ln for ln in (d.get("lines") or []) if isinstance(ln, dict)]
     try:
         out = ENGINE.classify(lines, market)
-        out = intake.annotate(ENGINE, lines, out, market, CORRECTIONS,
+        # public mode: the corrections the browser keeps, for this request
+        # only; locally: the memory under ui/.local/
+        corr = (intake.BrowserCorrections(d.get("corrections"),
+                                          _known_families())
+                if pm.enabled() else CORRECTIONS)
+        out = intake.annotate(ENGINE, lines, out, market, corr,
                               history_ready=bool(_matching_state["ready"]))
     except ep.EngineNotReady as e:
         raise ApiError(503, str(e))
@@ -322,22 +363,39 @@ def r_classify(req):
 
 @route("GET", "/api/corrections")
 def r_corrections(req):
+    if pm.enabled():
+        return _browser_corrections_status()
     return CORRECTIONS.status()
+
+
+def _known_families():
+    try:
+        return {f["id"] for f in ENGINE.options()["families"]}
+    except ep.EngineNotReady as e:
+        raise ApiError(503, str(e))
 
 
 @route("POST", "/api/corrections")
 def r_corrections_save(req):
     d = req.json()
     fam = str(d.get("family") or "").strip()
-    try:
-        known = {f["id"] for f in ENGINE.options()["families"]}
-    except ep.EngineNotReady as e:
-        raise ApiError(503, str(e))
+    known = _known_families()
     if fam not in known:
         raise ApiError(400, "Unknown item family %r." % fam)
     unit = str(d.get("unit") or "").strip()
     if unit and upstream.norm_unit(unit).upper() not in upstream.KNOWN_UNITS:
         unit = ""
+    if pm.enabled():
+        # public mode writes nothing: the browser keeps the entry under the
+        # parser's normalised wording, which only the server can compute
+        try:
+            entry = intake.BrowserCorrections.entry(
+                d.get("description"), fam, unit,
+                str(d.get("source") or "picker"))
+        except ValueError as err:
+            raise ApiError(400, str(err))
+        return {"saved": entry, "key": entry["key"], "stored": "browser",
+                "status": _browser_corrections_status()}
     try:
         entry = CORRECTIONS.remember(d.get("description"), fam, unit,
                                      str(d.get("source") or "picker"))
@@ -349,6 +407,10 @@ def r_corrections_save(req):
 @route("POST", "/api/corrections/forget")
 def r_corrections_forget(req):
     d = req.json()
+    if pm.enabled():
+        return {"forgotten": None, "stored": "browser",
+                "key": intake.Corrections.key(d.get("description")),
+                "status": _browser_corrections_status()}
     return {"forgotten": CORRECTIONS.forget(d.get("description")),
             "status": CORRECTIONS.status()}
 
@@ -671,6 +733,8 @@ def _claude(fn, req):
 
 @route("GET", "/api/claude/status")
 def r_claude_status(req):
+    if pm.enabled():
+        return dict(pm.CLAUDE_OFF)
     return claude_reader.status(refresh=True)
 
 
@@ -725,6 +789,12 @@ def dispatch(method: str, raw_path: str, headers=None, body: bytes = b"",
     path = u.path
     query = urllib.parse.parse_qs(u.query, keep_blank_values=True)
     if path.startswith("/api/"):
+        if pm.enabled():
+            off = pm.blocked(method, path)
+            if off:
+                return _json_reply(404, {"detail": "%s is not available in "
+                                                   "the public demo." % off,
+                                         "public": True})
         fn = ROUTES.get((method, path))
         if fn is None:
             known = {p for (m, p) in ROUTES}
@@ -736,6 +806,13 @@ def dispatch(method: str, raw_path: str, headers=None, body: bytes = b"",
         except ApiError as e:
             return _json_reply(e.status, dict(e.extra, detail=e.message))
         except Exception as e:  # noqa: BLE001
+            if pm.enabled():
+                # no exception text or traceback to the public: logged here
+                eid = "%08x" % (time.time_ns() & 0xFFFFFFFF)
+                log.error("unhandled error %s on %s: %s\n%s", eid, path, e,
+                          traceback.format_exc())
+                return _json_reply(500, {"detail": "Internal error (%s)."
+                                                   % eid, "where": path})
             log.error("unhandled error on %s: %s", path, e)
             return _json_reply(500, {
                 "error": "%s: %s" % (type(e).__name__, e), "where": path,
@@ -772,6 +849,8 @@ def _static(path: str):
         ctype += "; charset=utf-8"
     with open(full, "rb") as fh:
         data = fh.read()
+    if pm.enabled() and os.path.basename(full) == "index.html":
+        data = pm.mark_page(data)
     # Uncached: a local tool whose source sits next to the data it reads;
     # editing app.js and refreshing has to show the edit.
     return 200, ctype, data, {"Cache-Control": "no-store, must-revalidate",
@@ -786,16 +865,56 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "BidEstimator/" + VERSION
     protocol_version = "HTTP/1.1"
 
+    def version_string(self):
+        if pm.enabled():
+            return self.server_version     # no Python version to the public
+        return super().version_string()
+
+    def setup(self):
+        if pm.enabled():
+            # an idle or slow connection is dropped instead of holding a
+            # thread (StreamRequestHandler applies it to the socket)
+            self.timeout = pm.CFG.socket_timeout
+        super().setup()
+
     def _serve(self, method):
-        n = int(self.headers.get("Content-Length") or 0)
-        if n > MAX_UPLOAD_BYTES + 1024 * 1024:
-            self._send(413, "application/json", json.dumps(
-                {"detail": "Request body too large."}).encode(), {})
+        if pm.enabled():
+            early = pm.before(method, self.path, self.headers,
+                              self.client_address[0], self.rfile.read)
+            if early is not None:
+                st, ctype, data, extra = early
+                self._send(st, ctype, b"" if method == "HEAD" else data,
+                           extra, length=len(data))
+                # a body left unread would be taken for the next request
+                if (self.headers.get("Content-Length") or "0").strip() \
+                        not in ("", "0"):
+                    self.close_connection = True
+                return
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            n = -1
+        if n < 0 or n > _max_upload() + 1024 * 1024:
+            self._send(413 if n > 0 else 400, "application/json", json.dumps(
+                {"detail": "Request body too large." if n > 0
+                 else "Bad Content-Length."}).encode(), {})
             self.close_connection = True
             return
         body = self.rfile.read(n) if n > 0 else b""
         hdrs = {k: v for k, v in self.headers.items()}
-        st, ctype, data, extra = dispatch(method, self.path, hdrs, body)
+        if pm.enabled():
+            path = urllib.parse.urlsplit(self.path).path
+            with pm.heavy_slot(path) as ok:
+                if not ok:
+                    st, ctype, data, extra = _json_reply(
+                        503, {"detail": "The server is busy; try again in a "
+                                        "moment."})
+                    extra = {"Retry-After": "5"}
+                else:
+                    st, ctype, data, extra = dispatch(method, self.path, hdrs,
+                                                      body)
+        else:
+            st, ctype, data, extra = dispatch(method, self.path, hdrs, body)
         self._send(st, ctype, b"" if method == "HEAD" else data, extra,
                    length=len(data))
 
@@ -804,6 +923,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length",
                          str(len(data) if length is None else length))
+        if pm.enabled():
+            for k, v in pm.security_headers().items():
+                if k not in extra:
+                    self.send_header(k, v)
         for k, v in extra.items():
             self.send_header(k, v)
         self.end_headers()
@@ -825,7 +948,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(host: str = "127.0.0.1", port: int = 8017) -> ThreadingHTTPServer:
-    srv = ThreadingHTTPServer((host, port), Handler)
+    if pm.enabled():
+        srv = pm.BoundedThreadingHTTPServer((host, port), Handler,
+                                            pm.CFG.max_connections)
+    else:
+        srv = ThreadingHTTPServer((host, port), Handler)
     srv.daemon_threads = True
     return srv
 
@@ -836,6 +963,13 @@ def serve(host: str = "127.0.0.1", port: int = 8017) -> None:
                                "%(message)s", datefmt="%H:%M:%S")
     srv = make_server(host, port)
     start_background_load()
+    if pm.enabled():
+        log.info("PUBLIC DEMO MODE: Claude reader, bid-tab inbox, server-side "
+                 "writes and local original files are off; access code %s; "
+                 "uploads up to %d MB, temp copies in %s (%s)",
+                 "required" if pm.CFG.access_code else "not set",
+                 pm.CFG.max_upload_mb, pm.CFG.tmpdir or "the system temp "
+                 "directory", pm.CFG.tmp_kind or "?")
     log.info("Bid Estimator on http://%s:%d/ (loading the estimator tables "
              "in the background)", host, port)
     try:

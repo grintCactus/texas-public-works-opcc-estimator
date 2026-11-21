@@ -186,6 +186,69 @@ class Corrections:
                     "error": self.error}
 
 
+class BrowserCorrections:
+    """Public-demo mode (ui/public_mode.py): the corrections the visitor's
+    browser keeps in localStorage, sent with each /api/classify request and
+    used for that request only. Nothing is read from or written to the
+    server.
+
+    `entries`: {Corrections.key(description): {family, unit?, last?, times?}}
+    as the browser sent it. Malformed entries, unknown families and anything
+    past MAX_ENTRIES are dropped rather than trusted."""
+
+    MAX_ENTRIES = 2000
+
+    def __init__(self, entries, known_families=None):
+        self._entries: Dict[str, dict] = {}
+        self.error = ""
+        if not isinstance(entries, dict):
+            return
+        for k, v in list(entries.items())[:self.MAX_ENTRIES]:
+            if not isinstance(k, str) or not isinstance(v, dict) \
+                    or not k.strip() or len(k) > 400:
+                continue
+            fam = str(v.get("family") or "").strip()
+            if not fam or fam in UNCLASSIFIED or (
+                    known_families is not None and fam not in known_families):
+                continue
+            unit = str(v.get("unit") or "").strip()
+            unit = upstream.norm_unit(unit).upper() if unit else ""
+            if unit and unit not in upstream.KNOWN_UNITS:
+                unit = ""
+            try:
+                times = max(1, min(10 ** 6, int(v.get("times") or 1)))
+            except (TypeError, ValueError):
+                times = 1
+            self._entries[k.strip()] = {
+                "family": fam, "unit": unit,
+                "source": str(v.get("source") or "browser")[:20],
+                "last": str(v.get("last") or "")[:25], "times": times}
+
+    @staticmethod
+    def entry(description, family: str, unit: str = "",
+              source: str = "picker") -> dict:
+        """What the browser stores for one correction, under `key` -- the
+        parser's normalised wording, which only the server can compute."""
+        k = Corrections.key(description)
+        if not k:
+            raise ValueError("A correction needs the line's description.")
+        family = str(family or "").strip()
+        if not family or family in UNCLASSIFIED:
+            raise ValueError("A correction needs a real item family.")
+        unit = upstream.norm_unit(str(unit or "")).upper() if unit else ""
+        return {"key": k, "family": family, "unit": unit,
+                "source": str(source or "picker")[:20], "last": _now()}
+
+    def get(self, description) -> Optional[dict]:
+        k = Corrections.key(description)
+        e = self._entries.get(k) if k else None
+        return dict(e) if e else None
+
+    def status(self) -> dict:
+        return {"mode": "browser", "file": "", "entries": len(self._entries),
+                "error": ""}
+
+
 # ---------------------------------------------------------------------------
 # Low confidence and suggestions
 # ---------------------------------------------------------------------------

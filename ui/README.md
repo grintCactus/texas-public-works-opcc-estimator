@@ -53,6 +53,46 @@ For the Claude preview pane, `.claude/launch.json` has a configuration named
   because there is no network surface. No web framework, no build step, no CDN:
   the front end is plain HTML / CSS / JavaScript in `static/`.
 
+## Public demo mode
+
+The same server can run as a public website (`ui/public_mode.py`). It is off
+unless `BIDEST_PUBLIC=1` is set (or `ui/run.py --public` is used):
+
+```sh
+BIDEST_PUBLIC=1 .venv/bin/python ui/run.py     # 0.0.0.0:$PORT, 7860 by default
+```
+
+- **Off in public mode:** reading a PDF with Claude (both backends), the bid-tab
+  upload and its inbox, every route that writes on the server, and serving local
+  original files. These routes answer 404.
+- **Kept in the browser:** the corrections memory and saved worksheets live in
+  the visitor's own `localStorage`. The browser sends its corrections with each
+  classify request; the server uses them for that request only.
+- **Links:** a letting links to its source page and to the GitHub mirror
+  (`public_mirror.json`). The harvest manifests' links come from
+  `data/clean/source_links.json` (written by the deployment build) because
+  `data/external` is not shipped.
+- **Uploads:** processed in memory and never stored. A temporary copy exists
+  only while the request runs, in a RAM-backed directory when there is one
+  (`BIDEST_TMPDIR`, else `/dev/shm`). The cap is 25 MB
+  (`BIDEST_MAX_UPLOAD_MB`). The page shows: "Files you upload are processed on
+  this server and not stored. Do not upload confidential documents."
+- **Access code (optional):** with `DEMO_ACCESS_CODE` set, visitors enter it
+  once per browser session (an HttpOnly session cookie holding an HMAC of the
+  code). Unset, the site is open.
+- **Protection:**
+  - per-IP rate limits (`BIDEST_TRUSTED_PROXIES=N` reads the client address
+    behind N reverse proxies);
+  - at most 4 concurrent heavy requests and 128 open connections;
+  - a 30 s socket timeout;
+  - no tracebacks in error replies;
+  - CSP, nosniff and referrer-policy headers (`BIDEST_FRAME_ANCESTORS` for an
+    embedding page).
+- **OCR:** with Tesseract as the engine, each page is first turned upright by
+  Tesseract's own orientation detection (`ocr_scans.osd_turn`).
+
+Tests: `test_public_mode.py`.
+
 ## The engine
 
 `engine_production.py` is the UI's only pricing path. It imports
@@ -515,6 +555,8 @@ ui/
   worksheet.py            the OPCC worksheet: totals, export, save / reopen
   intake_eval.py          intake measurement on 25 public PDFs
   test_ui.py, test_intake.py   the regression suite
+  public_mode.py          public-demo mode (BIDEST_PUBLIC=1)
+  test_public_mode.py     its tests
   matching.py             history search for the classification picker
   data_access.py          read-only loader for the search tables
   ingest/                 takeoff parsing (xlsx / csv / pdf / docx / text),

@@ -269,6 +269,23 @@ except Exception as e:  # noqa: BLE001
     PDF_OCR_ERROR = "%s: %s" % (type(e).__name__, e)
 
 
+def _tesseract_turns(path):
+    """{page: degrees} that set each page upright, by Tesseract's own
+    orientation detection (the pipeline's ocr_scans.osd_turn). Apple Vision
+    and RapidOCR find a page's orientation themselves; Tesseract reads a
+    sideways scan as noise (a 46-page sideways bid tab: 1.8k characters
+    read without the turns, 89k with them)."""
+    import fitz
+    turns = {}
+    doc = fitz.open(str(path))
+    try:
+        for i, page in enumerate(doc):
+            turns[i + 1] = _ocrs.osd_turn(page) or 0
+    finally:
+        doc.close()
+    return turns
+
+
 def ocr_pdf_pages(path, dpi=300, engine=None):
     """({page: laid-out text}, engine) for a scanned PDF, or ({}, "")."""
     if not PDF_OCR_ENGINES:
@@ -276,8 +293,10 @@ def ocr_pdf_pages(path, dpi=300, engine=None):
     import tempfile
     from pathlib import Path
     eng = engine or PDF_OCR_ENGINES[0]
+    rots = _tesseract_turns(path) if eng.startswith("tess") else None
     with tempfile.TemporaryDirectory(prefix="ui_ocr_") as tmp:
-        return _ocrs.ocr_pages(Path(path), dpi, Path(tmp), eng), eng
+        return _ocrs.ocr_pages(Path(path), dpi, Path(tmp), eng,
+                               rots=rots), eng
 
 
 def status() -> dict:

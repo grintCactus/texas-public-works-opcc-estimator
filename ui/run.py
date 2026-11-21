@@ -5,11 +5,15 @@
     .venv/bin/python ui/run.py --check         # load, price a sample through
                                                # the API, then run the tests
     .venv/bin/python ui/run.py --test          # the regression suite only
+    BIDEST_PUBLIC=1 .venv/bin/python ui/run.py # public demo (or --public):
+                                               # 0.0.0.0:$PORT (7860)
 
-Binds the loopback interface only. There is no auth because there is no
-network surface -- do not change the host without adding one. The server is
-the Python standard library (see app.py); nothing needs installing beyond
-the project's own venv.
+Locally it binds the loopback interface only. There is no auth because there
+is no network surface -- do not change the host without public mode, which
+adds the protections a public site needs (ui/public_mode.py: no server-side
+writes, no Claude reader, no local files, optional access code, rate limits,
+upload cap). The server is the Python standard library (see app.py); nothing
+needs installing beyond the project's own venv.
 """
 
 from __future__ import annotations
@@ -184,9 +188,14 @@ def run_tests() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Bid Estimator (local)")
-    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
-    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=None,
+                    help="default %d; in public mode $PORT or 7860"
+                         % DEFAULT_PORT)
+    ap.add_argument("--host", default=None,
+                    help="default 127.0.0.1; in public mode 0.0.0.0")
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--public", action="store_true",
+                    help="public-demo mode (same as BIDEST_PUBLIC=1)")
     ap.add_argument("--check", action="store_true",
                     help="load data, price a sample, run the tests, exit")
     ap.add_argument("--no-tests", action="store_true",
@@ -203,6 +212,17 @@ def main() -> int:
             return rc
         print("\n" + "-" * 60 + "\nregression suite\n" + "-" * 60)
         return run_tests()
+
+    import public_mode
+    if args.public:
+        os.environ["BIDEST_PUBLIC"] = "1"
+        public_mode.configure()
+    if public_mode.enabled():
+        args.host = args.host or "0.0.0.0"
+        args.port = args.port or public_mode.CFG.port
+        args.no_browser = True
+    args.host = args.host or "127.0.0.1"
+    args.port = args.port or DEFAULT_PORT
 
     import app
 

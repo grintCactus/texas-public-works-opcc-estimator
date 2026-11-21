@@ -32,6 +32,35 @@ const S = {
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 
+/* ------------------------------------------------------------ public demo */
+
+// Public-demo mode: the server marks the page <html data-public="1">
+// (ui/public_mode.py). Nothing is kept on the server there: the corrections
+// memory and saved worksheets live in this browser's localStorage. Every
+// storage access is guarded -- blocked storage only means nothing is
+// remembered.
+const PUBLIC = document.documentElement.getAttribute('data-public') === '1';
+const CORR_KEY = 'bid-estimator-corrections';
+const WS_KEY = 'bid-estimator-worksheets';
+const WS_MAX = 20;
+
+function lsGet(key, dflt) {
+  try {
+    const v = window.localStorage.getItem(key);
+    return v ? JSON.parse(v) : dflt;
+  } catch (e) { return dflt; }
+}
+
+function lsSet(key, value) {
+  try { window.localStorage.setItem(key, JSON.stringify(value)); return true; }
+  catch (e) { return false; }
+}
+
+function browserCorrections() {
+  const d = lsGet(CORR_KEY, null);
+  return d && d.entries && typeof d.entries === 'object' && !Array.isArray(d.entries) ? d.entries : {};
+}
+
 function el(tag, attrs, children) {
   const n = document.createElement(tag);
   if (attrs) for (const [k, v] of Object.entries(attrs)) {
@@ -95,6 +124,9 @@ async function api(path, opts) {
     let body = null;
     if (ct.includes('json')) {
       try { body = await r.json(); msg = body.detail || body.error || msg; } catch (e) { /* keep */ }
+    }
+    if (r.status === 401 && body && body.login) {
+      window.location.href = body.login + '?next=' + encodeURIComponent(window.location.pathname);
     }
     const err = new Error(msg);
     err.status = r.status;
@@ -246,17 +278,23 @@ function renderStatusBar() {
       + (ocr.real ? ' (available).' : ' (not installed).')
       : (up.pdf_ocr_error || ocr.error || '')));
   const cr = st.claude_reader || {};
-  bar.appendChild(item(cr.available ? 'ok' : 'dim', 'Claude reading',
+  if (!PUBLIC) bar.appendChild(item(cr.available ? 'ok' : 'dim', 'Claude reading',
     cr.available ? (cr.backend === 'api' ? 'API' : 'Claude login') + ' · opt-in' : 'off',
     cr.available ? cr.label + '. Optional: a PDF is sent to Anthropic only when you choose '
       + '\u201cRead a PDF with Claude\u201d and agree for that document.' : (cr.reason || '')));
   const co = st.corrections || {};
-  if (co.entries) bar.appendChild(item('dim', 'Remembered', co.entries + ' correction'
+  const nb = PUBLIC ? Object.keys(browserCorrections()).length : 0;
+  if (PUBLIC && nb) bar.appendChild(item('dim', 'Remembered', nb + ' correction'
+    + (nb === 1 ? '' : 's'), 'Family corrections you made, applied again to the same '
+    + 'wording. Kept in this browser only (localStorage); the server stores nothing.'));
+  if (!PUBLIC && co.entries) bar.appendChild(item('dim', 'Remembered', co.entries + ' correction'
     + (co.entries === 1 ? '' : 's'), 'Family corrections you made, applied again to the same '
     + 'wording (' + co.file + ', local only).'));
-  bar.appendChild(el('span', { class: 'dim local', text: cr.available
-    ? 'local · nothing leaves this machine unless you choose Read with Claude'
-    : 'local only · nothing leaves this machine' }));
+  bar.appendChild(el('span', { class: 'dim local', text: PUBLIC
+    ? 'public demo · uploads are processed in memory and not stored'
+    : cr.available
+      ? 'local · nothing leaves this machine unless you choose Read with Claude'
+      : 'local only · nothing leaves this machine' }));
   renderClaudeButton();
 }
 
@@ -625,14 +663,38 @@ function adoptRemembered(l) {
 async function rememberCorrection(l, family, unit, source) {
   if (!family || !String(l.description || '').trim()) return;
   try {
-    await postJSON('/api/corrections', { description: l.description, family,
+    const r = await postJSON('/api/corrections', { description: l.description, family,
       unit: unit || '', source: source || 'picker' });
+    // public demo: the server only normalises the wording; this browser keeps it
+    if (PUBLIC && r && r.key && r.saved) {
+      const ents = browserCorrections();
+      const old = ents[r.key] || {};
+      const now = new Date().toISOString().slice(0, 19);
+      ents[r.key] = { family: r.saved.family, unit: r.saved.unit || '', source: r.saved.source || 'picker',
+        first: old.first || now, last: now, times: (old.times || 0) + 1 };
+      if (!lsSet(CORR_KEY, { version: 1, entries: ents })) {
+        toast('This browser does not allow storage, so the correction is not remembered.', 'err');
+      }
+    }
   } catch (e) { toast('Could not remember the correction: ' + e.message, 'err'); }
 }
 
 async function forgetCorrection(l) {
-  try { await postJSON('/api/corrections/forget', { description: l.description }); }
-  catch (e) { /* nothing remembered */ }
+  try {
+    const r = await postJSON('/api/corrections/forget', { description: l.description });
+    if (PUBLIC && r && r.key) {
+      const ents = browserCorrections();
+      if (ents[r.key]) { delete ents[r.key]; lsSet(CORR_KEY, { version: 1, entries: ents }); }
+    }
+  } catch (e) { /* nothing remembered */ }
+}
+
+// The classify request; in the public demo it carries this browser's
+// corrections (used for that request only, never stored on the server).
+function classifyBody(lines) {
+  const b = { market: S.market, lines };
+  if (PUBLIC) b.corrections = browserCorrections();
+  return b;
 }
 
 // One click on a suggestion: its family (and its unit when the line has
@@ -670,8 +732,7 @@ function adoptImportAmount(l) {
 async function classifyAll() {
   if (!S.options || !S.lines.length) { renderGrid(); return; }
   try {
-    const r = await postJSON('/api/classify', {
-      market: S.market, lines: S.lines.map(linePayload) });
+    const r = await postJSON('/api/classify', classifyBody(S.lines.map(linePayload)));
     const by = {};
     (r.lines || []).forEach(c => { by[c.row_id] = c; });
     S.lines.forEach(l => { if (by[l.row_id]) { l.cls = by[l.row_id]; adoptRemembered(l); adoptImportAmount(l); } });
@@ -693,7 +754,7 @@ async function classifyAll() {
 const classifyOne = debounce(async (l) => {
   if (!S.options) return;
   try {
-    const r = await postJSON('/api/classify', { market: S.market, lines: [linePayload(l)] });
+    const r = await postJSON('/api/classify', classifyBody([linePayload(l)]));
     if (r.lines && r.lines[0]) { l.cls = r.lines[0]; adoptRemembered(l); adoptImportAmount(l); }
   } catch (e) { toast('Classification failed: ' + e.message, 'err'); }
   renderGrid();
@@ -1746,9 +1807,22 @@ async function wsSave() {
   if (!S.result) return;
   const i = S.result.inputs || {};
   const def = S.ws.name || [i.owner_label, i.work_type_label, i.bid_date].filter(Boolean).join(' ') || 'worksheet';
-  const name = window.prompt('Save this worksheet as (kept in ui/.local/worksheets on this machine):', def);
+  const name = window.prompt(PUBLIC
+    ? 'Save this worksheet in this browser as (nothing is stored on the server):'
+    : 'Save this worksheet as (kept in ui/.local/worksheets on this machine):', def);
   if (!name) return;
   S.ws.name = name;
+  if (PUBLIC) {
+    const doc = Object.assign(wsDoc(), { name, saved_at: new Date().toISOString().slice(0, 19) });
+    const list = lsGet(WS_KEY, []);
+    const keep = (Array.isArray(list) ? list : []).filter(w => w && w.name !== name);
+    if (lsSet(WS_KEY, [doc].concat(keep).slice(0, WS_MAX))) {
+      toast('Saved in this browser: ' + name, 'ok');
+    } else {
+      toast('This browser would not store it (storage blocked or full) \u2014 use Download JSON.', 'err');
+    }
+    return;
+  }
   try {
     const r = await postJSON('/api/worksheet/save', { name, worksheet: wsDoc() });
     toast('Saved: ui/.local/worksheets/' + r.file, 'ok');
@@ -1758,7 +1832,14 @@ async function wsSave() {
 async function wsOpen() {
   const host = $('#modal-host');
   let list = [];
-  try { list = (await api('/api/worksheet/list')).worksheets || []; } catch (e) { /* none */ }
+  if (PUBLIC) {
+    const docs = lsGet(WS_KEY, []);
+    list = (Array.isArray(docs) ? docs : []).filter(d => d && d.request).map((d, k) => ({
+      name: d.name || 'worksheet', saved_at: d.saved_at || '', file: k, doc: d,
+      lines: ((d.request || {}).items || []).length, your_opcc: (d.totals || {}).your_opcc }));
+  } else {
+    try { list = (await api('/api/worksheet/list')).worksheets || []; } catch (e) { /* none */ }
+  }
   function close() { host.innerHTML = ''; }
   const up = el('button', { class: 'btn sm', text: 'Upload a worksheet JSON…', onclick: () => $('#ws-upload').click() });
   host.appendChild(el('div', { class: 'modal-back', onclick: e => { if (e.target === host.firstChild) close(); } },
@@ -1772,11 +1853,12 @@ async function wsOpen() {
             el('td', { class: 'num', text: money(w.your_opcc) }),
             el('td', {}, el('button', { class: 'btn sm primary', text: 'Open', onclick: async () => {
               close();
-              try { await wsRestore(await api('/api/worksheet/load?file=' + encodeURIComponent(w.file))); }
+              try { await wsRestore(PUBLIC ? w.doc : await api('/api/worksheet/load?file=' + encodeURIComponent(w.file))); }
               catch (e) { toast('Could not open it: ' + e.message, 'err'); }
             } })),
           ]))),
-        ]) : el('div', { class: 'muted-note', text: 'No saved worksheets in ui/.local/worksheets yet.' }),
+        ]) : el('div', { class: 'muted-note', text: PUBLIC ? 'No worksheets saved in this browser yet.'
+          : 'No saved worksheets in ui/.local/worksheets yet.' }),
         el('div', { class: 'row-actions', style: 'margin-top:10px' }, [up]),
       ]),
     ])));
