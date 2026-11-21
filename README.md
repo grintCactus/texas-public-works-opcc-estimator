@@ -17,6 +17,36 @@ The model is trained **only on public bid tabulations**. Every number it reports
 
 ---
 
+## Using it
+
+Start the app on your own machine with `.venv/bin/python ui/run.py`, then open http://127.0.0.1:8017/. Pricing is ready about 10 seconds after start. A hosted demo will be linked here once it is up.
+
+1. **Enter the takeoff.**
+   - Paste a bid schedule, or upload Excel, CSV, Word or PDF. Scanned PDFs are read with OCR.
+   - Check each line's description, unit, quantity and the item type it was matched to. Change the type with the picker if it is wrong.
+   - Lines the reader is unsure of are flagged, with the closest items from bid history to pick from. Corrections you make are remembered on your machine.
+2. **Describe the project.**
+   - Market (city/county or TxDOT), owner, work type and bid date. If the owner or work type is not in the list, type it in.
+   - Expected number of bidders: it is prefilled from similar past lettings, and you can change it.
+   - The amounts of owner-set allowances; these are added at face value.
+   - Vendor quotes for specialty items the tool does not price (pumps, generators, prefabricated bridges, …).
+3. **Read the estimate.**
+   - P50 (expected low bid) and P80 (a not-under OPCC), with their ranges and the market's track record.
+   - The items left out for a vendor quote, and the lump sums whose prices are uncertain.
+4. **Check the evidence.**
+   - Open any line to see the earlier public bids behind its price: project, date, quantity, low and median bidders' unit prices.
+   - Open a project to see its whole bid tabulation, the original document, its public source page, and its copy in the data repository.
+   - The four most similar past projects are shown with their full bids.
+5. **Build your OPCC.**
+   - In the worksheet, keep the model's unit price or pick one from the references, line by line. Add notes and a contingency.
+   - "Your OPCC" is shown next to the model's P50 and P80.
+6. **Export** the worksheet to Excel or CSV, with your prices, notes and a references appendix.
+
+**Your inputs stay yours.**
+- An engineer's estimate is never an input.
+- Your prices never feed back into the model.
+- Run locally, nothing leaves your machine. The one exception is the optional "Read with Claude" for difficult PDFs, which asks before sending each document.
+
 ## The goal
 
 The estimate is meant to be used as an OPCC, where underestimating is the costly mistake. The target is:
