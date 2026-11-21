@@ -51,11 +51,11 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
 
 ![The estimate for a public creek-bank schedule: expected low bid (P50) and recommended OPCC (P80) with their ranges, and one line opened to the earlier public bids behind its price](assets/screenshot-estimate.png)
 
-*The estimate for a public creek-bank schedule (Coppell, 2025). P50 and P80 come with their ranges; one line is opened to the three most relevant earlier public bids, each linked to its source page and the public mirror.*
+*The estimate for a public creek-bank schedule (Coppell, 2025). P50 and P80 come with their ranges and a plain explanation of what each means. One line is opened to the three most relevant earlier public bids, with their source pages and public mirror copies where recorded.*
 
 ![The OPCC worksheet: the estimator's own unit prices, notes and a contingency next to P50 and P80, and the most similar past project opened to its full bid](assets/screenshot-worksheet.png)
 
-*The OPCC worksheet. Your own unit prices, notes and a contingency sit next to P50 and P80. Below it, the most similar past project is opened to its full public bid, with the lines that match yours highlighted.*
+*The OPCC worksheet. Your own unit prices, notes and a contingency picked from a list sit next to P50 and P80. Below it, the most similar past project is opened to its full public bid, with the lines that match yours highlighted.*
 
 **Your inputs stay yours.**
 - An engineer's estimate is never an input.
