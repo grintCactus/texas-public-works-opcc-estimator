@@ -462,7 +462,13 @@ ON_CALL_RE = re.compile(
     r"\bon[\s-]?call\b|\bindefinite[\s-]+(?:delivery|quantit)|"
     r"\b(?:annual|term)\s+(?:contract|agreement|requirements?)\b|"
     r"\bunit[\s-]+price\s+(?:contract|agreement)\b|\bprice\s+agreement\b|"
-    r"\brequirements?\s+contract\b", re.I)       # = parse_bidtabs.CONTRACT_HINT_RE
+    r"\brequirements?\s+contract\b|"
+    # (round 9, .30) "Annual as Needed Street and Alley Maintenance Contract", "Annual Concrete
+    # Contract", "Work Order Generated Concrete Repairs": the quantities are notional and the work
+    # comes by work order, so the bid total is no project's price
+    r"\bannual\s+as[\s-]?needed\b|\bas[\s-]?needed\s+(?:\w+\s+){0,4}?(?:contract|agreement|services?|basis)\b|"
+    r"\bannual\s+(?:\w+\s+){1,4}?(?:contract|agreement)s?\b|"
+    r"\bwork[\s-]+orders?\s+(?:generated|based|contracts?)\b", re.I)       # = parse_bidtabs.CONTRACT_HINT_RE (round 9)
 NOT_A_PROJECT_TOTAL = {
     "external/legistar/nrhtx/2025-01-07_6347_BId_Tab.pdf":
         ("on_call_quantities", "NRH council item 6347: two non-exclusive annual on-call "
@@ -703,6 +709,11 @@ def _selftest():
                                                                   {"contract_hint": "on_call"}),
         "on_call_quantities")
     chk("15g a project is none of these", not_a_project_total("x/y.pdf", pump, {}), "")
+    chk("15h work-order contract by file name (round 9)",
+        not_a_project_total("external/x/2025-11-06_25-4369_Bid_Tab_-_Work_Order_Generated_Annual_Co.pdf",
+                            pump, {}), "on_call_quantities")
+    chk("15i annual as-needed by the document's title (round 9)",
+        not_a_project_total("x/y.pdf", pump, {"contract_hint": "on_call"}), "on_call_quantities")
     chk("14g a TOTAL-line amount alone proves it",
         completeness([3613710.17], 30, {"items": 150, "totals": [],
                                         "total_lines": [3613710.17]})[0], "printed_total")
