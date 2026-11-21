@@ -76,6 +76,9 @@ run "$PYTHON" src/index_external.py
 run "$PYTHON" src/quarantine_pre2020.py
 # 2. parse (PARSER_VERSION was bumped, so every file is re-parsed)
 run "$PYTHON" src/parse_bidtabs.py
+# 2b. content check: a public letting that repeats a company file's bid rows
+#     (item, quantity, unit price) is a copy whatever its title says
+run "$PYTHON" src/company_twin_scan.py --rows
 run "$PYTHON" src/qc_report.py
 # 3. other loaders (they re-derive item_family from the current rules)
 run "$PYTHON" src/load_txdot.py
