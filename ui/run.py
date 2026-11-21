@@ -1,16 +1,21 @@
 """Start the estimator locally.
 
-    python ui/run.py            # starts on 127.0.0.1:8017 and opens a browser
-    python ui/run.py --port 9000 --no-browser
-    python ui/run.py --check    # load everything, run one estimate, exit
+    .venv/bin/python ui/run.py                 # 127.0.0.1:8017, opens a browser
+    .venv/bin/python ui/run.py --port 9000 --no-browser
+    .venv/bin/python ui/run.py --check         # load, price a sample through
+                                               # the API, then run the tests
+    .venv/bin/python ui/run.py --test          # the regression suite only
 
 Binds the loopback interface only. There is no auth because there is no
-network surface -- do not change the host without adding one.
+network surface -- do not change the host without adding one. The server is
+the Python standard library (see app.py); nothing needs installing beyond
+the project's own venv.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import threading
@@ -23,70 +28,142 @@ if HERE not in sys.path:
 
 DEFAULT_PORT = 8017
 
+#: A small creek job used by --check: a mobilization lump sum, unit-priced
+#: channel work, an owner-set allowance with its amount, and a pump -- a
+#: not-covered specialty line, with a vendor quote.
+CHECK_SCHEDULE = [
+    ("1", "Mobilization", "LS", 1, None, None),
+    ("2", "Unclassified Channel Excavation", "CY", 4200, None, None),
+    ("3", "Grouted Rock Riprap, 18 inch", "SY", 2600, None, None),
+    ("4", "Gabion Mattress, 12 inch", "SY", 880, None, None),
+    ("5", "Block Sod, Bermuda", "SY", 9500, None, None),
+    ("6", "Owner's Contingency Allowance", "LS", 1, 50000.0, None),
+    ("7", "Submersible Pump, 15 HP", "EA", 2, None, 84000.0),
+]
+
 
 def check() -> int:
-    """Load every table and price a known line. Exit non-zero on failure."""
-    import data_access as da
-    import matching
-    import pricing
+    """Load the production estimator, price a known schedule through the
+    API and directly, and check the two agree. Exit non-zero on failure."""
+    import app
+    import engine_production as ep
     import upstream
 
-    print("python     :", sys.version.split()[0])
-    print("clean dir  :", da.CLEAN_DIR)
-    t0 = time.time()
-    report = da.warm(lambda i, n, name: print("  loading %-22s %d/%d" % (name, i + 1, n)))
-    print("loaded in  : %.1fs" % (time.time() - t0))
-
     failed = []
-    for name, info in report.items():
-        if info.get("error"):
-            failed.append(name)
-            print("  FAIL %-22s %s" % (name, info["error"][:200]))
-        else:
-            print("  ok   %-22s %s rows" % (name, info.get("rows", "-")))
-
-    print("parser     :", "linked" if upstream.PARSER_AVAILABLE
-          else "UNAVAILABLE (%s)" % upstream.IMPORT_ERROR)
-    print("ocr        :", "available" if upstream.OCR_AVAILABLE
-          else "not installed (%s)" % upstream.OCR_IMPORT_ERROR)
+    print("python      :", sys.version.split()[0])
+    print("data/clean  :", ep.CLEAN)
+    st = upstream.status()
+    print("parser      :", ("linked (%s)" % st["parser_version"])
+          if st["parser_available"] else "UNAVAILABLE (%s)" % st["parser_error"])
+    print("size bucket :", st["size_bucket_source"])
+    print("estimator   :", "src/estimate_low_bid.py md5 %s"
+          % upstream.src_md5("estimate_low_bid.py")
+          if st["estimator_available"]
+          else "UNAVAILABLE (%s)" % st["estimator_error"])
+    if not (st["parser_available"] and st["estimator_available"]):
+        failed.append("upstream")
+    print("ocr         :", "available" if st["ocr_available"]
+          else "not installed (%s)" % st["ocr_error"])
 
     t0 = time.time()
-    matching.index()
-    print("match index: %.1fs" % (time.time() - t0))
+    app.ENGINE.load()
+    s = app.ENGINE.state
+    if not s["ready"]:
+        print("\nFAILED: estimator did not load: %s" % s["error"])
+        return 1
+    info = app.ENGINE.info
+    print("loaded in   : %.1fs (tables %.1fs + bidder history %.1fs); RSS "
+          "%s MB, peak %s MB" % (time.time() - t0, s["load_s"],
+                                 s["history_s"], s["rss_mb"],
+                                 s["peak_rss_mb"]))
+    print("rule        :", info["estimator"]["rule"])
+    print("data        : master_panel.csv %s, latest letting %s, pools %s"
+          % (info["data"]["master_panel_mtime"], info["data"]["latest_letting"],
+             info["data"]["pool_lettings"]))
+    acc = app.ENGINE.accuracy.meta()
+    print("item acc.   :", ("item_accuracy.json %s" % acc["generated"])
+          if acc["available"] else "MISSING (%s)" % acc["error"])
+    if not acc["available"]:
+        failed.append("item_accuracy.json")
 
-    engine = pricing.PriceEngine()
-    req = pricing.EstimateRequest(
-        items=[
-            pricing.LineItemInput("r1", "Mobilization", "LS", 1),
-            pricing.LineItemInput("r2", "Unclassified Channel Excavation", "CY", 4200),
-            pricing.LineItemInput("r3", "Grouted Rock Riprap, 18 inch", "SY", 2600),
-        ],
-        n_bidders=4, work_type="erosion_creek")
+    items = [{"row_id": "r%s" % n, "item_no": n, "description": d,
+              "unit": u, "quantity": q, "amount": a, "quote": qu}
+             for n, d, u, q, a, qu in CHECK_SCHEDULE]
+    payload = {"market": "municipal", "n_bidders": 4, "owner": "",
+               "work_type": "erosion", "bid_date": "2026-03-02",
+               "items": items}
+    code, _, body, _ = app.dispatch(
+        "POST", "/api/estimate", {"Content-Type": "application/json"},
+        json.dumps(payload).encode())
+    if code != 200:
+        print("\nFAILED: /api/estimate answered %d: %s" % (code, body[:300]))
+        return 1
+    r = json.loads(body)
+    h = r["headline"]
+    print("estimate    : P50 %s  P80 %s  (%d lines, %.3fs)"
+          % ("{:,.0f}".format(h["p50"]) if h["p50"] else "-",
+             "{:,.0f}".format(h["p80"]) if h["p80"] else "-",
+             len(r["lines"]), r["elapsed_s"]))
+    for ln in r["lines"]:
+        print("  %-3s %-36s %-11s %14s  %s"
+              % (ln["item_no"], ln["description"][:36], ln["status"],
+                 "{:,.2f}".format(ln["amount_p50"]) if ln["amount_p50"]
+                 else "-", ln["accuracy"]["text"]))
+    if not (h["p50"] and h["p80"] and h["p80"] > h["p50"]):
+        failed.append("headline")
+    s_lines = sum(ln["amount_p50"] or 0 for ln in r["lines"])
+    if abs(s_lines - h["p50"]) > 1e-6 * h["p50"]:
+        failed.append("lines do not add up to P50")
+    nc = r["not_covered"]
+    print("not covered : %d line(s), complete total %s"
+          % (nc["n"], "{:,.0f}".format(nc["complete_total"])
+             if nc["complete_total"] else "-"))
+    if nc["n"] != 1 or nc["complete_total"] is None:
+        failed.append("not-covered block")
+    print("low conf.   : %s" % ", ".join(g["label"] for g in
+                                         r["low_confidence"]["lines"]))
+    print("similar     : %d past project(s)" % len(r["similar"]["cards"]))
+
+    # the same input straight into estimate_low_bid.estimate()
+    E = upstream.estimator
+    q = app.ENGINE._request(payload)
+    its, _ = app.ENGINE.build_items(q["raw"], "municipal")
+    d = E.estimate(app.ENGINE.tab, its, 4, "municipal", "2026",
+                   {"date": "2026-03-02", "owner": None, "work_type": "erosion"})
+    same = (d["expected_low"] == h["p50"] and d["expected_low_p80"] == h["p80"])
+    print("direct call : P50 %s  P80 %s  -> %s"
+          % ("{:,.2f}".format(d["expected_low"]),
+             "{:,.2f}".format(d["expected_low_p80"]),
+             "identical" if same else "DIFFERENT"))
+    if not same:
+        failed.append("API vs direct estimate")
+
     t0 = time.time()
-    res = engine.estimate(req)
-    print("estimate   : %.2fs" % (time.time() - t0))
-    for line in res.lines:
-        print("  %-34s %-15s P50 %s" % (
-            line.description[:34], line.treatment,
-            ("%.2f/%s" % (line.unit_price.p50, line.unit)
-             if line.unit_price.p50 else
-             ("%.2f%% of cost" % line.pct_of_construction.p50
-              if line.pct_of_construction.p50 else "-"))))
-    pt = res.project_total
-    if pt.p50:
-        print("  project    P10 %,.0f  P50 %,.0f  P90 %,.0f".replace(",", "")
-              % (pt.p10, pt.p50, pt.p90))
+    app.ENGINE.load_references()
+    if not app.ENGINE.refs_state["ready"]:
+        print("references  : FAILED to load (%s)" % app.ENGINE.refs_state["error"])
+        failed.append("references")
     else:
-        print("  project    NOT PRICED")
-        failed.append("estimate")
+        ok = n = 0
+        for it in items:
+            rr = app.ENGINE.references(payload, it["row_id"])
+            if rr.get("special"):
+                continue
+            n += 1
+            rp = rr["reproduced"]
+            ok += bool(rp["price_match"] and rp["rows_match"])
+        print("references  : index %.1fs; %d of %d priced lines reproduce "
+              "the estimator's price from their listed lettings"
+              % (time.time() - t0, ok, n))
+        if ok != n:
+            failed.append("references")
 
-    # The comparables path is what makes the tool trustworthy, so check it too.
-    keyed = [l for l in res.lines if l.comparables_key]
-    if keyed:
-        c = engine.comparables(keyed[-1].comparables_key, unit=keyed[-1].unit, limit=3)
-        print("comparables: %d shown of %d total" % (len(c["rows"]), c["n_total"]))
-        if not c["rows"]:
-            print("  WARNING no comparables for %s" % keyed[-1].comparables_key)
+    code, _, body, _ = app.dispatch("POST", "/api/estimate",
+                                    {"Content-Type": "application/json"},
+                                    json.dumps(dict(payload, opcc=1)).encode())
+    print("OPCC input  : refused with %d" % code)
+    if code != 400:
+        failed.append("OPCC rejection")
 
     if failed:
         print("\nFAILED: %s" % ", ".join(failed))
@@ -116,7 +193,6 @@ def main() -> int:
                     help="with --check, skip the regression suite")
     ap.add_argument("--test", action="store_true",
                     help="run the regression suite only")
-    ap.add_argument("--reload", action="store_true", help="auto-reload on edit")
     args = ap.parse_args()
 
     if args.test:
@@ -128,21 +204,17 @@ def main() -> int:
         print("\n" + "-" * 60 + "\nregression suite\n" + "-" * 60)
         return run_tests()
 
-    import uvicorn
+    import app
 
     url = "http://%s:%d/" % (args.host, args.port)
     if not args.no_browser:
         def open_later():
-            # Data load takes a few seconds on a cold cache; give it a head start
-            # so the first paint is not an error toast.
-            time.sleep(2.5)
+            time.sleep(1.0)
             webbrowser.open(url)
         threading.Thread(target=open_later, daemon=True).start()
 
     print("Bid Estimator -> %s   (ctrl-c to stop)" % url)
-    uvicorn.run("app:app", host=args.host, port=args.port,
-                reload=args.reload, log_level="info",
-                app_dir=HERE)
+    app.serve(args.host, args.port)
     return 0
 
 

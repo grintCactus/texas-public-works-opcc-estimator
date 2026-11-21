@@ -1,11 +1,10 @@
-# Only fastapi had to be installed on this machine; everything else was
-# already present for the ETL. Versions are the ones verified here.
-fastapi>=0.110          # 0.163.2 verified
-uvicorn>=0.27           # 0.41.0  verified
-python-multipart>=0.0.9 # 0.0.29  verified -- required for file uploads
-pandas>=2.0             # 2.3.3
+# The UI runs on the project's own venv (../requirements.txt) and needs no web
+# framework: the server is the Python standard library (http.server).
+# Versions are the ones verified on the Mac, 2026-11-20.
+pandas>=2.0             # 2.3.3   -- history search tables
 numpy>=1.26             # 2.4.2
-pyarrow>=14             # 23.0.1  -- Parquet cache for master_panel
-openpyxl>=3.1           # 3.1.5   -- .xlsx takeoffs
-pdfplumber>=0.11        # 0.11.9  -- PDF text layer + word coordinates
-python-docx>=1.0        # 1.2.0   -- .docx takeoffs
+openpyxl>=3.1           # 3.1.5   -- .xlsx takeoffs and the XLSX export
+pdfplumber>=0.11        # 0.11.9  -- PDF takeoffs (text layer + word coordinates)
+# Optional:
+# python-docx>=1.0      # .docx takeoffs; without it a .docx upload is refused
+#                       # with a message (save as .xlsx / .csv, or paste)

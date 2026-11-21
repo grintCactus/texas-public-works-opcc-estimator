@@ -74,6 +74,12 @@ PRICE_HEADERS = re.compile(
     r"\b(unit\s*price|unit\s*cost|price|cost|amount|total|extended|extension|"
     r"bid\s*total|subtotal)\b", re.I)
 ITEMNO_HEADERS = re.compile(r"\b(item\s*(no|#|num)|no\.?$|#$|line|sl\.?\s*no)\b", re.I)
+#: Of the price-like columns: the line's money (qty x unit price) ...
+AMOUNT_HEADERS = re.compile(
+    r"\b(amount|total|extended|extension|ext\.?\s*(amount|price|cost))\b", re.I)
+#: ... and its unit price. Read only for owner-set allowance lines.
+UNIT_PRICE_HEADERS = re.compile(
+    r"\bunit\s*(price|cost|rate)\b|^\s*(price|rate)\s*$", re.I)
 
 #: Units we recognise. Anything else is kept verbatim and flagged.
 KNOWN_UNITS = {
@@ -137,6 +143,11 @@ class TakeoffLine:
     confidence: str = "ok"          # ok | low
     issues: List[str] = field(default_factory=list)
     raw: str = ""
+    #: An amount / total / extended column and a unit-price column, when the
+    #: file has them. NEVER a price for estimating: the UI applies them only
+    #: to owner-set allowance lines (face-value money nobody bids).
+    amount: Optional[float] = None
+    unit_price: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -233,6 +244,10 @@ def _find_header(grid: Sequence[Sequence[str]]) -> Tuple[int, Dict[str, int]]:
             # unit and the price pattern, and it is a price column.
             if PRICE_HEADERS.search(c):
                 m.setdefault("price", j)
+                if UNIT_PRICE_HEADERS.search(c):
+                    m.setdefault("unit_price", j)
+                elif AMOUNT_HEADERS.search(c):
+                    m.setdefault("amount", j)
                 continue
             # Then an unambiguous description, from wherever it sits.
             if "desc" not in m and DESC_HEADERS.search(c):
@@ -372,6 +387,12 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
 
     di, ui, qi = cmap.get("desc"), cmap.get("unit"), cmap.get("qty")
     ii = cmap.get("item_no")
+    ai, pi = cmap.get("amount"), cmap.get("unit_price")
+    if ai is not None or pi is not None:
+        out.notes.append(
+            "An amount / unit-price column was found. It is read for owner-set "
+            "allowance lines only (taken at face value); every other line is "
+            "estimated, never read off the file.")
     if ui is None:
         out.notes.append("No unit column -- units left blank for you to fill in.")
     if qi is None:
@@ -389,6 +410,8 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
         unit = cell(ui)
         qty = _num(cell(qi))
         item_no = cell(ii)
+        amount = _num(cell(ai)) if ai is not None else None
+        unit_price = _num(cell(pi)) if pi is not None else None
 
         if not desc:
             # A row with a quantity but no description is a wrapped line or a
@@ -426,6 +449,8 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
             confidence="low" if issues else "ok",
             issues=issues,
             raw=" | ".join(_txt(c) for c in row)[:300],
+            amount=amount if amount and amount > 0 else None,
+            unit_price=unit_price if unit_price and unit_price > 0 else None,
         ))
     if not out.lines:
         out.notes.append("Columns were found but no row survived as a pay item.")

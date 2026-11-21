@@ -1,278 +1,340 @@
 # Bid Estimator (`ui/`)
 
-Local estimating tool: a bill of quantities in, an expected **low bid** out as a
-P10 / P50 / P90 range, with the historical evidence behind every line.
+A local web page on top of the production estimator (`src/estimate_low_bid.py`).
+A bid schedule (takeoff) goes in; out come:
 
-```powershell
-python ui\run.py
+- **Expected low bid (P50)** and **Recommended OPCC (P80)** — the low bid came in
+  at or below P80 in about 80% of past lettings — with their bands and how many
+  lettings calibrated them;
+- the lines that are **not covered** (specialty items with no comparable bid
+  history) and need a vendor quote, and the complete total once quotes are in;
+- the **low-confidence** lump sums (mobilization, general conditions) set against
+  what earlier low bidders gave them;
+- every line at the P50 level with its basis and a **typical accuracy** badge;
+- the competition step, and the **similar past projects** the estimate leans on;
+- a CSV / Excel export of all of it.
+
+Every price on the page is the production estimator's own number. The UI adds
+display, never a price.
+
+## Run it (macOS)
+
+From the project root:
+
+```sh
+.venv/bin/python ui/run.py                    # http://127.0.0.1:8017/ and opens a browser
+.venv/bin/python ui/run.py --no-browser --port 8017
+.venv/bin/python ui/run.py --check            # load, price a sample through the API and
+                                              # directly (must be identical), then the tests
+.venv/bin/python ui/run.py --test             # the regression suite only
+.venv/bin/python ui/test_ui.py SimilarProjects   # one test class
 ```
 
-Opens <http://127.0.0.1:8017/>. First start reads `data/clean/master_panel.csv`
-(~165 MB) once into a Parquet cache under `ui/.cache/`; after that startup is
-under a second.
+For the Claude preview pane, `.claude/launch.json` has a configuration named
+`bid-estimator-ui` (the same command, `--no-browser --port 8017`).
 
-```powershell
-python ui\run.py --check
+- **Start-up:** about 10 s. The estimator's tables load once (`Tables()` +
+  `attach_v2f1f2()`, which reads `data/clean/master_panel.csv`, about 7.5 s), then
+  one more pass over the public rows of the panel builds the bid totals, line
+  prices and bidder-count history (about 2 s). The page shows a loading state
+  meanwhile. The per-line reference index then builds in the background (about
+  4 s); estimates do not wait for it.
+- **Memory:** about 1.1 GB resident once everything is loaded, 1.4 GB at the peak.
+- **An estimate** then takes about 10 ms.
+- **Server:** the Python standard library (`http.server`), loopback only, no auth
+  because there is no network surface. No web framework, no build step, no CDN:
+  the front end is plain HTML / CSS / JavaScript in `static/`.
+
+## The engine
+
+`engine_production.py` is the UI's only pricing path. It imports
+`src/estimate_low_bid.py` through `upstream.py` and calls it exactly as the
+estimator's own entry point, `run_schedule()`, does:
+
+```python
+tab = Tables(); tab.attach_v2f1f2()                     # once, at start-up
+r = estimate(tab, items, n_bidders, market, to_year,
+             target={"date": bid_date, "owner": owner, "work_type": work_type})
 ```
 
-Loads every table, prices a known takeoff, then runs the regression suite.
-Exits non-zero on any failure. Run this first if something looks wrong, and
-after any ETL run that changes `data/clean`.
+- **Lines** carry `description`, `desc_norm`, `family`, `unit`, `quantity`,
+  `size_bucket` and `size_in`, plus `amount` for owner-set money and `quote` for a
+  vendor quote. `to_year` is the bid date's year.
+- **Classification** uses the parser's own functions, in the parser's order
+  (`upstream.classify_line`): `norm_desc`, `item_family`, `extract_size_in`,
+  `norm_unit` (with `unit_from_description` for a bare YD / SQ), `lf_width_size`,
+  and `build_master.size_bucket`. On a sample of public panel rows it gives back
+  the panel's own desc_norm, unit and size bucket exactly, and its family except
+  where the pipeline later marked a row `needs_review` from document-level
+  evidence. The user can override a line's family; the server re-classifies every
+  line from its raw text on every request.
+- **Switches:** the estimator's switches (`pricing_rule`) are never changed.
+- **Decisions are keyed on dict keys and class ids** (`price_key`, `usable`,
+  `uncovered`, a low-confidence group's `class`), never on the estimator's label
+  text. The estimator's display labels are replaced by the UI's own English
+  wording, and a test checks that no CJK text reaches the page.
+- **Superseded:** `pricing.py`, the UI's own P10 / P50 / P90 engine of 2026-11-18,
+  stays on disk and nothing imports it. `data_access.py` now only serves the
+  history search's tables; its master-panel Parquet cache (`.cache/`) is no longer
+  built or read.
 
-```powershell
-python ui\run.py --test
+## The page, top to bottom
+
+1. **Status bar:** when `data/clean` was built and the latest letting in it, the
+   estimator file's md5 and rule (for example V2+F1+F2, T1 on TxDOT, coverage
+   scope), load time and memory, parser and OCR availability, and the theme
+   toggle.
+2. **Takeoff:** paste or upload (.xlsx, .csv, PDF with a text layer, .docx),
+   then the editable confirmation grid. Each line shows its classification:
+   family, size bucket and unit, and badges for not covered, low confidence,
+   possible owner-set money and unclassified. **Change** corrects the family or
+   searches earlier public line items. An **Owner-set $** column takes an
+   allowance's amount at face value.
+3. **Project details:** market (City / County or TxDOT), owner and work type
+   (lists from the public lettings on record), bid date, **expected bidders**
+   (prefilled, editable, with the history it came from), an **Owner-set
+   amounts** box for every allowance line (see below), and a vendor-quote box
+   for every not-covered line.
+4. **Results:**
+   1. **P50 and P80**, the half-of-lettings and 80%-of-lettings bands, and the
+      number of lettings that calibrated them.
+   2. **One context line:** the market's forward accuracy, for example city /
+      municipal 2024–26: P50 median error 23%, P80 under the low bid on 15% of
+      lettings, median overshoot 45%; TxDOT 2023–26: 16% / 16% / 32%. The figures
+      are `MARKET_ACCURACY` in `engine_production.py`, copied from the project
+      README's "Where it stands" table; update them together.
+   3. **Alerts** decided on the result's keys (no estimate, unpriced lines,
+      not-covered lines, unpriced allowances, thin evidence), then the
+      estimator's own warnings verbatim as notes.
+   4. **Not covered — get a vendor quote:** the lines, their class, the quotes,
+      and the complete totals (P50 + quotes, P80 + quotes) once every line has a
+      quote. P50 and P80 exclude these lines.
+   5. **Low confidence:** each mobilization / general-condition class with our
+      amount at the P50 level, its share of P50, the earlier low bidders'
+      share-of-job range (p25–p75) and the dollar range it implies.
+   6. **Line table:** item, description, classification, quantity, unit, unit
+      price and amount at the P50 level, the basis, the accuracy badge and flags.
+      A line's P50-level amount is its market amount × (P50 − owner-set money) /
+      market total, so the lines add up to P50 exactly; owner-set lines stay at
+      face value. Click a row for its derivation.
+   7. **Competition:** the bidders used (and the rule's suggestion) and the
+      discount factor with its table, bin and lettings.
+   8. **Similar past projects:** see below.
+5. **Export:** CSV, and Excel (.xlsx) with one sheet per block, including each
+   line's top-3 references.
+
+## Owner-set allowances
+
+An allowance, contingency or force account is money the owner writes into the
+bid form; every bidder copies it, so it is entered, not estimated. A line is
+treated as one when `estimate_low_bid.allowance_like()` says so (the
+contingency family, ALLOW-type units, allowance / contingency / force-account /
+cash-allowance wording) or it is worded as the owner's money ("owner's
+reserve", "owner directed work" -- but not owner-furnished material, which
+bidders still price to install).
+
+- **Entering the amount:** the Owner-set amounts box in Project details (or the
+  grid's "Owner-set $" column). It is passed to the estimator as
+  `run_schedule()` passes owner-set money (`amount` + `owner_fixed`), so it goes
+  in at face value, outside the discount and the centring.
+- **Importing it:** an uploaded takeoff's amount / total / extended column (else
+  quantity × its unit-price column) is used for allowance lines only. Every
+  other line is estimated, never read off the file.
+- **Until an amount is entered** the line keeps the estimator's own number, so
+  the totals still equal production's, but it is marked red ("Allowance amount
+  missing ...") and a banner above the headline says the totals are
+  understated.
+
+## References behind each price
+
+Click a line in the results to see the evidence behind its price, loaded on
+demand (`POST /api/references`):
+
+- **How it was derived, in plain words:** the tier the estimator used (word
+  match with its Jaccard, family + size + quantity band, family median, size
+  scaling, quantity factor), the cell's median, the escalation to the bid year,
+  and the step to the P50 level.
+- **The cell is the estimator's own:** re-identified with
+  `item_market_price`'s selection rules on the same tables, and rebuilt from
+  `estimate_low_bid._reference_pool()` -- public rows only -- with the
+  estimator's own keys (`family_key`, `item_tokens.tokens`,
+  `qty_shape.band_of`). The page checks, and the tests assert, that the median
+  of the listed lettings' median bids is the published cell price and that it
+  times the trace's factors is the line's price, to the last bit.
+- **The references:** the three most relevant lettings (recency, wording,
+  quantity, same owner), with project, owner, letting date, bidders, the
+  project's low bid, the item as written, its quantity, the median bidder's
+  unit price (what the model uses, also escalated to the bid year), the low
+  bidder's, and the bids' range; "show all" lists every one, sortable by date,
+  unit price and quantity, and each opens to every bid on that item. Only
+  lettings dated before the bid date are listed; the published cells are built
+  from every public letting, so for a past bid date the header says how many
+  later lettings are in the median but not listed.
+- **Special lines** say what they are: owner-set (face value), not covered (no
+  price), unpriced, share-priced (TxDOT mobilization), a removal line at the
+  schedule's typical amount. A generic catch-all match carries a warning.
+- The Excel export has each line's top-3 references on a "References" sheet.
+
+## Themes
+
+A Light / Dark / System toggle sits in the status bar. System is the default
+and follows the operating system live (for example macOS switching at night);
+a Light or Dark choice is remembered in the browser once picked. The theme is
+set before first paint, so there is no flash. Every colour in `style.css` is a
+token defined twice, light on `:root` and dark on `:root[data-theme="dark"]`;
+the tests check there is no other colour literal and that text meets WCAG AA
+contrast in both. Exports carry no theme.
+
+## Expected bidders (rule N1)
+
+The prefill is the registered rule N1
+(`handoff/scratchpad/diag_twostage/NHAT_RULE.md`, locally): the median bidder
+count of earlier lettings (dated strictly before the bid date) of the same
+market × work type × size class. The first cell with at least 10 lettings wins:
+market × work type × size, then market × size, then market, then all markets;
+otherwise 4. The size class (under $0.5M, $0.5–2M, $2M and over) is that of the
+schedule's own model total plus owner-set money, which the bidder count does not
+enter.
+
+The history is rebuilt from `data/clean` at start-up: the production comparables
+pools give each letting's date and bidder count; the panel's first public row
+gives its work type. The rule sizes each earlier letting by its own forward model
+total. `data/clean` holds those totals for TxDOT only
+(`estimator_t1_txdot.csv`), so municipal lettings are sized by their median
+bidder total instead. Checked against the registered run:
+
+- TxDOT: the same n-hat as the registered map on 807 of 807 lettings (2023–26).
+- Municipal: 160 of 213 (2024–26), a mean difference of 0.32 bidders, and the
+  same accuracy against the actual counts (mean absolute error 2.74 vs 2.78).
+  Fed the registered totals, the implementation agrees on 211 of 213.
+
+## Item accuracy badges
+
+Each priced line shows how close the estimator's line price has been, for its
+item group, in the forward back-test: "typically ±17%" means half of the lines
+were within 17% of the median bid on the same line. Green is within 25%, amber
+within 50%, red beyond. Lump sums (mobilization and the general-condition LS
+classes), unclassified lines and allowance lines are drawn hollow and dashed:
+their figure is weak. Groups with fewer than 40 lines in 15 lettings show "no
+item figure". The tooltip gives the line count, the typical ratio (runs high /
+low) and the bidders' own spread.
+
+The figures are `item_accuracy.json`, the same groups, filters and statistics as
+the project README's "Item-level accuracy" tables. To regenerate it after the
+line-accuracy pass has been re-run (see the project README):
+
+```sh
+.venv/bin/python ui/build_item_accuracy.py                         # default inputs
+.venv/bin/python ui/build_item_accuracy.py LINES_CSV FWD_REC_JSON  # other inputs
 ```
 
-The regression suite alone (104 tests, ~6 s). Also runnable as
-`python ui\test_ui.py`, or one class at a time:
-`python ui\test_ui.py Safety`.
+The defaults are `handoff/scratchpad/line_accuracy/out/mob_lines_28.csv` and
+`fwd_rec_28.json`. The file records its inputs' md5s.
 
-Other flags: `--port`, `--host`, `--no-browser`, `--reload`, `--no-tests`.
+## Similar past projects
 
-### What the tests are for
+Under every estimate, up to four cards: the comparables `src/comparables.py`
+itself chose for the P50 blend, most similar first. Only public lettings dated
+before the bid date can appear. When fewer than four earlier jobs share at least
+10% of the schedule's dollars (the comparables rule's minimum overlap), fewer
+cards are shown and the page says so. Each card shows:
 
-`test_ui.py::Safety` pins down defects that were found by hand and each
-produced a **confident, wrong number with no warning** — the worst failure
-mode here, because an estimator cannot tell a bad answer from a good one by
-looking at it:
+- owner, project name, letting date, work type and number of bidders;
+- the low bid and the other bids (2nd low, median, high);
+- its size against this job (their low bid / our P50);
+- the overlap in words ("shares 12 of 26 item types, 46% of the dollars") and the
+  similarity score (hover for its parts: overlap × size × owner × work type ×
+  age);
+- **this job at that project's low-bid prices:** `comparables.price_target` run
+  on this schedule with every other candidate hidden, so the lines are
+  transferred (escalated, quantity- and competition-adjusted) exactly as the
+  blend does it;
+- the public source: the bid-tab document name, and its link where the data has
+  one.
 
-* a nonsense description priced at $3,970/EA off the `other` catch-all family;
-* `Item | Description | Unit | Quantity` — the commonest bid-schedule header
-  there is — silently yielding an **empty** takeoff, because a bare `Item`
-  column captured the description role and every row was then dropped as
-  "description too short";
-* `Total Station Survey Equipment`, a real pay item, being dropped as a
-  totals row;
-* a single-project vocabulary entry outranking a 648-project family average;
-* the entered quantity being ignored outright — three of the four price
-  sources publish no reference quantity, so stage 1 of a two-stage estimate
-  applied a factor of exactly 1.0 and said nothing. The erosion table is
-  *preferred* for channel work, so a 12 SY spot repair and a 2,600 SY
-  reconstruction came back at the same rate;
-* every riprap line losing the erosion specialty table, because the ETL split
-  `riprap` into stone / concrete / removal and the UI still asked for the old
-  name. `riprap_stone/CY` alone carries 908 projects;
-* `Permanent Turf Reinforcement Mat, HP-TRM` priced at **$1.37/SY** off the
-  soil-retention-blanket row, against $40–43/SY measured upstream for that
-  product — a hand-written family→specialty mapping substituting a different
-  product, about 30× out, with no warning beyond a generic weak match.
+**Matched lines** opens the line-by-line view: each of our lines next to the line
+the comparables method would take from that project, with that project's low
+bidder's and median bidder's unit prices and our P50-level unit price.
 
-`ErosionSpecialty`, `QuantityHandling` and `PanelCache` cover the same ground
-for the client's core trade, the quantity curve, and the cache-rebuild path
-that only runs after an ETL rewrite.
+## The OPCC is not an input
 
-`UpstreamContract` pins the shape of the ETL's output, which is this UI's
-input. Every defect that has reached production here arrived that way: a rerun
-changed `data/clean` and the UI kept running on worse data without a word. It
-covers the three ways that happens — a load-bearing *optional* column vanishing
-(no error by design, the estimate just gets worse), a **value** moving (which
-no schema check sees: `riprap` became riprap_stone / riprap_conc /
-riprap_removal and 908 projects went unreachable), and a **new** value in a
-column the UI switches on (which falls through a `.get` default and is handled
-as something it is not). It also refuses a family→specialty mapping whose two
-sides differ by more than 4× in price, which is a product substitution rather
-than a fallback.
+There is no field for it. `POST /api/estimate` answers 400 to `opcc`,
+`engineer_estimate`, `target_price`, `budget` and the like. The OPCC is only an
+after-the-fact backtest baseline.
 
-`Contract` pins the JSON shape `ui/static/app.js` consumes, so the modelling
-session can tell immediately whether a change to `pricing.py` breaks the UI.
-The data-backed tests assert invariants (ordering, direction, refusal) rather
-than specific prices, so an ETL rewrite changes the numbers without breaking
-the suite.
+## Wiring check
 
-## Stack and why
+```sh
+.venv/bin/python ui/integration_check.py TAKEOFF.csv --market municipal \
+    --bidders 5 --bid-date 2025-10-09 [--owner ID] [--work-type W] \
+    [--amount ITEM=AMOUNT]    # an owner-set allowance, repeatable
+```
 
-| Choice | Reason |
-|---|---|
-| **FastAPI + uvicorn**, vanilla JS front end | The confirmation grid has to be a real editable spreadsheet — per-cell edit, keyboard navigation down a column, per-row expansion, a searchable match picker. Streamlit reruns the whole script on every keystroke and cannot express that without fighting it, and with a 550k-row panel in memory those reruns are not free. |
-| **No build step, no CDN, no npm** | Must start from a Python prompt on a Windows machine, offline. Everything is served from `ui/static/`. |
-| **pandas + pyarrow** | Already present; the Parquet cache turns a 15-second CSV read into a 0.3-second one and invalidates on the ETL's mtime+size, which matters because the ETL rewrites `data/clean` while this is running. |
-| **No fuzzy-match library** | Matching uses IDF-weighted token overlap in `matching.py`. An estimator has to be able to look at a match and tell whether it is right; a similarity score from an opaque library does not support that. |
+It prices the file through the UI's HTTP API (a real socket) and through
+`run_schedule()` on a schedule CSV with the same classification, and compares
+P50, P80, the market total, owner-set money, the complete totals and every line
+price. They must be identical.
 
-Only `fastapi` had to be installed. See `requirements.txt`.
+## Tests
 
-## Layout
+`test_ui.py` (stdlib `unittest`, 96 tests, about 30-45 s including the loads)
+pins, among others:
+
+- **Safety:** the OPCC is refused; unclassified, unpriced and quantity-less lines
+  are never priced silently; one bidder gets no discount; a bidder count far
+  outside the table gets no estimate; no CJK text on the page.
+- **ProductionParity:** P50 / P80 equal `estimate_low_bid`'s own output, and
+  `run_schedule()`'s; the lines add up to P50.
+- **NotCovered / OwnerSet / LowConfidence:** the three blocks, keyed on classes.
+- **Provenance:** no company (internal) or locked-test row in the comparables
+  pools, the chosen comparables, the similar-project cards or the bidder history;
+  the reference tables carry `train_scope = public_external_only`.
+- **Classification:** the parser's functions, checked against the panel itself.
+- **SimilarProjects:** the cards are comparables.py's picks in its order; the
+  per-project figure is price_target's own.
+- **Allowances:** Hunterwood (public bid form) with its $80,000 allowance equals
+  `run_schedule()` given amount + owner_fixed=yes; a missing amount is flagged.
+- **References:** every priced line's listed lettings reproduce its price; all
+  public and dated before the bid date.
+- **Theme:** no colour literal outside the two token blocks; WCAG AA contrast.
+- **ExpectedBidders, ItemAccuracy, Contract, Export, Http, Matching,
+  TakeoffParsing, OCRGate, DataContract.**
+
+## Files
 
 ```
 ui/
-  run.py            launcher + self-check + test runner
-  test_ui.py        regression suite (stdlib unittest)
-  app.py            FastAPI routes
-  pricing.py        the estimator -- STABLE INTERFACE, see below
-  matching.py       takeoff text -> priceable historical item
-  data_access.py    read-only loader for data/clean, with a column contract
-  upstream.py       the only import point for src/ code
-  ingest/
-    takeoff.py      scenario A: xlsx / csv / pdf / docx / image / pasted text
-    bidtab.py       scenario B: wraps src/parse_bidtabs.py
-    ocr.py          OCR adapter -- waiting on src/ocr_extract.py
-  static/           index.html, app.js, style.css
-  .cache/           Parquet caches (safe to delete)
-  .inbox/           bid tabs staged for the ETL
+  run.py                  launcher: serve, --check, --test
+  app.py                  HTTP API + static files (standard library)
+  engine_production.py    the production estimator, as JSON for the page
+  upstream.py             the only import point for src/
+  exporter.py             CSV / XLSX export
+  build_item_accuracy.py  writes item_accuracy.json
+  item_accuracy.json      per-item forward accuracy for the badges
+  integration_check.py    UI vs run_schedule() on one takeoff
+  test_ui.py              the regression suite
+  matching.py             history search for the classification picker
+  data_access.py          read-only loader for the search tables
+  ingest/                 takeoff parsing (xlsx / csv / pdf / docx / text),
+                          bid-tab preview (stages files in .inbox/), OCR gate
+  static/                 index.html, app.js, style.css
+  pricing.py              superseded engine, unused
 ```
 
-Nothing here writes to `data/clean/`, `data/external/` or `src/`.
+Nothing here writes to `data/` or `src/`. `.inbox/` and `.cache/` stay local and
+are never read by the pricing path.
 
-## The estimate
+## API
 
-```
-expected low unit price = market median price x f(expected bidder count)
-```
-
-with the median first moved to the line's own quantity.
-
-1. **Stage 1 — market median.** The matched item's median from
-   `price_reference.csv`, `item_vocabulary.csv`, `price_book_txdot.csv` or
-   `erosion_price_reference.csv` (preferred for channel work, and its DFW
-   column wins once 3+ DFW projects back it). Then moved to the line's
-   quantity, by whichever of three routes has the best evidence:
-
-   1. the item's **own** observed band in `price_by_quantity_band.csv`;
-   2. failing that, the observed band of **sibling items in the same family**
-      — shape only, never price level: the ratio between the band holding this
-      quantity and the band holding the item's reference quantity, which is
-      self-contained within that row and independent of whose median is being
-      moved. That table is keyed `txdot|<item>|<unit>` and only the TxDOT
-      source ever builds such a key, so without this the empirical route
-      reached about 7% of lines and everything else fell through to a fitted
-      slope; with it the empirical routes cover about 46%;
-   3. failing that, the fitted elasticity (−0.14 pooled default, capped ×2.5),
-      which is the weakest of the three — see below.
-2. **Stage 1b — escalation.** A median pooled over several years of
-   lettings is priced at the middle of its own sample, not at the letting
-   being bid. `price_time_index_by_basket.csv` moves it to the expected bid
-   year, chained from the sample's dollar-weighted midpoint (derived in
-   `data_access.vintage_year`, since no reference table carries an as-of
-   year). The **basket matters more than the escalation**: over ten years the
-   erosion basket runs 160.7 against the pooled 139.6, because the pooled
-   median is held down by families with huge row counts that do not track
-   material inflation, so channel work never uses the pooled series. The
-   index is published at `txdot_statewide` scope, which is stated on every
-   escalated line — it is a statewide series applied to local work. Never
-   extrapolated past its last year: beyond that it clamps, says how many
-   years carry no escalation at all, and widens the interval. With no bid
-   year entered nothing is escalated and the project says so, because silence
-   there would pass stale prices off as current ones.
-3. **Stage 2 — competition.** `competition_discount_pooled.csv` at the entered
-   bidder count: ×0.939 at 2 bidders, ×0.901 at 3, ×0.872 at 4, ×0.821 at 12.
-   Clamped, never extrapolated, outside 2–12.
-4. **Interval.** Lognormal. Line σ combines the reference IQR (shrunk), the
-   discount's own σ, evidence depth and any quantity extrapolation. Lines
-   aggregate to the project with assumed correlation ρ=0.55 — treating them as
-   independent would collapse a 60-line project's interval to nothing, which is
-   the most dangerous thing this tool could do. The project σ is floored at
-   0.205, derived from TxDOT's 13.8% median absolute error, so no total ever
-   claims to beat the industry benchmark.
-5. **Lump-sum overhead** (`LS`/`ALLOW`/`LOT` in mobilization, bonds, traffic
-   control, trench safety, testing, surveying, contingency) gets a share of
-   construction cost, not a rate — mobilization at `LS` reads p25 $16.6k /
-   median $86.5k / p75 $300k, an IQR ratio of 21, because that "unit price" is
-   a project total. Shares are computed from the panel itself
-   (`data_access.lump_sum_share`); mobilization comes out at a median **8.7%**
-   of the bid, which brackets San Antonio's manual figure of 11%. The project
-   total is then `T = D / (1 − Σ shares)`.
-
-### What is measured vs assumed
-
-Everything tunable is in the `CALIBRATION` block at the top of `pricing.py`.
-
-**Measured from the data:** the discount curve, the quantity elasticities, all
-medians and IQRs, the lump-sum shares, the observed quantity coverage.
-
-**Assumed, pending calibration:** `REF_SPREAD_SHRINK` (0.55),
-`LINE_ERROR_CORRELATION` (0.55), `QTY_FACTOR_CLAMP` (2.5),
-`SIGMA_QTY_EXTRAPOLATION` (0.22), `SIGMA_SMALL_QTY` (0.20),
-`SIGMA_QTY_MODEL_SHARE` (0.5), `SIGMA_QTY_FAMILY_BAND_SHARE` (0.25),
-`SMALL_QTY_RATIO` (0.05), `SIGMA_ESCALATION_SHARE` (0.35),
-`SIGMA_ESCALATION_UNCOVERED` (0.09),
-`MIN_PROJECTS_FOR_QTY_REF` (3), `MIN_OBS_FOR_QTY_REF` (20),
-`SIGMA_BY_USABLE`. The benchmark floor (0.2046) is derived arithmetic, not a
-free parameter.
-
-**Known to be shaky, not merely unmeasured:** the quantity slope itself.
-The modelling session paired the same item at two quantities *inside the same
-bid document* — same file, description and unit, three or more bidders in
-common, so place, year, owner and competition are all held fixed:
-
-| quantity ratio | pairs | median elasticity | share at zero |
-|---|---|---|---|
-| 2–5× | 133 | +0.0000 | 83% |
-| 5–20× | 68 | +0.0000 | 84% |
-| 20–100× | 13 | −0.0120 | 46% |
-
-Contractors overwhelmingly quote **one** unit price for an item whatever the
-quantity, and the effect only appears past roughly 20×. So the cross-project
-−0.14 is composition — a 10,000 CY job is won by a different contractor from a
-50 CY job — not a quantity effect. Composition is still predictive for a new
-project, so the adjustment stays; but on this data the fitted route moves the
-price by a median 12% (p90 60%), and treating that as known would be the
-largest unflagged assumption in the tool. It therefore costs interval width
-(`SIGMA_QTY_MODEL_SHARE`), the family-band route costs less
-(`SIGMA_QTY_FAMILY_BAND_SHARE`), and the item's own observed band costs
-nothing. One caveat the modelling session attached, worth repeating: part of
-that spike at zero is bid-preparation habit — a bidder reusing one rate across
-sections — so the finding is "contractors do not price by quantity", not
-"quantity does not affect cost".
-
-### Replacing the model
-
-Keep this interface and the UI needs no changes:
-
-```python
-engine = PriceEngine()
-result = engine.estimate(EstimateRequest(
-    items=[LineItemInput(row_id, description, unit, quantity, match_key, include)],
-    n_bidders=4, work_type="erosion_creek", owner="", bid_year=None,
-))                                           # -> EstimateResult
-engine.comparables(line.comparables_key, unit=..., quantity=..., owner=...)
-```
-
-`EstimateResult.lines[i]` must keep `treatment` (`unit_price` /
-`percent_of_cost` / `unpriced`), `unit_price` and `total` as
-`Interval(p10, p50, p90)`, `evidence`, `warnings` and `comparables_key`.
-
-### The OPCC is not an input
-
-There is no field for it and `POST /api/estimate` rejects `opcc`,
-`engineer_estimate`, `target_price` and friends with a 400. The OPCC is only an
-after-the-fact backtest baseline; feeding it in would recycle the
-+51% / +22% / −35% errors the system exists to remove.
-
-## Mocked / not yet connected
-
-* **OCR.** `src/ocr_extract.py` is not delivered. `ingest/ocr.py` calls
-  `extract_words(path_or_image) -> list[{text, x0, x1, top}]` and reports
-  unavailable until it exists; image upload returns an explanatory error rather
-  than inventing line items. `MOCK_ENABLED = True` in that file turns on a
-  stand-in for exercising the column splitter — anything it produces is tagged
-  `mock` and the UI refuses to price it.
-* **Writing to `data/clean`.** Deliberate. Reviewed bid tabs are copied to
-  `ui/.inbox/` for the ETL to pick up.
-* **Price escalation.** The consumer is written, tested and inert: it needs
-  `price_time_index_by_basket.csv`, which the ETL has not produced yet. Until
-  that file exists the bid-year field stays hidden and no number moves. The
-  pooled `price_time_index.csv` is deliberately NOT used as a substitute — it
-  is the one series that must not price channel work.
-
-Everything else is live data.
-
-## Previewing a data file that does not exist yet
-
-```powershell
-$env:BID_UI_CLEAN_OVERLAY = "C:\path\to\candidate"; python ui\run.py
-```
-
-A directory searched **before** `data/clean`, per file. Drop one candidate CSV
-in it and everything else resolves normally — enough to try a new ETL output,
-or a consumer written ahead of its file, against the real app without writing
-into `data/clean`, which this UI must never touch. While one is active the
-status bar carries an amber **DATA OVERLAY ACTIVE** marker, so a number
-produced under it cannot be mistaken for a real estimate.
-
-## Column contract
-
-`data_access.TABLES` lists required and optional columns per file. Files are
-read **by column name** with `encoding="utf-8-sig"` (they carry a BOM — reading
-as plain `utf-8` silently renames the first column). Extra columns are
-tolerated and reported in **Data & method**; a missing required column raises
-`DataContractError` at startup naming the file, the column and what was
-actually present.
+| Route | Does |
+|---|---|
+| `GET /api/status` | engine state, data date, estimator md5 and rule, parser |
+| `GET /api/options` | markets, owners, work types, families, units, discount tables, accuracy context |
+| `POST /api/takeoff/text`, `/api/takeoff/file` | parse a takeoff |
+| `POST /api/classify` | the parser's classification of lines |
+| `GET /api/history/search` | earlier public line items like a query |
+| `POST /api/bidders/suggest` | rule N1's expected bidder count |
+| `POST /api/estimate` | the estimate |
+| `POST /api/references` | the reference projects behind one line (`{request, row_id}`) |
+| `POST /api/export/csv`, `/api/export/xlsx` | the export |
+| `POST /api/bidtab/parse`, `GET /api/bidtab/inbox` | bid-tab preview and staging |

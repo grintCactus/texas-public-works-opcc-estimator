@@ -4,261 +4,291 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bid Estimator</title>
+<script>
+/* Theme before first paint (no flash): a stored Light / Dark choice, else
+   the system's preference. Storage may be blocked; the page still works. */
+(function () {
+  var mode = 'system';
+  try {
+    var m = window.localStorage.getItem('bid-estimator-theme');
+    if (m === 'light' || m === 'dark') mode = m;
+  } catch (e) { /* storage blocked: follow the system */ }
+  var dark = mode === 'dark' || (mode === 'system' && !!window.matchMedia
+    && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme-mode', mode);
+})();
+</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="app">
 
 <header class="topbar">
-  <div class="brand">Bid Estimator <span>expected low bid, P10&thinsp;/&thinsp;P50&thinsp;/&thinsp;P90</span></div>
-  <nav class="steps" id="steps">
-    <button data-view="input"  aria-current="true"><span class="num">1</span>Takeoff</button>
-    <button data-view="review" disabled><span class="num">2</span>Review items</button>
-    <button data-view="result" disabled><span class="num">3</span>Estimate</button>
-    <button data-view="data"><span class="num">i</span>Data &amp; method</button>
+  <div class="brand">Bid Estimator <span>expected low bid (P50) &middot; recommended OPCC (P80)</span></div>
+  <nav class="jump" id="jump">
+    <a href="#sec-input"><span class="num">1</span>Takeoff</a>
+    <a href="#sec-project"><span class="num">2</span>Project</a>
+    <a href="#sec-results" class="off" id="jump-results"><span class="num">3</span>Results</a>
+    <a href="#sec-export" class="off" id="jump-export"><span class="num">4</span>Export</a>
   </nav>
 </header>
 
-<main>
-
-<!-- ============================================================ 1. INPUT -->
-<section class="view active" id="view-input">
-
-  <div class="notice info">
-    <span class="ic">i</span>
-    <div class="body-txt">
-      <h4>This tool estimates the expected <b>low bid</b>, as a range.</h4>
-      It never returns a single number. A public owner that lets bids continuously
-      and estimates them professionally (TxDOT) still misses the eventual low bid by
-      <b>13.8% median absolute error</b>, and lands inside &plusmn;10% on only
-      <b>39%</b> of projects. A point estimate would claim precision that does not
-      exist in this market.
+<!-- ====================================================== STATUS BAR -->
+<div class="statusbar" id="statusbar">
+  <div id="status-items"></div>
+  <div class="theme" id="theme-toggle" role="group" aria-label="Theme">
+    <span class="slab">Theme</span>
+    <div class="seg">
+      <button type="button" data-mode="system" aria-pressed="false">System</button>
+      <button type="button" data-mode="light" aria-pressed="false">Light</button>
+      <button type="button" data-mode="dark" aria-pressed="false">Dark</button>
     </div>
   </div>
+</div>
 
-  <div class="grid2">
-    <div class="panel">
-      <h2>Bill of quantities / takeoff
-        <span class="hint">description &middot; unit &middot; quantity</span></h2>
-      <div class="body">
+<main>
+
+<!-- ============================================================ INPUT -->
+<section class="panel" id="sec-input">
+  <h2><span class="secnum">1</span>Takeoff
+    <span class="hint">item &middot; description &middot; unit &middot; quantity</span></h2>
+  <div class="body">
+    <div class="grid-input">
+      <div>
         <div class="tabs" id="input-tabs">
           <button data-pane="paste" aria-selected="true">Paste text</button>
           <button data-pane="file">Upload file</button>
         </div>
-
         <div class="tabpane active" id="pane-paste">
-          <label class="field">
-            <span class="lab">Paste your line items</span>
-            <textarea id="paste-text" spellcheck="false"
-              placeholder="One item per line. Tab, pipe, comma or column-aligned all work.&#10;&#10;Mobilization&#9;LS&#9;1&#10;Unclassified Channel Excavation&#9;CY&#9;4,200&#10;Grouted Rock Riprap, 18 inch&#9;SY&#9;2,600&#10;Gabion Mattress, 12 inch&#9;SY&#9;880&#10;Block Sod, Bermuda&#9;SY&#9;9,500"></textarea>
-            <span class="sub">Copy straight out of Excel &mdash; tab-separated columns are detected.</span>
-          </label>
-          <div class="row-actions">
-            <button class="btn primary" id="btn-parse-text">Parse items</button>
+          <textarea id="paste-text" spellcheck="false"
+            placeholder="One item per line. Tab, pipe, comma or column-aligned all work.&#10;&#10;101&#9;Mobilization&#9;LS&#9;1&#10;102&#9;Unclassified Channel Excavation&#9;CY&#9;4,200&#10;103&#9;Grouted Rock Riprap, 18 inch&#9;SY&#9;2,600"></textarea>
+          <div class="row-actions" style="margin-top:8px">
+            <button class="btn primary" id="btn-parse-text">Read items</button>
             <button class="btn ghost sm" id="btn-sample">Load an example</button>
+            <span class="muted-note">Copy straight out of Excel &mdash; tab-separated columns are detected.</span>
           </div>
         </div>
-
         <div class="tabpane" id="pane-file">
           <div class="dropzone" id="dropzone">
             <div class="big">Drop a takeoff here, or click to choose</div>
-            <div class="small">
-              Excel (.xlsx) &middot; CSV &middot; PDF &middot; Word (.docx) &middot; image / scan
-            </div>
+            <div class="small">Excel (.xlsx) &middot; CSV &middot; PDF (text layer) &middot; Word (.docx)</div>
           </div>
           <input type="file" id="file-input" hidden
                  accept=".xlsx,.xlsm,.csv,.txt,.tsv,.pdf,.docx,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp">
-          <div id="file-status" style="margin-top:10px"></div>
-          <div class="muted-note" style="margin-top:9px">
-            Column order does not matter &mdash; description, unit and quantity columns
-            are detected. A price or amount column is deliberately ignored.
-          </div>
+          <div id="file-status" style="margin-top:9px"></div>
+          <div class="muted-note">Column order does not matter. A price or amount
+            column in the file is ignored &mdash; prices are estimated, never read.</div>
+        </div>
+      </div>
+      <div class="notice info slim">
+        <span class="ic">i</span>
+        <div class="body-txt">
+          Each line is classified with the bid-tab parser's own rules (family, unit,
+          size) &mdash; the same rules that built the price history &mdash; so a
+          lookup cannot silently miss. Check the classification column and correct
+          a family with <b>Change</b> when it is wrong. Nothing is priced until you
+          press <b>Estimate</b>.
         </div>
       </div>
     </div>
 
-    <div class="panel">
-      <h2>Project inputs</h2>
-      <div class="body">
+    <div id="parse-notes"></div>
+  </div>
+
+  <div class="gridhead" id="grid-head" hidden>
+    <span class="hint" id="review-count"></span>
+    <span class="spacer"></span>
+    <span class="legend">
+      <span class="badge unc">not covered</span>
+      <span class="badge lowc">low confidence</span>
+      <span class="badge allow">owner-set money?</span>
+      <span class="badge uncl">unclassified</span>
+    </span>
+    <button class="btn sm" id="btn-add-row">+ Add row</button>
+  </div>
+  <div class="tablewrap" id="grid-wrap" hidden>
+    <table class="grid" id="review-table">
+      <thead>
+        <tr>
+          <th style="width:28px" title="Include in the estimate">&#10003;</th>
+          <th style="width:58px">Item</th>
+          <th>Description</th>
+          <th style="width:70px">Unit</th>
+          <th style="width:100px" class="num">Quantity</th>
+          <th style="width:330px">Classification <span class="thnote">family &middot; size</span></th>
+          <th style="width:130px" class="num" title="Owner-set money (allowance, contingency, force account): the owner's amount, taken at face value and not discounted">Owner-set $</th>
+          <th style="width:96px"></th>
+        </tr>
+      </thead>
+      <tbody id="review-body"></tbody>
+    </table>
+  </div>
+  <details class="fold pad" id="skipped-fold" hidden><summary>Rows not treated as pay items</summary></details>
+</section>
+
+<!-- ========================================================== PROJECT -->
+<section class="panel" id="sec-project">
+  <h2><span class="secnum">2</span>Project details</h2>
+  <div class="body">
+    <div class="grid-project">
+      <div>
         <label class="field">
-          <span class="lab">Expected number of bidders <span class="req">* required</span></span>
-          <input type="number" id="in-bidders" min="1" max="20" step="1" placeholder="e.g. 4">
-          <span class="sub" id="bidders-hint">
-            The low bid is the minimum of the bids received, so its level depends on
-            how many arrive. Measured here: &times;0.94 of the market median at 2
-            bidders, &times;0.90 at 3, &times;0.87 at 4, &times;0.84 at 6,
-            &times;0.82 at 12.
-          </span>
+          <span class="lab">Market</span>
+          <div class="seg" id="in-market">
+            <button data-v="municipal" aria-pressed="true">City / County</button>
+            <button data-v="txdot" aria-pressed="false">TxDOT</button>
+          </div>
+          <span class="sub">Picks the price history, the competition table and the
+            calibration the estimate uses.</span>
         </label>
-
-        <div id="discount-preview"></div>
-
-        <label class="field" id="field-bidyear" hidden>
-          <span class="lab">Expected bid year</span>
-          <input id="in-bidyear" type="number" min="2016" max="2040" step="1"
-                 placeholder="e.g. 2027">
-          <span class="sub" id="bidyear-sub">Reference prices sit at the
-            midpoint of their own sample, not at your letting. Leave blank and
-            nothing is escalated.</span>
-        </label>
-
-        <label class="field">
-          <span class="lab">Work type</span>
-          <select id="in-worktype"><option value="">&mdash; not specified &mdash;</option></select>
-          <span class="sub">Erosion / channel work routes to the erosion specialty
-            reference, which has a DFW-only column.</span>
-        </label>
-
         <label class="field">
           <span class="lab">Owner <span class="dim">(optional)</span></span>
-          <select id="in-owner"><option value="">&mdash; any owner &mdash;</option></select>
-          <span class="sub">Used to prefer that owner's own history in the
-            comparables, when there is enough of it.</span>
+          <select id="in-owner"><option value="">&mdash; not specified &mdash;</option></select>
+          <span class="sub">Earlier jobs of the same owner count 1.5&times; when the
+            comparables are chosen.</span>
         </label>
-
-        <div class="hr"></div>
-        <div class="muted-note">
-          <b>There is deliberately no field for your OPCC.</b> The OPCC is neither a
-          target nor an input of this estimate &mdash; it exists only as an
-          after-the-fact backtest baseline. Feeding it in would recycle the
-          +51% / +22% / &minus;35% errors the tool exists to remove.
+        <label class="field">
+          <span class="lab">Work type <span class="dim">(optional)</span></span>
+          <select id="in-worktype"><option value="">&mdash; not specified &mdash;</option></select>
+          <span class="sub">Same work type counts 1.5&times; in the comparables, and
+            picks the bidder-count history.</span>
+        </label>
+      </div>
+      <div>
+        <label class="field">
+          <span class="lab">Bid date</span>
+          <input type="date" id="in-biddate">
+          <span class="sub">Prices are escalated to its year; comparables and every
+            history read are limited to lettings before it.</span>
+        </label>
+        <label class="field">
+          <span class="lab">Expected bidders</span>
+          <div class="inline">
+            <input type="number" id="in-bidders" min="1" max="60" step="1" placeholder="auto">
+            <button class="btn ghost sm" id="btn-bidders-reset" hidden>use suggestion</button>
+          </div>
+          <span class="sub" id="bidders-hint">Prefilled from earlier lettings once the
+            takeoff is read. Edit it if you know better.</span>
+        </label>
+        <div id="discount-preview"></div>
+      </div>
+      <div>
+        <div class="lab-like">Owner-set amounts <span class="dim">(allowances, contingencies, force accounts)</span></div>
+        <div id="ownerset-box" class="quotes">
+          <div class="muted-note">Read a takeoff first.</div>
         </div>
       </div>
+      <div>
+        <div class="lab-like">Vendor quotes for not-covered lines</div>
+        <div id="quotes-box" class="quotes">
+          <div class="muted-note">Read a takeoff first.</div>
+        </div>
+      </div>
+    </div>
+    <div class="hr"></div>
+    <div class="row-actions">
+      <button class="btn primary big" id="btn-estimate" disabled>Estimate</button>
+      <span class="muted-note" id="estimate-hint"></span>
+      <span class="spacer"></span>
+      <span class="muted-note opcc-note"><b>There is deliberately no field for your
+        OPCC or the engineer's estimate.</b> It is never an input &mdash; only a
+        backtest baseline.</span>
     </div>
   </div>
 </section>
 
-<!-- =========================================================== 2. REVIEW -->
-<section class="view" id="view-review">
-  <div id="parse-notes"></div>
-
-  <div class="panel flush">
-    <h2>Confirm line items
-      <span class="hint" id="review-count"></span>
-      <span class="spacer"></span>
-      <span class="row-actions">
-        <button class="btn sm" id="btn-add-row">+ Add row</button>
-        <button class="btn sm" id="btn-rematch">Re-match all</button>
-        <button class="btn primary sm" id="btn-estimate">Estimate &rarr;</button>
-      </span>
-    </h2>
+<!-- ========================================================== RESULTS -->
+<section id="sec-results" hidden>
+  <div class="stale" id="stale-banner" hidden>
+    Inputs changed since this estimate. <button class="btn sm primary" id="btn-reestimate">Re-estimate</button>
+  </div>
+  <div class="panel">
+    <h2><span class="secnum">3</span>Estimate <span class="hint" id="result-sub"></span></h2>
     <div class="body">
-      <div class="notice caution">
-        <span class="ic">!</span>
-        <div class="body-txt">
-          Automatic extraction is wrong often enough that nothing is priced until you
-          confirm it. Edit any cell. Rows flagged in amber are missing a unit or a
-          quantity &mdash; <b>a line with no quantity cannot be priced</b>, because
-          unit price falls with quantity (elasticity about &minus;0.14 pooled; 10&times;
-          the quantity takes roughly 28% off the rate).
-        </div>
-      </div>
-    </div>
-    <div class="tablewrap">
-      <table class="grid" id="review-table">
-        <thead>
-          <tr>
-            <th style="width:30px" title="Include in the estimate">&#10003;</th>
-            <th style="width:46px">#</th>
-            <th>Description</th>
-            <th style="width:76px">Unit</th>
-            <th style="width:110px" class="num">Quantity</th>
-            <th style="width:300px">Matched historical item</th>
-            <th style="width:62px" class="num">Score</th>
-            <th style="width:92px"></th>
-          </tr>
-        </thead>
-        <tbody id="review-body"></tbody>
-      </table>
+      <div id="r-headline"></div>
+      <div id="r-context"></div>
+      <div id="r-warnings"></div>
     </div>
   </div>
-
-  <details class="fold" id="skipped-fold" style="margin-bottom:14px"></details>
-</section>
-
-<!-- =========================================================== 3. RESULT -->
-<section class="view" id="view-result">
-  <div id="result-head"></div>
-  <div id="result-warnings"></div>
-
+  <div class="panel" id="p-notcovered">
+    <h2>Not covered &mdash; get a vendor quote <span class="hint" id="nc-sub"></span></h2>
+    <div class="body" id="r-notcovered"></div>
+  </div>
+  <div class="panel" id="p-lowconf">
+    <h2>Low confidence <span class="hint">mobilization and general-condition lump sums</span></h2>
+    <div class="body" id="r-lowconf"></div>
+  </div>
   <div class="panel flush">
-    <h2>Line items
-      <span class="hint">click a row to see the historical evidence behind it</span>
-      <span class="spacer"></span>
-      <span class="row-actions">
-        <button class="btn sm" id="btn-export">Export CSV</button>
-        <button class="btn sm" id="btn-back-review">&larr; Edit items</button>
-      </span>
-    </h2>
-    <div class="tablewrap" style="max-height:none">
+    <h2>Line items <span class="hint">amounts at the P50 level; they add up to P50. Click a row for the reference projects behind its price.</span></h2>
+    <div class="tablewrap tall">
       <table class="grid" id="result-table">
         <thead>
           <tr>
-            <th style="width:46px">#</th>
+            <th style="width:54px">Item</th>
             <th>Description</th>
-            <th style="width:60px">Unit</th>
-            <th style="width:92px" class="num">Qty</th>
-            <th style="width:90px" class="num">Unit P10</th>
-            <th style="width:96px" class="num">Unit P50</th>
-            <th style="width:90px" class="num">Unit P90</th>
-            <th style="width:104px" class="num">Total P10</th>
-            <th style="width:110px" class="num">Total P50</th>
-            <th style="width:104px" class="num">Total P90</th>
-            <th style="width:142px">Evidence</th>
+            <th style="width:190px">Classification</th>
+            <th style="width:86px" class="num">Qty</th>
+            <th style="width:50px">Unit</th>
+            <th style="width:104px" class="num">Unit price</th>
+            <th style="width:112px" class="num">Amount</th>
+            <th style="width:250px">Basis</th>
+            <th style="width:122px">Accuracy</th>
+            <th style="width:150px">Flags</th>
           </tr>
         </thead>
         <tbody id="result-body"></tbody>
+        <tfoot id="result-foot"></tfoot>
       </table>
     </div>
   </div>
+  <div class="panel">
+    <h2>Competition <span class="hint">bidders and the discount</span></h2>
+    <div class="body" id="r-competition"></div>
+  </div>
+  <div class="panel" id="p-similar">
+    <h2>Similar past projects <span class="hint" id="sim-sub"></span></h2>
+    <div class="body" id="r-similar"></div>
+  </div>
 </section>
 
-<!-- ============================================================ i. DATA -->
-<section class="view" id="view-data">
-  <div class="grid2">
-    <div class="panel">
-      <h2>Reference data loaded</h2>
-      <div class="body" id="data-tables"></div>
-    </div>
-    <div>
-      <div class="panel">
-        <h2>Method</h2>
-        <div class="body" id="data-method"></div>
-      </div>
-      <div class="panel">
-        <h2>Competition discount <span class="hint">f(number of bidders)</span></h2>
-        <div class="body" id="data-discount"></div>
-      </div>
-    </div>
+<!-- =========================================================== EXPORT -->
+<section class="panel" id="sec-export" hidden>
+  <h2><span class="secnum">4</span>Export</h2>
+  <div class="body row-actions">
+    <button class="btn" id="btn-export-csv">Download CSV</button>
+    <button class="btn" id="btn-export-xlsx">Download Excel (.xlsx)</button>
+    <span class="muted-note">Everything above &mdash; project details, P50 / P80 with their
+      bands, accuracy context, alerts, not-covered and low-confidence lines, the line
+      table, the competition step and the similar past projects with their matched
+      lines.</span>
   </div>
+</section>
 
+<details class="fold panel-fold" id="bidtab-fold">
+  <summary>Add a historical bid tabulation (staged for the next data rebuild)</summary>
   <div class="panel">
-    <h2>Add a historical bid tabulation
-      <span class="hint">expands the reference database</span></h2>
     <div class="body">
       <div class="notice info">
         <span class="ic">i</span>
         <div class="body-txt">
-          Parsed with the project's own <code class="inline">src/parse_bidtabs.py</code>,
-          not a second implementation. The file is staged in
-          <code class="inline">ui/.inbox/</code> for the next ETL run &mdash; this tool
-          does not write to <code class="inline">data/clean/</code>, which the ETL owns
-          and rewrites.
+          Parsed with the project's own <code class="inline">src/parse_bidtabs.py</code>.
+          The file is staged in <code class="inline">ui/.inbox/</code> for the next ETL
+          run &mdash; this tool never writes to <code class="inline">data/clean/</code>.
+          Company bid tabs are test-only and must not be staged here.
         </div>
       </div>
       <div class="dropzone" id="bidtab-drop">
-        <div class="big">Drop a bid tabulation (.xlsx / .pdf)</div>
-        <div class="small">one row per bidder per line item, engineer's estimate included</div>
+        <div class="big">Drop a public bid tabulation (.xlsx / .pdf)</div>
+        <div class="small">one row per bidder per line item</div>
       </div>
       <input type="file" id="bidtab-input" hidden accept=".xlsx,.xlsm,.pdf">
       <div id="bidtab-result" style="margin-top:11px"></div>
     </div>
   </div>
-</section>
+</details>
 
 </main>
-
-<div class="statusbar" id="statusbar"></div>
 </div>
 
 <div class="toast-host" id="toasts"></div>
