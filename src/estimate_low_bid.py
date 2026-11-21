@@ -129,7 +129,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import comparables  # noqa: E402
-import coverage as coverage_rule  # noqa: E402  (src/coverage.py, the 未覆盖 rule)
+import coverage as coverage_rule  # noqa: E402  (src/coverage.py, the "not covered" rule)
 import item_tokens  # noqa: E402
 import qty_shape  # noqa: E402
 
@@ -277,15 +277,15 @@ T1_FILE = "estimator_t1_txdot.csv"  # D1 records + model totals (calibrate_forwa
 
 # COVERAGE SCOPE (user decision 2026-11-20; the line rule is src/coverage.py,
 # md5 5d14769b..., fixed before any scoring under it).  The user:
-# "如果遇到泵、发动机、预制桥这些我们几乎没有什么可比的类型，我们就说是未覆盖，并且在
-# 给报价的时候把这块标识出来……未覆盖的话，我们就给一个价加上未覆盖，因为未覆盖你的任何
-# 报价都是不合理的……judge 的时候……刨去未覆盖的这一部分，看看标价的准确度如何。"
+# "If it is a pump, generator or prefab bridge -- something we have almost nothing comparable for --
+# we call it not covered and flag it in the quote ... for those we give a price plus 'not covered', since
+# any price for an uncovered item is unreasonable ... when judging ... take the uncovered part out and see how accurate the price is."
 # With COVERAGE_SCOPE on, a line coverage.uncovered_class() names is NOT priced:
 #   * no line price; it is out of the line total, the bid part, V2's
 #     comparables match (the schedule's own lines) and T1's mobilization
 #     share (the schedule's base, and the bids MobRatio fits the ratio on);
 #   * estimate() lists it under `uncovered` (item no, description, class,
-#     quantity, unit, "未覆盖 -- 需另行询价"), with uncovered_share_lines and a
+#     quantity, unit, "Not covered -- get a separate quote"), with uncovered_share_lines and a
 #     warning put first; P50/P80 cover the other lines only;
 #   * an amount the user gives for it (a vendor quote: `quote`, or `amount`
 #     as owner_fixed_amount reads it) is taken at face value, outside the
@@ -318,7 +318,7 @@ T1_FILE = "estimator_t1_txdot.csv"  # D1 records + model totals (calibrate_forwa
 # work, bypass pumping) of a job whose core has no comparable, and a P50/P80
 # of the periphery would be read as the price of the job -- the quote the
 # user calls unreasonable.  (b) is kept narrow on purpose: a miss still
-# leaves the covered estimate under the 未覆盖 list and the warning, while a
+# leaves the covered estimate under the "not covered" list and the warning, while a
 # false not_covered withholds a usable estimate; so a line that adds any
 # other word (a component, a station's proper name, "site work") is not the
 # facility, and specialty BUILDINGS are left out of (b) -- a restroom or an
@@ -328,9 +328,9 @@ T1_FILE = "estimator_t1_txdot.csv"  # D1 records + model totals (calibrate_forwa
 # station complete in place", one LS line of 248; "lift station and
 # substructure").  The rule counts lines, not dollars (no bid is known when
 # a schedule is estimated), so a schedule whose few uncovered lines are most
-# of its money stays covered -- with the 未覆盖 list and the warning.
+# of its money stays covered -- with the "not covered" list and the warning.
 COVERAGE_SCOPE = True
-COVERAGE_STATUS = "未覆盖 -- 需另行询价"
+COVERAGE_STATUS = "Not covered -- get a separate quote"
 LS_UNITS_COVERAGE = ("LS", "L.S.", "LUMP SUM")
 WHOLE_FACILITY_RE = re.compile(
     r"\b(?:(?:pump|lift|booster(?:\s+pump)?)\s+stations?|"
@@ -375,7 +375,7 @@ def line_coverage(desc, family="", unit=""):
 # 248 lines, $34M -- for its single "lift station complete in place" line.  The
 # user's principle -- price what can be priced, list the uncovered lines, judge
 # the covered part -- holds for a facility-centred job too: its covered lines
-# are priced, its station is listed as 未覆盖 with the warning on top.  Rule (a)
+# are priced, its station is listed as not covered with the warning on top.  Rule (a)
 # (uncovered lines are more than half the schedule) stays.  is_whole_facility()
 # is kept, and reported per uncovered line as `whole_facility`.
 WHOLE_FACILITY_RULE = False
@@ -801,8 +801,8 @@ def d1_s_class(x):
     return bisect.bisect_right(D1_SIZE_EDGES, x)
 
 
-# LOW-CONFIDENCE LINES -- 低把握 (user, 2026-11-20 ~14:2x: "动员费本来就是个有
-# 点玄学的东西，如果估算不好可以表示出来").  PRESENTATION ONLY: nothing here moves
+# LOW-CONFIDENCE LINES (user, 2026-11-20 ~14:2x: "mobilization is a bit of a black art to begin with;
+# if it cannot be estimated well, we can say so").  PRESENTATION ONLY: nothing here moves
 # market_total, bid_part, expected_low, the P80 or any fitted constant.
 # estimate() adds a `low_confidence` block after the estimate is complete,
 # run_schedule() prints it, and calibrate_forward() records five report-only
@@ -810,7 +810,7 @@ def d1_s_class(x):
 # (handoff/scratchpad/diag_mob/mob_aside_report.py).
 # Lines: mobilization (any unit), and the general-condition LS lines --
 # traffic control, site / right-of-way preparation, SWPPP / erosion control,
-# bonds / insurance (lowconf_class).  Each class is one line marked 低把握,
+# bonds / insurance (lowconf_class).  Each class is one line marked "Low confidence",
 # with: our amount at the P50 level (line amount x (P50 - owner-set money) /
 # market total, so the lines of a schedule add up to its P50); the share of
 # their own bid the LOW bidders of earlier lettings of the same market gave
@@ -832,16 +832,16 @@ def d1_s_class(x):
 # band.  Nothing is priced from it (a share rule did not lower the total
 # error: diag_mob decomp.txt).
 LOWCONF = True
-LOWCONF_LABEL = "低把握 (low confidence)"
+LOWCONF_LABEL = "Low confidence"
 LOWCONF_MIN_LETTINGS = 15          # a history cell needs >= 15 earlier lettings
 LOWCONF_SIZE_EDGES = (5e5, 2e6)    # size of the REST of the bid
 LOWCONF_SIZE_LABELS = ("< $0.5M", "$0.5-2M", "> $2M")
 LOWCONF_CLASSES = (
-    ("mobilization", "动员费 mobilization"),
-    ("traffic_control", "交通管制 traffic control (LS)"),
-    ("site_prep", "场地/路权准备 site / ROW prep (LS)"),
-    ("swppp_erosion", "SWPPP / 水土保持 erosion control (LS)"),
-    ("bonds_insurance", "保函保险 bonds / insurance (LS)"))
+    ("mobilization", "Mobilization"),
+    ("traffic_control", "Traffic control (lump sum)"),
+    ("site_prep", "Site / right-of-way preparation (lump sum)"),
+    ("swppp_erosion", "SWPPP / erosion control (lump sum)"),
+    ("bonds_insurance", "Bonds / insurance (lump sum)"))
 _LC_LS = ("LS", "L.S.", "LUMP SUM")
 _LC_MOB = re.compile(r"\bmobili[sz]", re.I)
 _LC_GC = (
@@ -863,7 +863,7 @@ _LC_FAMS = {"traffic_control": "traffic_control",
 
 
 def lowconf_class(family, unit, description=""):
-    """A line's 低把握 class, or None: "mobilization" (the mobilization
+    """A line's low-confidence class, or None: "mobilization" (the mobilization
     family, or an unclassified LS line worded mobiliz-), else a general-
     condition LS line by its family or, unclassified, by its words."""
     fam = family or ""
@@ -888,7 +888,7 @@ def lowconf_size_class(x):
 
 
 class LowConfShare:
-    """The history behind the 低把握 ranges: for every letting of the pool
+    """The history behind the low-confidence ranges: for every letting of the pool
     with one identified low bidder, two or more bidders and >=
     MIN_SCHEDULE_ITEMS lines, the LOW bidder's amount on each low-confidence
     class as a share of its own total -- owner-set lines (is_owner_fixed on
@@ -1311,7 +1311,7 @@ class Tables:
             self.ref_band_m = _MuniMap(cm["band"], None, MUNI_CELLS_NMIN,
                                        "band", {})
             self.ref_m = _MuniMap(cm["fam"], None, MUNI_CELLS_NMIN, "fam", {})
-        # 低把握: the earlier low bidders' share per class (display only)
+        # low confidence: the earlier low bidders' share per class (display only)
         self.lowconf = LowConfShare(pool, avail) if LOWCONF else None
         return self
 
@@ -2201,7 +2201,7 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
                     lcf = out.get("level_correction") or 1.0
                     out[name] = (out["expected_low"] / (hi * lcf),
                                  out["expected_low"] / (lo * lcf))
-        # 宁高勿低: the user's rule is that an estimate must not come in under
+        # "Better high than low": the user's rule is that an estimate must not come in under
         # the low bid -- at least 80% of the time -- and should stay close when
         # over.  The figure that meets the first half is the estimate divided
         # by a low quantile of the centred est/actual ratio.  A file written by
@@ -2235,13 +2235,13 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
                 "only %d of %d uncovered lines have a quote (%.2f) -- no "
                 "complete total until every one has" % (n_q, len(uncov),
                                                         quoted))
-    if LOWCONF:                # 低把握: presentation only, reads `out`
+    if LOWCONF:                # low confidence: presentation only, reads `out`
         _attach_low_confidence(out, tab, items, market, target)
     return out
 
 
 def _attach_low_confidence(out, tab, items, market, target):
-    """estimate()'s 低把握 block (LOWCONF).  Presentation only: it reads the
+    """estimate()'s low-confidence block (LOWCONF).  Presentation only: it reads the
     finished estimate and writes out["low_confidence"], never a figure the
     estimate already has.  One entry per low-confidence class present in the
     covered, non-owner-set lines: our amount (market level, P50 level = x
@@ -3466,7 +3466,7 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
     pools = comparables_pools(pool, avail)
     t1 = T1State(pool, avail) if TXDOT_C4D1 else None
     kinds_m, cells_m = muni_forward_kinds(pool, avail)      # MC
-    lch = LowConfShare(pool, avail) if LOWCONF else None   # 低把握 (display)
+    lch = LowConfShare(pool, avail) if LOWCONF else None   # low confidence (display)
     if fitted is not None:
         if cells_m is None:
             # the leak guards check MC's cells even while MUNI_CELLS is off
@@ -4699,7 +4699,7 @@ def _selftest():
         ((True, True, True, False, True), (False,) * 5, ROUND11_CORE_NOT2,
          ROUND11_CORE_NOT2))
 
-    # 27 低把握 (LOWCONF): classes, the forward history, and the block is
+    # 27 low confidence (LOWCONF): classes, the forward history, and the block is
     # presentation only -- the same schedule gives the same P50/P80 with it
     # on and off
     chk("27 low-confidence classes",
@@ -4931,7 +4931,7 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
     review, so every item prints what happened to it, including the items that
     could not be priced and why.
 
-    Coverage scope: lines src/coverage.py calls 未覆盖 (pumps, generators,
+    Coverage scope: lines src/coverage.py calls not covered (pumps, generators,
     prefab bridges, ...) are listed FIRST, are not priced and are not in
     P50/P80; a `quote` column (or `amount`) gives a line's vendor quote, and
     once every such line has one a complete total is printed too.  The
@@ -4976,7 +4976,7 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
             ext, ps = t["fixed_amount"], "OWNER-SET"
         elif t.get("uncovered") or t.get("price_key") == "not_covered":
             ext = t.get("quote")
-            ps = "未覆盖" if t.get("uncovered") else "NOT PRICED"
+            ps = "NOT COVERED" if t.get("uncovered") else "NOT PRICED"
         else:
             ext = ((t["price"] * t["quantity"])
                    if t["price"] and t["quantity"] else None)
@@ -4999,7 +4999,7 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
         print("competition discount  f(%s) = %.4f   [%s table, %d-bidder bin, "
               "%d lettings]"
               % (n_bidders, d["f"], d["table"], d["bin"], d["lettings"]))
-    cov_note = ("   [COVERED LINES ONLY -- %d 未覆盖 line(s) not in it]"
+    cov_note = ("   [COVERED LINES ONLY -- %d uncovered line(s) not in it]"
                 % len(r["uncovered"]) if r.get("uncovered") else "")
     if r["expected_low"] is not None:
         print("EXPECTED LOW BID                             %18.2f%s"
@@ -5022,7 +5022,7 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
                 print("COMPLETE TOTAL = covered P80 + quotes          %18.2f"
                       % r["complete_total_p80"])
     elif r.get("not_covered"):
-        print("NO ESTIMATE: 整体未覆盖 / NOT COVERED AS A WHOLE -- %s"
+        print("NO ESTIMATE: NOT COVERED AS A WHOLE -- %s"
               % "; ".join(r.get("not_covered_why") or ()))
     print_low_confidence(r)
     for w in r["warnings"]:
@@ -5031,18 +5031,18 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
 
 
 def print_uncovered(r):
-    """The 未覆盖 block a quote printout opens with (coverage scope)."""
+    """The "not covered" block a quote printout opens with (coverage scope)."""
     unc = r.get("uncovered") or []
     if not unc:
         return
     bar = "=" * 78
     print(bar)
     if r.get("not_covered"):
-        print("整体未覆盖 / NOT COVERED AS A WHOLE -- NO P50/P80 IS GIVEN")
+        print("NOT COVERED AS A WHOLE -- NO P50/P80 IS GIVEN")
         for w in r.get("not_covered_why") or ():
             print("  because %s" % w)
-    print("未覆盖 / NOT COVERED: %d of %d lines (%.0f%% of the lines) -- "
-          "需另行询价 (price separately)"
+    print("NOT COVERED: %d of %d lines (%.0f%% of the lines) -- "
+          "price separately (get a vendor quote)"
           % (len(unc), r["n_items"], 100 * r.get("uncovered_share_lines", 0)))
     print("These are specialty items with almost no comparable bid history. "
           "They are NOT priced\nand NOT in P50/P80%s."
@@ -5056,13 +5056,13 @@ def print_uncovered(r):
                  u["class"][:26],
                  ("%.2f" % u["quantity"]) if u["quantity"] else "-",
                  (u["unit"] or "")[:5],
-                 ("%.2f" % u["quote"]) if u["quote"] else "需另行询价"))
+                 ("%.2f" % u["quote"]) if u["quote"] else "get a quote"))
     print(bar)
     print()
 
 
 def print_low_confidence(r):
-    """The 低把握 block of a quote printout (LOWCONF): mobilization and the
+    """The low-confidence block of a quote printout (LOWCONF): mobilization and the
     general-condition LS lines, each with our amount, its share of the P50,
     the earlier low bidders' share range and the dollar range it implies.
     The P50/P80 above are not changed by it."""
@@ -5072,12 +5072,12 @@ def print_low_confidence(r):
         return
     bar = "-" * 78
     print(bar)
-    print("%s -- 动员费 / 一般条件 LS 行，单列显示；上面的 P50/P80 不因此改变"
+    print("%s -- mobilization / general-condition LS lines, shown on their own; the P50/P80 above do not change because of them"
           % LOWCONF_LABEL)
-    print("这些行各家报价差别大、我们的单价又不随工程规模变化，金额只作参考；"
-          "下面给出更早开标里\n最低价投标人在这一类上的占比（p25-p75，同规模）"
-          "和它对本单意味着的金额区间。\n区间是参考，不是保证：回测里实际金额"
-          "落在区间内的约三分之一。")
+    print("Bidders' prices for these lines differ widely and our unit prices do not scale with the job, so the amounts are for reference only; "
+          "below is the share the low bidders of earlier lettings\ngave this class (p25-p75, same size class) "
+          "and the dollar range it implies for this schedule.\nThe range is a guide, not a guarantee: in back-tests the actual amount "
+          "fell inside it about a third of the time.")
     for g in lines:
         print("  [%s] %s  -- items %s"
               % (g["status"], g["label"],

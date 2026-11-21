@@ -259,16 +259,16 @@ def basket_section(tx, hci_yoy):
     """
     fam = tx.item_family.fillna("").astype(str)
     vocab = set(fam.unique())
-    baskets = [("HCI 类篮子(铺面+基层+土方)", HCI_LIKE),
-               ("纯铺面", PAVING_ONLY),
-               ("侵蚀修复类(客户实际工作)", EROSION),
-               ("被稀释项(标线/照明/标志等)", DILUTERS),
-               ("全样本", None)]
-    say("## 4. 篮子构成检验:差距是否来自子目组成")
+    baskets = [("HCI 类篮子(铺面+基层+土方)", HCI_LIKE),  # basket names kept (dict keys, CSV `basket` values): HCI-like basket (paving + base + earthwork)
+               ("纯铺面", PAVING_ONLY),  # paving only
+               ("侵蚀修复类(客户实际工作)", EROSION),  # erosion repair (the client's actual work)
+               ("被稀释项(标线/照明/标志等)", DILUTERS),  # diluting items (markings / lighting / signs, ...)
+               ("全样本", None)]  # full sample
+    say("## 4. Basket composition test: does the gap come from the item mix?")
     say()
     missing = sorted(set(HCI_LIKE + PAVING_ONLY + EROSION + DILUTERS) - vocab)
     if missing:
-        say("注:面板里不存在的族名(空篮子会伪装成不涨,所以必须报出来):`%s`"
+        say("Note: family names not present in the panel (an empty basket would pass itself off as no increase, so they must be reported): `%s`"
             % "`, `".join(missing))
         say()
     years = sorted(y for y in tx.year.unique() if str(y).isdigit())
@@ -276,7 +276,7 @@ def basket_section(tx, hci_yoy):
     rows, cum = [], {b[0]: 100.0 for b in baskets}
     cum_h = 100.0
     for a, b in pairs:
-        r = {"年份": b}
+        r = {"年份": b}  # key kept (table column): year
         for name, keep in baskets:
             sub = tx if keep is None else tx[fam.isin(keep)]
             v, n = basket_yoy(sub, a, b)
@@ -290,7 +290,7 @@ def basket_section(tx, hci_yoy):
             cum_h *= (1 + h / 100.0)
         rows.append(r)
     df = pd.DataFrame(rows)
-    show = ["年份"] + (["HCI"] if "HCI" in df.columns else []) + [b[0] for b in baskets]
+    show = ["年份"] + (["HCI"] if "HCI" in df.columns else []) + [b[0] for b in baskets]  # year column key kept
     say(md(df[show]))
     say()
 
@@ -325,18 +325,18 @@ def basket_section(tx, hci_yoy):
     out = pd.DataFrame(long_rows)
     out.to_csv(os.path.join(CLEAN, "price_time_index_by_basket.csv"),
                index=False, encoding="utf-8-sig")
-    say("逐篮子序列已写入 `data/clean/price_time_index_by_basket.csv`"
-        "(每行一个 篮子×年份,带 `index_level` 与 `base_year`)。"
-        "**给河道工程调价用 `侵蚀修复类` 那个篮子,不要用池化序列。**")
+    say("The per-basket series is written to `data/clean/price_time_index_by_basket.csv` "
+        "(one row per basket x year, with `index_level` and `base_year`). "
+        "**To escalate channel work, use the erosion-repair basket (EROSION), not the pooled series.**")
     say()
-    say("各篮子的配对子目数(样本量,决定上表每个数字的可信度):")
+    say("Matched items per basket (the sample size, which decides how far each number in the table above can be trusted):")
     say()
-    ncols = ["年份"] + ["n:" + b[0] for b in baskets]
+    ncols = ["年份"] + ["n:" + b[0] for b in baskets]  # year column key kept
     nd = df[ncols].copy()
-    nd.columns = ["年份"] + [b[0] for b in baskets]
+    nd.columns = ["年份"] + [b[0] for b in baskets]  # year column header kept, as in the table above
     say(md(nd, fmt="%.0f"))
     say()
-    lvl = [{"篮子": "HCI(官方)", "累计水平(2016=100)": cum_h}]
+    lvl = [{"篮子": "HCI (official)", "累计水平(2016=100)": cum_h}]  # keys kept (table columns): basket / cumulative level (2016=100)
     for name, keep in baskets:
         sub = tx if keep is None else tx[fam.isin(keep)]
         ds = []
@@ -345,66 +345,66 @@ def basket_section(tx, hci_yoy):
             if v == v and hci_yoy is not None and b in hci_yoy.index:
                 ds.append(abs(v - float(hci_yoy.loc[b])))
         lvl.append({"篮子": name, "累计水平(2016=100)": cum[name],
-                    "对 HCI 平均绝对偏差": float(np.mean(ds)) if ds else np.nan,
+                    "对 HCI 平均绝对偏差": float(np.mean(ds)) if ds else np.nan,  # keys kept: mean absolute deviation from HCI / overlapping years
                     "重叠年数": len(ds)})
     say(md(pd.DataFrame(lvl), fmt="%.2f"))
     say()
-    say("### 结论")
+    say("### Conclusion")
     say()
-    say("三个假设全部被否:")
+    say("All three hypotheses are rejected:")
     say()
-    say("1. **编码换代导致匹配丢失** —— 否。归一化改写了 45% 的行键,"
-        "平均绝对偏差 4.81 → 4.81,毫无变化。crosswalk 的匹配规则本身是"
-        "`spec+desc+unit`,它连起来的条目在描述键下本来就连着。")
-    say("2. **HCI 是数量加权** —— 否,而且方向相反。金额加权把偏差从 4.81 做到 "
-        "14.13,相关系数从 0.80 塌到 0.31。原因在 `eff_n`:有效子目数只有 20–38,"
-        "加权指数是二十几个巨量子目在代表市场,而且权重逐年从样本重算,"
-        "等于每年重画篮子。HCI 用的是固定数量的固定篮子,这是两种东西。")
-    say("3. **篮子构成** —— 否,越收窄越差(4.81 → 7.75 → 11.06)。"
-        "窄篮子每年只有 30–80 个配对子目,噪声超过了构成信号。")
+    say("1. **The code renumbering loses matches** -- no. Normalisation rewrote 45% of the row keys, "
+        "and the mean absolute deviation went 4.81 → 4.81, no change at all. The crosswalk's own match rule is "
+        "`spec+desc+unit`, so the items it links were already linked under the description key.")
+    say("2. **HCI is quantity-weighted** -- no, and the effect runs the other way. Dollar weighting takes the deviation from 4.81 to "
+        "14.13 and the correlation collapses from 0.80 to 0.31. The reason is `eff_n`: only 20–38 effective items, "
+        "so the weighted index is twenty-odd huge items standing in for the market, and the weights are recomputed from the sample every year, "
+        "which redraws the basket every year. HCI uses a fixed basket with fixed quantities; these are two different things.")
+    say("3. **Basket composition** -- no; the narrower, the worse (4.81 → 7.75 → 11.06). "
+        "A narrow basket has only 30–80 matched items a year, and the noise exceeds the composition signal.")
     say()
-    say("**但 2023 年那一行给出了真正有用的东西。** 那一年我的每个子篮子都是 "
-        "+22% 到 +33%(侵蚀 +22.0、HCI 式 +29.7、纯铺面 +33.3),而全样本只有 "
-        "+9.1%。子集全部高于整体 —— 这是 Simpson 结构:全样本中位数被行数巨大"
-        "但不随材料通胀的族压住了(`other` 10.9 万行、`pavement_marking` 7.2 万行、"
-        "`electrical_lighting` 2.5 万、`signing` 1.7 万)。材料类子目确实涨了,"
-        "HCI 的 +26.2% 和它们一致。")
+    say("**But the 2023 row gives something really useful.** That year every sub-basket of mine is "
+        "+22% to +33% (erosion +22.0, HCI-like +29.7, paving only +33.3), while the full sample is only "
+        "+9.1%. Every subset is above the whole -- a Simpson structure: the full-sample median is held down by families with huge row counts "
+        "that do not follow material inflation (`other` 109k rows, `pavement_marking` 72k rows, "
+        "`electrical_lighting` 25k, `signing` 17k). The material items really did rise, "
+        "and HCI's +26.2% agrees with them.")
     say()
-    say("**对估价的直接含义:不要用全样本指数给河道侵蚀工程做时间调整。**"
-        "侵蚀篮子十年累计 **159.7**,全样本只有 **143.0**,差 12 个百分点。"
-        "用全样本会在材料通胀年系统性低估。")
+    say("**Direct consequence for estimating: do not escalate creek-erosion work with the full-sample index.** "
+        "The erosion basket compounds to **159.7** over ten years, the full sample only to **143.0**, 12 points apart. "
+        "Using the full sample systematically underestimates in years of material inflation.")
     say()
-    say("**可信度边界:**侵蚀篮子每年只有 25–97 个配对子目,"
-        "单年数字噪声大(2019 +14.9%、2021 +9.6% 这类单年值不要单独引用);"
-        "十年累计比任何单年都可靠。全样本指数对 HCI 的 r=0.80、"
-        "平均偏误 −0.92 个百分点,作为**方法正确性**的旁证是成立的 —— "
-        "它证明管线没有系统性偏差,但它不是用来给侵蚀工程做escalation的那把尺。")
+    say("**Limits of confidence:** the erosion basket has only 25–97 matched items a year, "
+        "so single-year numbers are noisy (do not quote single-year values such as 2019 +14.9% or 2021 +9.6% on their own); "
+        "the ten-year compound is more reliable than any single year. The full-sample index against HCI, r=0.80 and "
+        "a mean bias of −0.92 points, does stand as side evidence that **the method is right** -- "
+        "it shows the pipeline has no systematic bias, but it is not the ruler for escalating erosion work.")
 
 
 def main():
     tx = load_panel()
     tx, n_mapped, n_coded = add_normalised_key(tx)
-    say("# 指数偏差的归因:匹配 vs 加权")
+    say("# Where the index gap comes from: matching vs weighting")
     say()
-    say("我的配对链式指数和 TxDOT 官方中标价指数(HCI)在若干年份对不上。")
-    say("两个候选解释,并排检验:**(A) 编码换代导致匹配丢失**、"
-        "**(B) HCI 是数量加权而我是等权中位数**。")
+    say("My matched-pair chained index and TxDOT's official bid price index (HCI) disagree in several years.")
+    say("Two candidate explanations, tested side by side: **(A) the code renumbering loses matches**, "
+        "**(B) HCI is quantity-weighted while mine is an equal-weight median**.")
     say()
-    say("- TxDOT 可用行 **%d**,项目 **%d**,年份 %s-%s"
+    say("- usable TxDOT rows **%d**, projects **%d**, years %s-%s"
         % (len(tx), tx.project_key.nunique(), tx.year.min(), tx.year.max()))
-    say("- 有可用编码的行 **%d**(%.1f%%),其中 crosswalk 把 **%d** 行的编码"
-        "映射到了后继代码" % (n_coded, 100.0 * n_coded / max(len(tx), 1), n_mapped))
+    say("- rows with a usable code **%d** (%.1f%%), of which the crosswalk mapped the code of **%d** rows "
+        "to its successor code" % (n_coded, 100.0 * n_coded / max(len(tx), 1), n_mapped))
     say()
-    say("加权指数用的是基期金额权重 `quantity x unit_price`,数学上等于 "
-        "Laspeyres 指数。单项比值夹到 [%.2f, %.2f]:单个子目三倍跳动是数据问题,"
-        "不是通胀。" % RATIO_CLIP)
+    say("The weighted index uses base-period dollar weights `quantity x unit_price`, which is mathematically the "
+        "Laspeyres index. Single-item ratios are clipped to [%.2f, %.2f]: a single item jumping threefold is a data problem, "
+        "not inflation." % RATIO_CLIP)
     say()
 
     variants = [
-        ("等权中位数 / 描述键(基线)", "item_key", False),
-        ("等权中位数 / 编码归一化", "item_key_cw", False),
-        ("金额加权 / 描述键", "item_key", True),
-        ("金额加权 / 编码归一化", "item_key_cw", True),
+        ("等权中位数 / 描述键(基线)", "item_key", False),  # labels kept (CSV `variant` values, one compared below): equal-weight median / description key (baseline)
+        ("等权中位数 / 编码归一化", "item_key_cw", False),  # equal-weight median / normalised code
+        ("金额加权 / 描述键", "item_key", True),  # dollar-weighted / description key
+        ("金额加权 / 编码归一化", "item_key_cw", True),  # dollar-weighted / normalised code
     ]
     parts = [chained(tx, k, w, lab) for lab, k, w in variants]
     allv = pd.concat(parts, ignore_index=True)
@@ -415,11 +415,11 @@ def main():
     hci = load_hci()
     hci_yoy = (hci.pct_change() * 100) if hci is not None else None
 
-    say("## 1. 逐年同比:四个变体 vs HCI")
+    say("## 1. Year-on-year change: the four variants vs HCI")
     say()
     rows = []
     for y in sorted(set(allv["to"])):
-        r = {"年份": y}
+        r = {"年份": y}  # key kept (table column): year
         for lab, _, _ in variants:
             s = allv[(allv.variant == lab) & (allv["to"] == y)]
             r[lab] = (float(s.yoy_pct.iat[0]) if len(s)
@@ -431,9 +431,9 @@ def main():
     say()
 
     if hci_yoy is None:
-        say("**没有 HCI 文件,无法判别。**")
+        say("**No HCI file; no verdict is possible.**")
     else:
-        say("## 2. 对 HCI 的拟合优劣")
+        say("## 2. How well each variant fits HCI")
         say()
         res = []
         for lab, _, _ in variants:
@@ -445,7 +445,7 @@ def main():
             if len(j) < 3:
                 continue
             res.append({
-                "变体": lab,
+                "变体": lab,  # keys kept (table columns): variant / overlapping years / mean abs. deviation (points) / mean bias (mine - HCI) / correlation / cumulative level
                 "重叠年数": len(j),
                 "平均绝对偏差(个百分点)": float((j.yoy_pct - j.hci).abs().mean()),
                 "平均偏误(我-HCI)": float((j.yoy_pct - j.hci).mean()),
@@ -457,22 +457,22 @@ def main():
         if hci is not None:
             lo, hi = sorted(set(allv["from"]))[0], sorted(set(allv["to"]))[-1]
             if lo in hci.index and hi in hci.index:
-                say("同期 HCI 累计水平(以 %s=100 计): **%.1f**"
+                say("HCI's cumulative level over the same period (%s=100): **%.1f**"
                     % (lo, 100.0 * hci.loc[hi] / hci.loc[lo]))
                 say()
 
     # Concentration is reported whether or not HCI loaded: it is the check on
     # whether a weighted figure means anything at all, and does not depend on
     # having something to compare against.
-    say("## 3. 加权指数的集中度(可信度检查)")
+    say("## 3. Concentration of the weighted index (a confidence check)")
     say()
-    say("`eff_n` 是权重份额的逆赫芬达尔指数:它是真正在决定这个数字的子目个数。"
-        "`eff_n` 远小于 `配对子目数` 就说明这一年的涨幅由极少数大宗子目决定,"
-        "那个同比数字就不是市场整体水平,而是几个巨量子目的报价波动。")
+    say("`eff_n` is the inverse Herfindahl index of the weight shares: the number of items that really decide this number. "
+        "`eff_n` far below `matched items` means that year's change is decided by a handful of bulk items, "
+        "and that year-on-year number is not the market level but the bid swings of a few huge items.")
     say()
-    w = allv[allv.variant == "金额加权 / 描述键"][
+    w = allv[allv.variant == "金额加权 / 描述键"][  # label kept (compared): dollar-weighted / description key
         ["from", "to", "n_matched", "eff_n", "yoy_pct"]].copy()
-    w.columns = ["起", "止", "配对子目数", "有效子目数", "同比%"]
+    w.columns = ["from", "to", "matched items", "effective items", "YoY %"]
     say(md(w, fmt="%.1f"))
     say()
 

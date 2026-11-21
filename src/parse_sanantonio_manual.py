@@ -145,26 +145,26 @@ def main():
         w.writerows(rows)
 
     d = pd.DataFrame(rows)
-    say("# 量价弹性的外部独立验证(圣安东尼奥 2022-06 平均单价表)")
+    say("# An outside, independent check of the quantity-price elasticity (San Antonio 2022-06 average unit price list)")
     say()
-    say(f"解析出 **{len(d)}** 行,其中带价格 {d.avg_unit_price.notna().sum()} 行,"
-        f"带数量分档 {d.qty_lo.notna().sum()} 行。")
+    say(f"Parsed **{len(d)}** rows: {d.avg_unit_price.notna().sum()} with a price, "
+        f"and {d.qty_lo.notna().sum()} with a quantity band.")
     say()
-    say("口径:「obtained from bids submitted for a wide variety of City projects "
-        "over a 12 month period」—— **全部投标报价的平均**,高于最低价,"
-        "用来预测最低价时要乘竞争折扣。而且是圣安东尼奥、2022 年、多数子目样本极小。")
+    say("Basis: 'obtained from bids submitted for a wide variety of City projects "
+        "over a 12 month period' -- **the average of ALL bids submitted**, above the low bid, "
+        "so it needs the competition discount to predict the low bid. It is also San Antonio, 2022, and most items rest on tiny samples.")
     say()
 
-    say("## 1. 这份手册自己就不给这些子目定单价")
+    say("## 1. The manual itself gives these items no unit price")
     say()
     pct = d[d.pct_of_project.notna()][["item_no", "description", "unit", "pct_of_project"]]
     if len(pct):
         say(md(pct.head(10), fmt="%.0f"))
         say()
-        say("`MOBILIZATION` 给的是 **11%**、`INSURANCE AND BOND` 3%、"
-            "`PREPARING RIGHT-OF-WAY` 4% —— 都是占项目造价的百分比,不是单价。")
-        say("一个城市的官方造价手册自己就拒绝给这几项定固定单价,"
-            "这和我们把它们标为 `scale_dependent` 是同一个判断。")
+        say("`MOBILIZATION` is given as **11%**, `INSURANCE AND BOND` 3%, "
+            "`PREPARING RIGHT-OF-WAY` 4% -- all percentages of the project cost, not unit prices.")
+        say("A city's own official cost manual refuses to give these items a fixed unit price, "
+            "which is the same judgement as our marking them `scale_dependent`.")
         say()
 
     # ---- the elasticity check -------------------------------------------
@@ -191,39 +191,39 @@ def main():
     if len(ck):
         ck.to_csv(os.path.join(CLEAN, "quantity_elasticity_external_check.csv"),
                   index=False, encoding="utf-8-sig")
-        say("## 2. 从公开分档价反算弹性")
+        say("## 2. Elasticity backed out of the published band prices")
         say()
         say(md(ck.head(18), fmt="%.2f"))
         say()
         e = ck.implied_elasticity
-        say(f"可反算的子目 **{len(ck)}** 个,弹性中位数 **{e.median():.3f}**,"
-            f"四分位区间 **{e.quantile(.25):.3f} ~ {e.quantile(.75):.3f}**。")
+        say(f"Items that can be backed out: **{len(ck)}**; median elasticity **{e.median():.3f}**, "
+            f"interquartile range **{e.quantile(.25):.3f} ~ {e.quantile(.75):.3f}**.")
         say()
-        say("### 和我们自己测的对比")
+        say("### Compared with our own measurement")
         say()
         say(md(pd.DataFrame([
-            {"来源": "我们:547k 条投标观测,按具体子目拟合",
-             "弹性中位数": -0.141, "方法": "log 单价 ~ log 数量,先项目内中位"},
-            {"来源": "圣安东尼奥:官方手册公开分档价",
+            {"来源": "Ours: 547k bid observations, fitted per specific item",  # dict keys kept as they are (table column headers): source / median elasticity / method
+             "弹性中位数": -0.141, "方法": "log unit price ~ log quantity, within-project medians first"},
+            {"来源": "San Antonio: band prices published in the official manual",
              "弹性中位数": round(float(e.median()), 3),
-             "方法": "同一子目相邻数量档价格之比"},
+             "方法": "ratio of the prices of adjacent quantity bands of the same item"},
         ]), fmt="%.3f"))
         say()
-        say("**两条完全独立的路径给出同向、同量级的结果** —— 一边是从 54 万条投标数据"
-            "统计出来的,一边是另一个城市自己发布的分档定价。这说明数量效应是真实的"
-            "结构性关系,不是我们合并方式造成的假象。")
+        say("**Two fully independent routes give results in the same direction and of the same size** -- one is "
+            "statistics over 540k bid observations, the other another city's own published band pricing. So the quantity effect is a real "
+            "structural relationship, not an artefact of the way we pool.")
         say()
-        say(f"圣安东尼奥的弹性略强({e.median():.3f} vs -0.141),合理 —— "
-            "它的分档是人为划定的离散区间、且基于全部报价均值;"
-            "我们的是连续拟合、基于项目内中位数,后者更保守。")
+        say(f"San Antonio's elasticity is a little stronger ({e.median():.3f} vs -0.141), which is reasonable -- "
+            "its bands are hand-drawn discrete intervals and rest on the mean of all bids; "
+            "ours is a continuous fit on within-project medians, the more conservative of the two.")
         say()
-        say("实用含义:数量翻 10 倍,单价下降约 "
-            f"{(1 - 10 ** -0.141) * 100:.0f}%(我们的估计)到 "
-            f"{(1 - 10 ** float(e.median())) * 100:.0f}%(圣安东尼奥的分档)。")
+        say("In practice: with 10 times the quantity, the unit price falls by about "
+            f"{(1 - 10 ** -0.141) * 100:.0f}% (our estimate) to "
+            f"{(1 - 10 ** float(e.median())) * 100:.0f}% (San Antonio's bands).")
         say()
 
     # ---- the TRM anchor --------------------------------------------------
-    say("## 3. TRM 的唯一外部锚点")
+    say("## 3. The only outside anchor for TRM")
     say()
     trm = d[d.description.str.contains("TURF REINFORC|HPTRM|EROSION CONTROL MAT|BLANKET",
                                        case=False, na=False)]
@@ -231,15 +231,15 @@ def main():
         say(md(trm[["item_no", "description", "unit", "n_bids", "avg_unit_price"]],
                fmt="%.2f"))
         say()
-        say("`HIGH PERFORMANCE TURF REINFORCED MATTING (HPTRM)` = $20.50/SY(仅 4 个报价)。")
-        say("这是目前 TRM 唯一的外部参考点。注意它和我们自己项目的 TRM 中位 $62/SY 差 3 倍 ——"
-            "可能是产品规格、地区、年份(2022)三者叠加,**不能直接替换**。")
+        say("`HIGH PERFORMANCE TURF REINFORCED MATTING (HPTRM)` = $20.50/SY (only 4 bids).")
+        say("This is the only outside reference point for TRM so far. Note that it is 3x off the TRM median of our own projects, $62/SY -- "
+            "probably product spec, region and year (2022) stacked together; **it cannot be swapped in directly**.")
         say()
-        say("但它顺带验证了一件事:`EROSION CONTROL BLANKET (BIODEGRADEABLE)` = $3.16/SY,"
-            "和 TxDOT 的 `soil retention blanket` 约 $2/SY 量级一致 —— "
-            "反过来证明 TxDOT 那一项**确实不是 TRM**,我们没有误用。")
+        say("But it confirms one thing in passing: `EROSION CONTROL BLANKET (BIODEGRADEABLE)` = $3.16/SY, "
+            "the same order of magnitude as TxDOT's `soil retention blanket` at about $2/SY -- "
+            "which in turn shows that the TxDOT item **really is not TRM**; we have not misused it.")
     else:
-        say("未在表中定位到 TRM 相关子目。")
+        say("No TRM-related item was found in the list.")
     say()
 
     os.makedirs(REPORTS, exist_ok=True)

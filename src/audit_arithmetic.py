@@ -83,26 +83,26 @@ def main():
     # row cannot be checked at all.
     d["unchecked_no_qty"] = d.has_e & d.has_p & ~d.has_q
 
-    say("# 算术自洽审计")
+    say("# Arithmetic consistency audit")
     say()
-    say("判据是 `数量 × 单价 == 印刷延伸额`,**不是**「这个单价在源文档里搜不搜得到」。")
+    say("The test is `quantity × unit price == printed extension`, **not** 'can this unit price be found in the source document'.")
     say()
-    say("后者更弱而且会误判:它分不清「真实但归错族」和「真的被拼接出来的」。"
-        "Briar Hill(Bid 26020)就被字符串检索误判过一次 —— 两个被报为「凭空生成」的单价"
-        "是真的,印在第 157 页子目 122 `Concrete Channel Grade Control Walls` 36 CY 上,"
-        "而 `1,417.25 × 36 = 51,021.00` 分毫不差,这一条算术就足以定案。")
+    say("The latter is weaker and misjudges: it cannot tell 'real but filed under the wrong family' from 'really stitched together'. "
+        "Briar Hill (Bid 26020) was misjudged once by a string search -- two unit prices reported as 'made up out of nothing' "
+        "are real: they are printed on page 157, item 122 `Concrete Channel Grade Control Walls`, 36 CY, "
+        "and `1,417.25 × 36 = 51,021.00` holds to the cent; this one piece of arithmetic settles it.")
     say()
-    say("- 总行 **%d**" % len(d))
-    say("- 可检验(数量、单价、延伸额都在) **%d**(%.1f%%)"
+    say("- Total rows **%d**" % len(d))
+    say("- Checkable (quantity, unit price and extension all present) **%d** (%.1f%%)"
         % (d.checkable.sum(), 100.0 * d.checkable.mean()))
     if d.checkable.sum():
-        say("- 可检验行里自洽 **%.2f%%**"
+        say("- Consistent among the checkable rows **%.2f%%**"
             % (100.0 * d.loc[d.checkable, "arith_ok"].mean()))
-    say("- **有延伸额但数量为空**(列边界失败,任何门都查不到) **%d**(%.1f%%)"
+    say("- **Extension present but quantity empty** (a column-boundary failure no gate can catch) **%d** (%.1f%%)"
         % (d.unchecked_no_qty.sum(), 100.0 * d.unchecked_no_qty.mean()))
     say()
 
-    say("## 1. 自洽率最差的文件")
+    say("## 1. Files with the worst consistency rate")
     say()
     g = (d.groupby("src_file")
          .agg(rows=("unit_price", "size"),
@@ -113,21 +113,21 @@ def main():
     bad = g[(g.checkable >= MIN_CHECKABLE) & (g.ok_rate < 95)].sort_values("ok_rate")
     bad = bad.assign(src_file=bad.src_file.astype(str).str[-54:])
     say(md(bad.head(25)[["src_file", "rows", "checkable", "ok_rate", "no_qty"]],
-           fmt="%.1f") if len(bad) else "没有文件低于 95%。")
+           fmt="%.1f") if len(bad) else "No file is below 95%.")
     say()
 
-    say("## 2. 完全无法检验的文件(数量整列丢失)")
+    say("## 2. Files that cannot be checked at all (the whole quantity column is lost)")
     say()
-    say("这些文件有印刷延伸额、也有单价,但数量列没抽出来。算术门对它们**无话可说**,"
-        "所以它们不会出现在上面那张表里 —— 这正是它们能一直累积的原因。")
+    say("These files have printed extensions and unit prices, but the quantity column was not extracted. The arithmetic gate has **nothing to say** about them, "
+        "so they never show up in the table above -- which is exactly why they could keep piling up.")
     say()
     nq = g[g.no_qty > 0].sort_values("no_qty", ascending=False)
     nq = nq.assign(src_file=nq.src_file.astype(str).str[-54:])
     say(md(nq.head(20)[["src_file", "rows", "checkable", "no_qty"]], fmt="%.0f")
-        if len(nq) else "没有。")
+        if len(nq) else "None.")
     say()
 
-    say("## 3. 按子目族")
+    say("## 3. By item family")
     say()
     fg = (d.groupby("item_family")
           .agg(rows=("unit_price", "size"),
@@ -140,9 +140,9 @@ def main():
            fmt="%.1f"))
     say()
 
-    say("## 4. 客户主业族的逐族体检")
+    say("## 4. Family-by-family check of the client's core families")
     say()
-    say("这几个族样本最薄,所以一条坏行的影响最大。")
+    say("These families have the thinnest samples, so a single bad row matters most here.")
     say()
     CORE = ["gabion_wall", "gabion_mattress", "trm", "rock_anchor", "conc_beam",
             "riprap_conc", "riprap_stone", "retaining_wall", "conc_mow_strip",

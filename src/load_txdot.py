@@ -192,11 +192,11 @@ def main():
     print("lettings:", df.project_id.nunique(),
           "| vendors:", real.vendor_name.nunique(),
           "| date range:", keep.bid_date.min(), "->", keep.bid_date.max())
-    print("\n=== 竞争强度分布 (按 letting) ===")
+    print("\n=== Competition intensity distribution (by letting) ===")
     print(pj.n_bidders.value_counts().sort_index().to_string())
-    print("\n=== 实测竞争折扣 (最低价 / 中位价) ===")
+    print("\n=== Measured competition discount (low bid / median bid) ===")
     print(disc[disc.n_lettings >= 3].to_string(index=False))
-    print("\n=== project_classification x 投标家数 ===")
+    print("\n=== project_classification x number of bidders ===")
     cc = (tot[~tot.is_engineer_estimate].drop_duplicates("project_id")
           .groupby("project_classification")
           .agg(lettings=("project_id", "size"), median_bidders=("n_bidders", "median"))

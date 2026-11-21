@@ -102,14 +102,14 @@ def main():
     import collections
     fam = collections.Counter(r["item_family"] for r in rows)
     thin = sum(1 for r in rows if r["n_observations"] < 3)
-    print("解析出 %d 个 item" % len(rows))
-    print("样本数 <3 的 item: %d (%.0f%%) —— 这些均值不可靠"
+    print("Parsed %d items" % len(rows))
+    print("Items with fewer than 3 observations: %d (%.0f%%) -- these averages are unreliable"
           % (thin, thin / max(len(rows), 1) * 100))
-    print("样本数中位数: %d" % sorted(r["n_observations"] for r in rows)[len(rows) // 2])
+    print("Median number of observations: %d" % sorted(r["n_observations"] for r in rows)[len(rows) // 2])
     cvs = sorted(r["cv"] for r in rows if r["cv"] is not None)
     if cvs:
-        print("变异系数中位数: %.2f" % cvs[len(cvs) // 2])
-    print("\n前 10 族:")
+        print("Median coefficient of variation: %.2f" % cvs[len(cvs) // 2])
+    print("\nTop 10 families:")
     for k, v in fam.most_common(10):
         print("  %-20s %d" % (k, v))
     print("\n-> data/clean/dwu_price_manual.csv")

@@ -392,35 +392,35 @@ def main():
         w.writerows(all_tot)
 
     import collections
-    print("扫描 %d 个 tab,DFW 区域保留 %d 个" % (n_files, n_dfw))
-    print("子目报价行 %d" % len(all_items))
-    print("DFW 外另保留含冲刷子目的 tab %d 个,冲刷子目报价行 %d"
+    print("Scanned %d tabs, kept %d in the DFW area" % (n_files, n_dfw))
+    print("Item bid rows %d" % len(all_items))
+    print("Outside DFW, also kept %d tabs with erosion items; erosion item bid rows %d"
           % (n_ero_tabs, len(all_ero)))
     if all_ero:
         eg = collections.Counter(r["bid_date"][:4] for r in all_ero if r["bid_date"])
         gab = [r for r in all_ero if "gabion" in r["desc_norm"]]
-        print("=== 全州冲刷子目按年(报价行)===")
+        print("=== Statewide erosion items by year (bid rows) ===")
         for y in sorted(eg):
             print("  %s  %6d" % (y, eg[y]))
-        print("gabion 报价行 %d,涉及 %d 个 tab"
+        print("gabion bid rows %d, in %d tabs"
               % (len(gab), len(set(r["src_file"] for r in gab))))
         gy = collections.Counter(r["bid_date"][:4] for r in gab if r["bid_date"])
-        print("gabion 按年(tab 数):")
+        print("gabion by year (number of tabs):")
         for y in sorted(gy):
             n = len(set(r["src_file"] for r in gab if r["bid_date"][:4] == y))
-            print("  %s  tabs=%3d  行=%5d" % (y, n, gy[y]))
+            print("  %s  tabs=%3d  rows=%5d" % (y, n, gy[y]))
     yr = collections.Counter(t["bid_date"][:4] for t in all_tot if t["bid_date"])
-    print("\n=== 按年(项目数)===")
+    print("\n=== By year (number of projects) ===")
     for y in sorted(yr):
         print("  %s  %4d" % (y, yr[y]))
     nb = collections.Counter(t["n_bidders"] for t in all_tot)
-    print("\n=== 投标家数分布 ===")
+    print("\n=== Distribution of the number of bidders ===")
     for k in sorted(nb):
-        print("  %2d 家: %4d 个开标" % (k, nb[k]))
+        print("  %2d bidders: %4d lettings" % (k, nb[k]))
     gen = collections.Counter(r["code_generation"] for r in all_items)
-    print("\n=== 编码代次 ===", dict(gen))
+    print("\n=== Code generations ===", dict(gen))
     nodate = sum(1 for t in all_tot if not t["bid_date"])
-    print("无日期项目: %d" % nodate)
+    print("Projects without a date: %d" % nodate)
     print("\n-> data/clean/txdot_archive_line_items.csv")
     print("-> data/clean/txdot_archive_project_totals.csv")
 

@@ -181,7 +181,7 @@ def main():
     all_obs, all_tot = [], []
     for path, yr in files:
         obs, tot = parse_report(path, yr)
-        print("  %-44s %4d 条明细  %4d 个 item" % (os.path.basename(path), len(obs), len(tot)))
+        print("  %-44s %4d detail lines  %4d items" % (os.path.basename(path), len(obs), len(tot)))
         all_obs.extend(obs)
         all_tot.extend(tot)
 
@@ -223,8 +223,8 @@ def main():
     years = sorted(set(r["bid_date"][:4] for r in all_obs if r["bid_date"]))
     nodate = sum(1 for r in all_obs if not r["bid_date"])
     nounit = sum(1 for r in all_obs if not r["unit"])
-    print("\n明细总计 %d 条 | item %d 个 | 年份 %s" % (len(all_obs), len(all_tot), years))
-    print("算术不一致 %d (%.1f%%) | 无日期 %d | 无单位 %d"
+    print("\nDetail lines in total %d | items %d | years %s" % (len(all_obs), len(all_tot), years))
+    print("Arithmetic mismatches %d (%.1f%%) | no date %d | no unit %d"
           % (bad, bad / max(len(all_obs), 1) * 100, nodate, nounit))
 
     # verify the published quantity-weighted average against the detail lines
@@ -245,7 +245,7 @@ def main():
                 ok += 1
             else:
                 off += 1
-    print("按数量加权均价复算: 吻合 %d / 不吻合 %d  (验证口径 = 金额之和/数量之和)" % (ok, off))
+    print("Quantity-weighted average price recomputed: match %d / no match %d  (check basis = sum of amounts / sum of quantities)" % (ok, off))
     print("\n-> data/clean/garland_item_prices.csv, garland_item_totals.csv")
 
 

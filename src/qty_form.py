@@ -205,16 +205,16 @@ def main():
     if "project_kind" in m.columns:
         m = m[m.project_kind == "construction"]
 
-    say("# 数量效应的函数形式:幂律 vs 固定+变动")
+    say("# The functional form of the quantity effect: power law vs fixed + variable")
     say()
-    say("现在管线用的是逐族单一幂律 `price = c · q^e`。一个受控观测"
-        "(同项目、同一天、同一批 6 家投标人,同子目只有数量不同)显示"
-        "表观弹性 −0.502 **基本不是弹性,是进场费摊进了单价** —— 表观弹性最大的"
-        "两家恰恰是固定费用最大的两家($4,027 / $4,207),而不是变动费率更陡的两家。")
+    say("The pipeline now uses a single power law per family, `price = c · q^e`. One controlled observation "
+        "(same project, same day, the same 6 bidders, the same item differing only in quantity) shows "
+        "that the apparent elasticity of −0.502 **is mostly not elasticity but a mobilization charge spread into the unit price** -- the two bidders with the largest apparent elasticity "
+        "are exactly the two with the largest fixed charges ($4,027 / $4,207), not the two with steeper variable rates.")
     say()
-    say("**残差只在小工程量档比较**(低于该子目中位数量的 %.0f%%,"
-        "样本不足时退回最低四分位)。两种形式在数据主体上几乎一致,"
-        "全局比较会被样本最密的大工程量端决定 —— 而分歧恰好全在稀疏的小量端。"
+    say("**Residuals are compared in the small-quantity band only** (below %.0f%% of the item's median quantity, "
+        "falling back to the lowest quartile when samples are short). The two forms nearly agree over the bulk of the data, "
+        "so a global comparison would be decided by the densest, large-quantity end -- while the disagreement lies entirely in the sparse small-quantity end."
         % (SMALL_FRAC * 100))
     say()
 
@@ -241,29 +241,29 @@ def main():
             rows.append(r)
     res = pd.DataFrame(rows)
     if not len(res):
-        say("**可拟合的 (族, 单位) 组合不足,无法判别。**")
+        say("**Not enough (family, unit) combinations can be fitted; no verdict is possible.**")
     else:
         res.to_csv(os.path.join(CLEAN, "qty_form_comparison.csv"), index=False,
                    encoding="utf-8-sig")
-        say("## 1. 判别结果")
+        say("## 1. Verdict")
         say()
         for tgt in ("median", "low_bid"):
             t = res[res.target == tgt]
             if not len(t):
                 continue
             w = t.winner.value_counts()
-            say("**目标 = %s** (%d 个 (族,单位) 组合)" % (tgt, len(t)))
+            say("**Target = %s** (%d (family, unit) combinations)" % (tgt, len(t)))
             say()
-            say("- `a+b/q` 更好: **%d**" % int(w.get("a+b/q", 0)))
-            say("- 幂律更好: **%d**" % int(w.get("power", 0)))
-            say("- 相当(差距 <10%%): %d" % int(w.get("tie", 0)))
-            say("- 小量档中位 MAPE: `a+b/q` **%.1f%%** vs 幂律 **%.1f%%**"
+            say("- `a+b/q` better: **%d**" % int(w.get("a+b/q", 0)))
+            say("- power law better: **%d**" % int(w.get("power", 0)))
+            say("- about equal (gap <10%%): %d" % int(w.get("tie", 0)))
+            say("- Median MAPE in the small band: `a+b/q` **%.1f%%** vs power law **%.1f%%**"
                 % (t.hyp_mape_small.median(), t.power_mape_small.median()))
-            say("- 全样本中位 MAPE(供对照,**不是判据**): `a+b/q` %.1f%% vs 幂律 %.1f%%"
+            say("- Median MAPE over all samples (for reference, **not the test**): `a+b/q` %.1f%% vs power law %.1f%%"
                 % (t.hyp_mape_all.median(), t.power_mape_all.median()))
             say()
 
-        say("## 2. 客户主业族的逐族结果")
+        say("## 2. Results for the client's core families, family by family")
         say()
         CORE = ["gabion_wall", "gabion_mattress", "trm", "trm_permanent",
                 "trm_temporary", "rock_anchor", "conc_beam", "riprap_conc",
@@ -275,55 +275,55 @@ def main():
                 "power_e", "hyp_a", "hyp_b",
                 "power_mape_small", "hyp_mape_small", "winner"]
         say(md(core[cols].sort_values("n", ascending=False), fmt="%.2f")
-            if len(core) else "(客户主业族样本不足)")
+            if len(core) else "(not enough samples in the client's core families)")
         say()
-        say("`hyp_a` 是变动费率(单位价),`hyp_b` 是每次发生的固定费用。"
-            "**`hyp_b` 是真实固定分量的上界** —— 跨项目拟合会把项目之间"
-            "其他一切差异也算进去。")
+        say("`hyp_a` is the variable rate (unit price); `hyp_b` is the fixed charge per occurrence. "
+            "**`hyp_b` is an upper bound on the true fixed component** -- a cross-project fit also counts every other "
+            "difference between projects into it.")
         say()
-        say("## 3. 怎么用")
+        say("## 3. How to use it")
         say()
-        say("- `winner == 'a+b/q'` 的组合:小工程量报价用 `价格 = a + b/数量`,"
-            "不要用幂律外推")
-        say("- `winner == 'power'` 的组合:保持现有 `qty_elasticity` 缩放")
-        say("- `winner == 'tie'`:两者在小量档差距 <10%,用哪个都行,"
-            "但 `a+b/q` 在大工程量上收敛而幂律无界,所以**外推时选 `a+b/q`**")
+        say("- combinations with `winner == 'a+b/q'`: price small quantities with `price = a + b/quantity`, "
+            "do not extrapolate the power law")
+        say("- combinations with `winner == 'power'`: keep the existing `qty_elasticity` scaling")
+        say("- `winner == 'tie'`: the two differ by <10% in the small band, either will do, "
+            "but `a+b/q` converges at large quantities while the power law is unbounded, so **choose `a+b/q` when extrapolating**")
         say()
-        say("### 两个必须一起读的限制")
+        say("### Two limits that must be read together")
         say()
-        say("**(1) 负的 `hyp_b` 是拟合在抓噪声的信号,不是发现。** "
-            "固定费用不可能是负的。出现负值的组合,`a+b/q` 的胜出不可信:")
+        say("**(1) A negative `hyp_b` is a sign that the fit is chasing noise, not a finding.** "
+            "A fixed charge cannot be negative. Where a combination has a negative value, its `a+b/q` win cannot be trusted:")
         neg = res[(res.hyp_b < 0)][["item_family", "unit", "target", "n",
                                     "hyp_a", "hyp_b", "winner"]]
         say()
-        say(md(neg.head(12), fmt="%.2f") if len(neg) else "(没有负值)")
+        say(md(neg.head(12), fmt="%.2f") if len(neg) else "(no negative values)")
         say()
-        say("**(2) 这个检验量的是跨项目关系,而那个受控观测是项目内的。** "
-            "它们是两个不同的问题,这个脚本答不了后者。项目内把地域、年份、"
-            "竞争强度、设计单位全部固定住,跨项目则把它们全混进来 —— "
-            "所以跨项目拟合里,数量以外的离散很可能压过了数量本身的作用。"
-            "两种形式的 MAPE 都在 20–110%,这本身就说明**数量项解释的方差很少**,"
-            "不管用哪个函数形式。")
+        say("**(2) This test measures a cross-project relationship, while the controlled observation is within one project.** "
+            "They are two different questions, and this script cannot answer the latter. Within a project, region, year, "
+            "competition and designer are all held fixed; across projects they all come mixed in -- "
+            "so in a cross-project fit the scatter from everything other than quantity very likely swamps the effect of quantity itself. "
+            "Both forms have a MAPE of 20–110%, which by itself says that **the quantity term explains little of the variance**, "
+            "whichever functional form is used.")
         say()
-        say("所以结论不是「`a+b/q` 错了」,而是:**单份文档内那个 3 倍的进场费效应,"
-            "在跨项目数据上检测不到** —— 要么它被跨项目噪声淹掉了,要么它确实只是"
-            "那一个案例的特征。要分清只能找更多同项目内的数量配对,"
-            "那是采集侧的活,不是拟合能解决的。")
+        say("So the conclusion is not '`a+b/q` is wrong' but: **the 3x mobilization effect inside that single document "
+            "cannot be detected in cross-project data** -- either cross-project noise drowns it, or it really is just "
+            "a feature of that one case. Telling the two apart needs more within-project quantity pairs, "
+            "which is a job for data collection, not something fitting can solve.")
         say()
-        say("明细见 `data/clean/qty_form_comparison.csv`。")
+        say("Details in `data/clean/qty_form_comparison.csv`.")
         say()
 
         # ---- is `b` a cost or a bidding choice? --------------------------
-        say("## 4. 固定项 `b` 在投标人之间的分布:成本结构还是报价策略")
+        say("## 4. How the fixed term `b` is spread across bidders: cost structure or bidding strategy")
         say()
         pb = per_bidder_b(m)
         if not len(pb):
-            say("同一承包商在同一子目上跨数量的样本不足,无法判别。")
+            say("Not enough samples of the same contractor on the same item across quantities; no verdict is possible.")
         else:
             pb.to_csv(os.path.join(CLEAN, "qty_form_per_bidder.csv"), index=False,
                       encoding="utf-8-sig")
-            say("逐 (子目, 投标人) 拟合 `a + b/q`,共 **%d** 个组合、"
-                "%d 个承包商。" % (len(pb), pb.bidder.nunique()))
+            say("`a + b/q` fitted per (item, bidder): **%d** combinations, "
+                "%d contractors." % (len(pb), pb.bidder.nunique()))
             say()
             # Share of bidders whose b is effectively zero, per family.
             rows2 = []
@@ -338,35 +338,35 @@ def main():
                     "share_b_near_zero": near0 * 100,
                     "a_median": sub.a.median()})
             t2 = pd.DataFrame(rows2).sort_values("n_fits", ascending=False)
-            say(md(t2.head(18), fmt="%.2f") if len(t2) else "(样本不足)")
+            say(md(t2.head(18), fmt="%.2f") if len(t2) else "(not enough samples)")
             say()
-            say("**读法**:`share_b_near_zero` 高(很多承包商的 `b` 接近 0,"
-                "而另一些很大)说明 `b` 主要是**报价策略**——谁选择把动员费"
-                "摊进单价。那种情况下预测**最低价**应该取 `b` 分布的低端,"
-                "不是中位,因为激进报价的那家正是不摊的那家。")
+            say("**How to read it**: a high `share_b_near_zero` (many contractors with `b` near 0, "
+                "while others are large) says that `b` is mainly a **bidding strategy** -- who chooses to spread mobilization "
+                "into the unit price. In that case, predicting the **low bid** should take the low end of the `b` distribution, "
+                "not the median, because the aggressive bidder is exactly the one who does not spread it.")
             say()
-            say("`b` 若在承包商之间分布集中,它更接近真实的固定成本,"
-                "可以直接进价格模型。明细见 `data/clean/qty_form_per_bidder.csv`。")
+            say("If `b` is tightly clustered across contractors, it is closer to a true fixed cost "
+                "and can go straight into the price model. Details in `data/clean/qty_form_per_bidder.csv`.")
             say()
             negshare = 100.0 * float((pb.b < 0).mean())
-            say("### 这一节的判决:`b` 横跨零,所以它在跨项目数据上不是成本结构")
+            say("### Verdict of this section: `b` straddles zero, so in cross-project data it is not a cost structure")
             say()
-            say("- `b < 0` 的拟合占 **%.1f%%**。固定费用不可能是负的,"
-                "所以近三分之一的拟合给出的是物理上不可能的参数。" % negshare)
-            say("- `b` 的分位:p10 **%.0f**、p25 **%.0f**、中位 **%.0f**、"
-                "p75 **%.0f**、p90 **%.0f** —— 分布跨越零点。"
+            say("- Fits with `b < 0` are **%.1f%%**. A fixed charge cannot be negative, "
+                "so nearly a third of the fits give a physically impossible parameter." % negshare)
+            say("- Quantiles of `b`: p10 **%.0f**, p25 **%.0f**, median **%.0f**, "
+                "p75 **%.0f**, p90 **%.0f** -- the distribution crosses zero."
                 % (pb.b.quantile(.1), pb.b.quantile(.25), pb.b.median(),
                    pb.b.quantile(.75), pb.b.quantile(.9)))
             say()
-            say("**如果 `b` 是真实的固定成本,它应该几乎处处为正。** 它不是,"
-                "所以这个重参数化在跨项目数据上吸收的是噪声,不是结构。"
-                "这和上面的判别结果一致:`a+b/q` 的胜出里有 28% 带负 `b`,"
-                "剔掉之后真正可信的胜出只占全部组合的 17.6%。")
+            say("**If `b` were a true fixed cost, it would be positive almost everywhere.** It is not, "
+                "so in cross-project data this re-parameterisation soaks up noise, not structure. "
+                "That agrees with the verdict above: 28% of the `a+b/q` wins carry a negative `b`, "
+                "and without them the truly credible wins are only 17.6% of all combinations.")
             say()
-            say("**所以保留幂律。** 但同时要记住两种形式的小量档 MAPE 都在 "
-                "50% 左右、几乎相同 —— 这说明**数量项本身解释的方差很少**,"
-                "不是哪个函数形式更好的问题。把弹性当精确缩放用是过度信任它;"
-                "小工程量上应该披露不确定而不是假装算准了。")
+            say("**So the power law stays.** But keep in mind that both forms have a small-band MAPE of "
+                "about 50%, nearly the same -- which says that **the quantity term itself explains little of the variance**; "
+                "it is not a question of which functional form is better. Using the elasticity as an exact scaling trusts it too much; "
+                "on small quantities the uncertainty should be disclosed rather than pretending it is computed precisely.")
 
     os.makedirs(REPORTS, exist_ok=True)
     with open(os.path.join(REPORTS, "qty_form.md"), "w", encoding="utf-8") as f:

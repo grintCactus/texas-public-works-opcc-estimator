@@ -1,45 +1,45 @@
-# 用检验集确认的决定：事先登记
+# Decisions confirmed on the test set: registered in advance
 
-每条登记写在第一次打开检验集之前。写完不改；必须改时，在后面追加带日期的说明。
+Each registration is written before the test set is opened for it. Once written it is not changed; when a change is unavoidable, a dated note is appended after it.
 
-## 1. 上线的估价规则能不能在没见过的开标上守住底线（2026-11-19 21:25 登记）
+## 1. Does the estimating rule in production hold the floor on lettings it has never seen? (registered 2026-11-19 21:25)
 
-**要确认的决定**：现在上线的估价器。它是对齐 + 按时间往前校准 + 守卫（瞄准 16%、上限为普通 P80）+ 窄版补年份（`reports/forward_floor_integration.md`），在去掉检验集之后的公开数据上重新训练。
+**Decision to confirm**: the estimator now in production. It is alignment + forward-in-time calibration + the guard (targeting 16%, capped at the ordinary P80) + the narrow year carry (`reports/forward_floor_integration.md`), retrained on the public data with the test set removed.
 
-**什么时候跑**：第二轮解析器修复完成、全量重建（检验集文件已标为 `public_test`）、两道守卫都通过以后，第一次运行 `src/holdout_eval.py --confirm`。
+**When to run**: once the second round of parser fixes is done, the full rebuild is complete (with the test-set files tagged `public_test`) and both guards pass: the first run of `src/holdout_eval.py --confirm`.
 
-**看什么**：检验集里能计分的市政开标（预计约 60 场）：
-- 主指标：P80 低于最低价的比例（点估计）。
-- 同时报告：落在 1.00–1.13 倍的比例、高估时的中位超出、P50 中位比和中位误差，都带 90% 区间；分年份、分冲刷/排水和其他。
+**What to look at**: the scorable municipal lettings in the test set (about 60 expected):
+- Main metric: the share of lettings with P80 below the low bid (point estimate).
+- Also reported: the share within 1.00–1.13x, the median overshoot when over, the P50 median ratio and median error, each with a 90% interval; by year, and erosion/drainage vs other.
 
-**怎么判**：
-- 低估比例不超过 20%：确认，如实报告。
-- 超过 20%：如实报告给用户。**不**因为这一次结果改规则：检验集不用来调参数。新的改法必须另行登记，并用 2026-11-19 以后的新开标来判。
+**How to judge**:
+- Under-share at most 20%: confirmed, reported as it is.
+- Above 20%: reported to the user as it is. The rule is **not** changed because of this one result: the test set is not used to tune parameters. Any new change must be registered separately and judged on new lettings after 2026-11-19.
 
-**说明**：第二轮解析器修复参考了独立核查列出的读错文件，那是数据质量问题，跟估价误差无关；如果其中有文件在检验集里，只影响“读得对不对”，不涉及看过它的估价结果。
+**Note**: the second round of parser fixes drew on the misread files listed by the independent check. That is a data-quality matter unrelated to estimate error; if some of those files are in the test set, it only affects "whether they are read correctly" and involves no look at their estimate results.
 
-### 追加说明（2026-11-19 21:55，在任何一次打开之前）
-- **检验集换成第二版**（md5 `9adc9f26a541de73a7b527c9e7951a42`）。第一版从没被打分就作废了：它把 2022–26 年 43 组冲刷/排水开标里的 30 组锁了进去，训练里只剩 13 组，2023 和 2026 年一组都没有，会削弱估价器在最主要的工程类型上的能力。第二版对每个“年份 × 工程类型”格子都抽 22%：59 组，冲刷/排水 9 组，训练里保留 34 组。第一版清单保留为 `public_holdout_v1_unused.csv`。
-- **这次确认只算半干净**：守卫瞄准 16% 这类常数，是在还包含这些开标的 2024–26 年数据上定的，这些开标的整体结果参与过那次选择。所以登记 1 的结果主要说明“去掉这些开标重新训练后，在它们身上底线守不守得住”，不能算对 16% 的干净确认。锁定之后才登记的决定，用检验集判才是完全干净的。
-- **样本小**：约 59 场时，低估比例的 90% 区间大约是 ±8 个点。点估计超过 20% 照样如实报告为“没守住”，同时报出区间，说明有多大可能只是抽样波动。冲刷/排水只有 9 场，只描述，不单独下结论。
+### Addendum (2026-11-19 21:55, before any opening)
+- **The test set is replaced by version 2** (md5 `9adc9f26a541de73a7b527c9e7951a42`). Version 1 was retired without ever being scored: it locked away 30 of the 43 erosion/drainage letting groups of 2022–26, leaving only 13 in training and none at all for 2023 and 2026, which would have weakened the estimator on the most important work type. Version 2 draws 22% of every "year × work type" cell: 59 groups, 9 of them erosion/drainage, with 34 kept in training. The version 1 list is kept as `public_holdout_v1_unused.csv`.
+- **This confirmation is only half clean**: constants such as the guard's 16% target were set on 2024–26 data that still contained these lettings, and their overall results took part in that choice. So the result of registration 1 mainly shows "whether the floor holds on these lettings after retraining without them"; it is not a clean confirmation of the 16%. Only decisions registered after the lock are judged fully cleanly by the test set.
+- **Small sample**: with about 59 lettings, the 90% interval of the under-share is about ±8 points. A point estimate above 20% is still reported as "not held", together with the interval, to show how likely it is to be just sampling noise. Erosion/drainage has only 9 lettings: described only, no separate conclusion.
 
-### 登记 1 的结果（2026-11-19 22:47，第一次打开检验集）
-- 运行：`src/holdout_eval.py --confirm ...`，数据是 22:44 的重建（解析 .22、OCR 第二轮、检验集标成 `public_test`，两道守卫通过）。访问日志里有“开始”“完成”两行。输出：`reports/measurements/holdout_confirm_1_20261119.txt`，汇总 `handoff/scratchpad/holdout_eval/confirm_20261119_224736.json`。
-- 打出分 58 场：登记的 59 个招标键里 58 个打出分。没计分的：3 场面板里没有可用价格行，1 场能定价的子目不足 90%（脚本的原话；没有逐场打印，以免多看检验集）。训练：269 场市政开标按时间往前计分。
-- **主指标：P80 低于最低价 8/58 = 13.8%（90% 区间 6.9–20.8%）。不超过 20%，按登记：确认。**
-- 同时报告：落在 1.00–1.13 倍 13.8%（6.9–20.7%）；高估超过 13% 的 72.4%；高估时中位超出 38.2%；P50 中位比 0.891（0.828–0.956），P50 误差中位 22.4%。
-- 分年份低估：2022 18.2%（11 场）、2023 10.0%（10）、2024 0%（13）、2025 21.4%（14）、2026 20.0%（10）。每年只有 10–14 场，区间很宽。
-- 冲刷/排水 9 场：0 场低估、2 场落区间、P50 中位比 1.20、高估时中位超出 90%（只描述，不下结论）。
-- 按 21:55 的追加说明，这是半干净的确认：16% 这类常数是在还含这些开标的数据上定的。
-- 按登记，不因这次结果改任何规则。
+### Result of registration 1 (2026-11-19 22:47, first opening of the test set)
+- Run: `src/holdout_eval.py --confirm ...`, on the 22:44 rebuild (parser .22, OCR round 2, test set tagged `public_test`, both guards passed). The access log has the two rows, "start" and "done". Output: `reports/measurements/holdout_confirm_1_20261119.txt`, summary `handoff/scratchpad/holdout_eval/confirm_20261119_224736.json`.
+- 58 lettings scored: 58 of the 59 registered letting keys were scored. Not scored: 3 with no usable price rows in the panel, 1 with under 90% of its items priceable (the script's own words; nothing was printed letting by letting, so as not to look at the test set more than needed). Training: 269 municipal lettings scored forward in time.
+- **Main metric: P80 below the low bid 8/58 = 13.8% (90% interval 6.9–20.8%). Not above 20%, so per the registration: confirmed.**
+- Also reported: within 1.00–1.13x 13.8% (6.9–20.7%); over by more than 13% 72.4%; median overshoot when over 38.2%; P50 median ratio 0.891 (0.828–0.956), P50 median error 22.4%.
+- Under-share by year: 2022 18.2% (11 lettings), 2023 10.0% (10), 2024 0% (13), 2025 21.4% (14), 2026 20.0% (10). Each year has only 10–14 lettings, so the intervals are wide.
+- Erosion/drainage, 9 lettings: 0 under, 2 in the band, P50 median ratio 1.20, median overshoot when over 90% (described only, no conclusion).
+- Per the 21:55 addendum, this is a half-clean confirmation: constants such as the 16% were set on data that still contained these lettings.
+- Per the registration, no rule is changed because of this result.
 
-## 2. 按用户澄清后的目标挑一个 P50 方案，在锁定检验集上确认（2026-11-20 02:1x 登记，新数据上的重测结果出来之前）
+## 2. Pick a P50 option by the goal as the user clarified it, and confirm it on the locked test set (registered 2026-11-20 02:1x, before the re-test results on the new data came out)
 
-**为什么现在登记。** 用户 02:0x 重申了目标，原话：“我希望就是你估计的结论几乎全部是比这个最低价高的……事实上你也不可能几乎全部……高估之后……我希望越少越好。这样子相当于就是尽量准嘛。至于百分之十三是我的期待，但这并不是一定的要求。”
-- 所以从现在起：底线照旧（P80 至少 80% 不低于最低价）；**在底线之内，分数是高估时超出多少，越少越好**；1.00–1.13 的比例只报告，不再当硬门槛。
-- 第 1–4 轮的开发规则把“带内比例不比现行规则少 1 点以上”当硬门槛，那是按旧的理解写的，那几轮的判定不改。
+**Why register now.** At 02:0x the user restated the goal, in their words: "I'd like your estimates to come out above the low bid almost every time ... in fact you can't do it almost every time ... once it is over ... I'd like it over by as little as possible. That amounts to being as accurate as possible. As for thirteen percent, that is my hope, but it is not a hard requirement."
+- So from now on: the floor stays (P80 not below the low bid on at least 80%); **within the floor, the score is how far over it goes when over, the less the better**; the 1.00–1.13 share is only reported, no longer a hard gate.
+- The development rules of rounds 1–4 made "in-band share not more than 1 point below the current rule" a hard gate; that was written under the old understanding, and the verdicts of those rounds stand.
 
-**候选**（代码已经冻结，就是第 3、4 轮打过分的那几种，不再加新的）：
+**Candidates** (code already frozen: exactly the ones scored in rounds 3 and 4, no new ones added):
 - W36
 - C4+D1
 - V2
@@ -48,306 +48,306 @@
 - V2+C4+D1
 - V2+C4+D1+W36
 
-**挑选用的数据。** 02:01 重建后的数据（解析器 .23、新增 31 份 DFW 标单、TxDOT 刷新）。实验子任务在这份数据上的第 3、4 轮重测（Part 2），登记时结果还没出来。
-- 市政 2024–26 年
-- TxDOT 2023–26 年
-- 都按时间往前
+**Data for the pick.** The data after the 02:01 rebuild (parser .23, 31 new DFW bid tabs, TxDOT refreshed). The experiment sub-task's re-test of rounds 3 and 4 on this data (Part 2); its results were not out yet at registration.
+- Municipal 2024–26
+- TxDOT 2023–26
+- Both forward in time
 
-**开发阶段怎么挑。** 一个方案要同时满足三条才有资格：
-- **（a）底线**：市政 P80 低估全体 ≤ 20%，每一年 ≤ max(20%, 现行规则当年值 + 3 点)；TxDOT 同样。
-- **（b）高估幅度**：
-  - 市政的高估时中位超出（P80 ≥ 最低价的开标里，P80/最低价 − 1 的中位数）低于现行规则；
-  - TxDOT 的不高于现行规则。
-- **（c）准度不变差**：市政平均 |ln(P50/最低价)| 和现行规则的配对差，90% 区间不能整体在 0 以上。
+**How the development stage picks.** An option qualifies only if it meets all three:
+- **(a) Floor**: municipal P80 under-share ≤ 20% overall, and each year ≤ max(20%, the current rule's value that year + 3 points); the same for TxDOT.
+- **(b) Size of the overshoot**:
+  - the municipal median overshoot when over (the median of P80/low bid − 1 over the lettings with P80 ≥ the low bid) is below the current rule's;
+  - TxDOT's is not above the current rule's.
+- **(c) Accuracy not worse**: the 90% interval of the paired difference in municipal mean |ln(P50/low bid)| against the current rule must not lie entirely above 0.
 
-有资格的方案里，选市政高估时中位超出最小的那个。差不到 2 个点算平手，平手选更简单的：W36 < C4+D1 < V2 < V2+D1 < V2+D1+W36 < V2+C4+D1 < V2+C4+D1+W36。
+Among the qualifying options, pick the one with the smallest municipal median overshoot. Less than 2 points apart counts as a tie, and a tie goes to the simpler one: W36 < C4+D1 < V2 < V2+D1 < V2+D1+W36 < V2+C4+D1 < V2+C4+D1+W36.
 
-一个都没资格，就不打开锁定检验集。
+If none qualifies, the locked test set is not opened.
 
-**在锁定检验集上怎么确认（只打开一次，记进访问日志）。**
-- **脚本**：用 `handoff/scratchpad/p50fix/confirm/` 的确认脚本，在同一批留出开标上同时给现行规则和选中的方案打分（配对）。
-  - 脚本现在支持 V2+D1+W36。
-  - 选中的是别的方案时，先把脚本扩展到那个方案，只用诱饵集验证（基线和 holdout_eval 逐场一致、泄漏检查全过），然后才打开。
-- **确认条件**，两条都要满足：
-  1. 选中方案的 P80 低于最低价 ≤ 20%。
-  2. 选中方案的高估时中位超出，低于现行规则在同一批开标上的值。
-- **只报告、不当条件**：
-  - 平均 |ln|、P50 误差中位、1.00–1.13 的比例，都带 90% 区间；
-  - 分冲刷/排水和其他。
-- **确认了**：并进 src，全量重建，两道守卫，按年份重测，然后上线。
-- **没确认**：不采用，如实报告，不因为这次结果去调方案。
+**How to confirm on the locked test set (opened once, recorded in the access log).**
+- **Script**: the confirmation script in `handoff/scratchpad/p50fix/confirm/` scores the current rule and the chosen option on the same held-out lettings (paired).
+  - The script now supports V2+D1+W36.
+  - If another option is chosen, the script is first extended to it and verified on the decoy only (baseline identical to holdout_eval letting by letting, all leak checks passed), and only then is the set opened.
+- **Confirmation conditions**, both must hold:
+  1. The chosen option's P80 below the low bid ≤ 20%.
+  2. The chosen option's median overshoot when over is below the current rule's value on the same lettings.
+- **Reported only, not conditions**:
+  - mean |ln|, P50 median error, the 1.00–1.13 share, each with a 90% interval;
+  - erosion/drainage and other separately.
+- **If confirmed**: merge into src, full rebuild, both guards, re-test by year, then go live.
+- **If not confirmed**: not adopted, reported as it is, and the option is not tuned because of this result.
 
-**事先说明的风险和局限。**
-- 这些候选是在 2024–26 年的开标上反复看过之后设计出来的，所以开发阶段的结果偏乐观。锁定检验集没参加过这些实验，它的结果才算数。
-- 实验子任务在 3 个诱饵种子上（各 59 场训练开标当留出）发现，V2+D1+W36 的 P80 低估都比现行规则高 1.7–5.1 点，其中一次到 23.7%。所以它在锁定检验集上有可能过不了第 1 条。
-- 锁定检验集约 58 场，低估比例的 90% 区间约 ±8 点。
+**Risks and limits stated in advance.**
+- These candidates were designed after looking at the 2024–26 lettings again and again, so the development results are optimistic. The locked test set took no part in these experiments; its result is the one that counts.
+- On 3 decoy seeds (59 training lettings held out each), the experiment sub-task found V2+D1+W36's P80 under-share 1.7–5.1 points above the current rule every time, once reaching 23.7%. So it may fail condition 1 on the locked test set.
+- The locked test set has about 58 lettings; the 90% interval of the under-share is about ±8 points.
 
-### 登记 2 的追加说明（2026-11-20 02:2x，新数据上的重测结果出来之前）
-用户 02:2x 补充：80% 也不是硬门槛，不低估比例越高越好（从 70% 提到 75% 也算进步）；高估时中位超出 13% 以内最理想，15%、18% 只要比之前好就是进步。两个目标都是“越好越好”，而且两者此消彼长：同一个模型把 P80 抬高，低估少了，高估就多了。
+### Addendum to registration 2 (2026-11-20 02:2x, before the re-test results on the new data came out)
+The user added at 02:2x: 80% is not a hard gate either; the higher the not-under share the better (going from 70% to 75% also counts as progress); a median overshoot within 13% is ideal, and 15% or 18% is progress as long as it beats what came before. Both goals are "the better, the better", and they trade off: raising P80 in the same model gives fewer unders and more overshoot.
 
-**挑选规则和确认条件都不改**：它们本来就是“底线不变差，高估幅度变小”，和用户的意思一致。
+**Neither the pick rule nor the confirmation conditions change**: they already say "the floor does not get worse and the overshoot gets smaller", which is what the user means.
 
-**只加一项报告**，用来公平地比较各方案“估得准不准”，不进判定：“同样不低估比例下的高估幅度”。
-- **做法**：对现行规则和每个候选方案，在各自打过分的开标上，把 P80 倍数直接调到正好让 75% / 80% / 85% 的开标不低估，再报告这时的高估时中位超出。市政、TxDOT 分开。
-- **口径**：这是在打分开标上直接调的，不是按时间往前的，只用来比较方案之间离散度的差别。
+**Only one report item is added**, to compare fairly how accurately each option estimates; it does not enter the verdict: "the overshoot at the same not-under share".
+- **Method**: for the current rule and each candidate, on the lettings each has scored, set the P80 multiplier directly so that exactly 75% / 80% / 85% of the lettings are not under, and report the median overshoot when over at that point. Municipal and TxDOT separately.
+- **Basis**: this is set directly on the scored lettings, not forward in time; it only serves to compare the spread of the options.
 
-### 登记 2 的开发阶段挑选结果（2026-11-20 02:3x，按上面的规则机械地算，没碰锁定检验集）
-数据：02:01 重建后的快照（实验子任务 `handoff/scratchpad/p50fix/round3/out_snap2/`、`round4/out_snap2/`）。
+### Development-stage pick for registration 2 (2026-11-20 02:3x, computed mechanically by the rule above, locked test set not touched)
+Data: the snapshot after the 02:01 rebuild (experiment sub-task `handoff/scratchpad/p50fix/round3/out_snap2/`, `round4/out_snap2/`).
 
-- **现行规则**：市政低估 15.5%，高估时中位超出 69.0%；TxDOT 低估 16.3%，高估时中位超出 51.3%。
-- **有资格的**：W36、V2、V2+D1、V2+D1+W36、V2+C4+D1、V2+C4+D1+W36。
-  - C4+D1 没资格：市政 2026 年低估 26.7%，超过上限 25.2%。
-- **市政高估时中位超出**：
-  - V2+C4+D1：55.1%（最低）
-  - V2：56.9%
-  - V2+C4+D1+W36：57.0%
-  - V2+D1+W36：58.7%
-  - V2+D1：59.3%
-  - W36：63.4%
-- **平手**：和最低值差不到 2 个点的是 V2、V2+C4+D1、V2+C4+D1+W36，按平手规则选最简单的。
-- **选中：V2（可比工程混合）。**
-  - 市政：低估 16.1%（每年都在上限内），高估时中位超出 56.9%（现行 69.0%），平均 |ln| −0.035（90% 区间 −0.054 ~ −0.016）。
-  - TxDOT：低估 16.4%，高估时中位超出 36.3%（现行 51.3%）。
-- **下一步**：按登记，先把确认脚本扩展到 V2（只用诱饵集验证），再打开锁定检验集一次。
+- **Current rule**: municipal under 15.5%, median overshoot when over 69.0%; TxDOT under 16.3%, median overshoot when over 51.3%.
+- **Qualifying**: W36, V2, V2+D1, V2+D1+W36, V2+C4+D1, V2+C4+D1+W36.
+  - C4+D1 does not qualify: municipal 2026 under 26.7%, above its cap of 25.2%.
+- **Municipal median overshoot when over**:
+  - V2+C4+D1: 55.1% (lowest)
+  - V2: 56.9%
+  - V2+C4+D1+W36: 57.0%
+  - V2+D1+W36: 58.7%
+  - V2+D1: 59.3%
+  - W36: 63.4%
+- **Tie**: V2, V2+C4+D1 and V2+C4+D1+W36 are within 2 points of the lowest; by the tie rule the simplest is chosen.
+- **Chosen: V2 (the comparables blend).**
+  - Municipal: under 16.1% (within the cap every year), median overshoot when over 56.9% (current 69.0%), mean |ln| −0.035 (90% interval −0.054 ~ −0.016).
+  - TxDOT: under 16.4%, median overshoot when over 36.3% (current 51.3%).
+- **Next step**: per the registration, first extend the confirmation script to V2 (verified on the decoy only), then open the locked test set once.
 
-### 登记 2 的结果（2026-11-20 02:38，第二次打开锁定检验集）
-- **怎么跑的**：`handoff/scratchpad/p50fix/confirm/v2d1w36_eval.py --variant V2 --confirm ...`
-  - 数据是 02:01 重建后的，和挑选用的快照 2 逐文件相同。
-  - 代码 md5 都和诱饵验证时一致。
-  - 访问日志自动记了“开始”“完成”两行。
-  - 输出：`reports/measurements/holdout_confirm_2_V2_20261120.txt`、`handoff/scratchpad/p50fix/confirm/out/confirm_V2_20261120_023858.json`。
-- **打分范围**：57 场（登记的 59 个键里，4 场面板里没有可用价格行，1 场能定价的子目不足 90%）。
+### Result of registration 2 (2026-11-20 02:38, second opening of the locked test set)
+- **How it was run**: `handoff/scratchpad/p50fix/confirm/v2d1w36_eval.py --variant V2 --confirm ...`
+  - The data is that of the 02:01 rebuild, file for file identical to snapshot 2 used for the pick.
+  - The code md5s all match those of the decoy verification.
+  - The access log recorded the "start" and "done" rows automatically.
+  - Output: `reports/measurements/holdout_confirm_2_V2_20261120.txt`, `handoff/scratchpad/p50fix/confirm/out/confirm_V2_20261120_023858.json`.
+- **Scored**: 57 lettings (of the 59 registered keys, 4 had no usable price rows in the panel and 1 had under 90% of its items priceable).
 
-| | 现行规则 | V2 | 差（90% 区间） |
+| | Current rule | V2 | Difference (90% interval) |
 |---|---|---|---|
-| P80 低于最低价 | 14.0%（8 场） | 17.5%（10 场） | +3.5 点（+0.0 ~ +8.8） |
-| 高估时中位超出 | 46.3% | 47.4% | +1.2 点（−7.8 ~ +7.7） |
-| 平均 \|ln\| | 0.309 | 0.280 | −0.029（−0.069 ~ +0.015） |
-| P50 误差中位 | 21.2% | 15.6% | −5.6 点（−10.0 ~ +0.9） |
-| 落在 1.00–1.13 | 8.8% | 7.0% | −1.8 点 |
-| P80 乘数中位 | 1.550 | 1.495 | −0.055 |
+| P80 below the low bid | 14.0% (8 lettings) | 17.5% (10 lettings) | +3.5 points (+0.0 ~ +8.8) |
+| Median overshoot when over | 46.3% | 47.4% | +1.2 points (−7.8 ~ +7.7) |
+| Mean \|ln\| | 0.309 | 0.280 | −0.029 (−0.069 ~ +0.015) |
+| P50 median error | 21.2% | 15.6% | −5.6 points (−10.0 ~ +0.9) |
+| Within 1.00–1.13 | 8.8% | 7.0% | −1.8 points |
+| Median P80 multiplier | 1.550 | 1.495 | −0.055 |
 
-- **判定：第 1 条通过**（17.5% ≤ 20%），**第 2 条不通过**（高估时中位超出 47.4%，没有低于现行规则的 46.3%）。**V2 没确认，不采用。**
-- **如实记录的事实（只描述，不据此调方案）**：
-  - V2 在没见过的开标上 P50 更准：误差中位 21.2% → 15.6%，接近工程师的 15%。
-  - 但 P80 倍数变小了，低估多了 2 场，高估幅度没有变小。这和开发数据上“同样不低估比例时，V2 在市政的离散和现行规则差不多”的结果一致。
-  - 冲刷/排水 9 场：两者都没有低估；V2 的高估时中位超出 41.2%，现行规则 94.5%。样本太小，只描述。
-- 这是锁定检验集第二次被打开。以后的决定要另写登记；锁定检验集已经开过两次，下一次确认最好同时用 2026-11-20 以后的新开标。
+- **Verdict: condition 1 passes** (17.5% ≤ 20%), **condition 2 fails** (median overshoot when over 47.4%, not below the current rule's 46.3%). **V2 is not confirmed and not adopted.**
+- **Facts recorded as they are (described only; the option is not tuned on them)**:
+  - V2's P50 is more accurate on unseen lettings: median error 21.2% → 15.6%, close to the engineers' 15%.
+  - But the P80 multiplier got smaller, 2 more lettings came in under, and the overshoot did not shrink. This agrees with the development finding that "at the same not-under share, V2's municipal spread is about the same as the current rule's".
+  - Erosion/drainage, 9 lettings: neither came in under; V2's median overshoot when over 41.2%, the current rule's 94.5%. Too small a sample; described only.
+- This is the second opening of the locked test set. Later decisions need their own registration; since the locked test set has now been opened twice, the next confirmation should preferably also use new lettings after 2026-11-20.
 
-## 3. 第 5 轮选中的定价修正，在锁定检验集上确认（2026-11-20 03:1x 登记，解析 3b 重建之前）
-**背景**：第 5 轮（`handoff/scratchpad/p50fix/PREREGISTRATION_ROUND5.md`）在快照 2 上选中 F2：纯拆除子目只和纯拆除的历史匹配，其他子目只和非拆除的历史匹配。
-- 市政：高估时中位超出 69.0% → 60.4%，低估 15.5% → 16.1%，平均 |ln| −0.015（区间 −0.028 ~ −0.003）。
-- TxDOT：48.8% 对 51.3%。
-- 报告：`reports/p50_fix_round5.md`。
+## 3. Confirm the pricing fix chosen in round 5 on the locked test set (registered 2026-11-20 03:1x, before the parser 3b rebuild)
+**Background**: round 5 (`handoff/scratchpad/p50fix/PREREGISTRATION_ROUND5.md`) chose F2 on snapshot 2: pure-removal items match only pure-removal history, all other items only non-removal history.
+- Municipal: median overshoot when over 69.0% → 60.4%, under 15.5% → 16.1%, mean |ln| −0.015 (interval −0.028 ~ −0.003).
+- TxDOT: 48.8% vs 51.3%.
+- Report: `reports/p50_fix_round5.md`.
 
-**按什么数据定。** 子目分类修正（解析 3b）正在做，完成后要全量重建，数据会变。按第 5 轮登记，决定以最新数据为准：
-- 重建后，在新快照上原样重跑第 5 轮（同样的 4 个候选，同样的规则）。
-- 送去确认的是按第 5 轮规则在新数据上选中的那个方案（可能仍是 F2，也可能是别的）。
-- 新数据上一个都不合格，就不打开锁定检验集。
+**Which data decides.** The item-classification fix (parser 3b) is in progress; a full rebuild follows and the data will change. Per the round 5 registration, the decision goes by the latest data:
+- After the rebuild, round 5 is re-run unchanged on the new snapshot (the same 4 candidates, the same rule).
+- What goes to confirmation is the option the round 5 rule chooses on the new data (possibly still F2, possibly another).
+- If none qualifies on the new data, the locked test set is not opened.
 
-**确认方法（打开一次，记进访问日志）。**
-- **脚本**：用 `handoff/scratchpad/p50fix/confirm/` 的确认脚本，在同一批留出开标上同时给现行规则和选中方案打分（配对）。脚本要先加上这个方案的路径（用打了补丁的 src 副本），只用诱饵集验证：现行规则和 holdout_eval 逐场一致，泄漏检查全过，确认流程端到端跑通。验证完才打开。
-- **确认条件**（同登记 2），两条都要满足：
-  1. 选中方案的 P80 低于最低价 ≤ 20%。
-  2. 选中方案的高估时中位超出，低于现行规则在同一批开标上的值。
-- **只报告**：平均 |ln|、P50 误差中位、1.00–1.13 的比例、和工程师比（同样不低估比例下的高估），都带 90% 区间；分冲刷/排水和其他。
-- **确认了**：应用补丁（如 F2 的 `round5/patch_F2.diff`），全量重建，两道守卫，按年份重测，然后上线。
-- **没确认**：不采用，如实报告。
+**Confirmation method (opened once, recorded in the access log).**
+- **Script**: the confirmation script in `handoff/scratchpad/p50fix/confirm/` scores the current rule and the chosen option on the same held-out lettings (paired). The script first gets a path for this option (a patched copy of src) and is verified on the decoy only: the current rule identical to holdout_eval letting by letting, all leak checks passed, the confirmation flow run end to end. Only after that verification is the set opened.
+- **Confirmation conditions** (as in registration 2), both must hold:
+  1. The chosen option's P80 below the low bid ≤ 20%.
+  2. The chosen option's median overshoot when over is below the current rule's value on the same lettings.
+- **Reported only**: mean |ln|, P50 median error, the 1.00–1.13 share, the comparison with the engineers (overshoot at the same not-under share), each with a 90% interval; erosion/drainage and other separately.
+- **If confirmed**: apply the patch (e.g. F2's `round5/patch_F2.diff`), full rebuild, both guards, re-test by year, then go live.
+- **If not confirmed**: not adopted, reported as it is.
 
-**说明。**
-- 锁定检验集已经打开过两次（登记 1、登记 2），这将是第三次。
-- 现行规则在这批开标上的结果已经见过两次（登记 1：13.8% 低估；登记 2：14.0% 低估、46.3% 高估），但选中方案从没在锁定检验集上算过。
-- 约 57 场，区间宽：高估差约 ±8 点，低估差约 ±5 点。
+**Notes.**
+- The locked test set has been opened twice (registrations 1 and 2); this will be the third time.
+- The current rule's results on these lettings have been seen twice (registration 1: 13.8% under; registration 2: 14.0% under, 46.3% overshoot), but the chosen option has never been computed on the locked test set.
+- About 57 lettings, wide intervals: about ±8 points on the overshoot difference, about ±5 points on the under difference.
 
-### 登记 3 的追加说明（2026-11-20 04:0x，快照 3 上的第 5 轮重跑开始之前）
-- **重建用的是解析器 .24c，不只是 3b**：
-  - .24（3b）：子目按主名词分类，“拆除并重建”按造出来的东西归族，新族箱涵、整套路灯。
-  - .24b：材料供应（送到料场或路上、在厂自提、material only）归 other，供应合同不进施工池。
-  - .24c：铣刨和薄层处理（粘层/透层油、封层、微表处、灌缝）从沥青路面族里分出来。
-- **三项都只改子目分类**，估价器代码没改（`src/estimate_low_bid.py` md5 `aeb59952…`）。这一条在快照 3 上开始重跑之前写下，还没看过任何候选方案在新数据上的结果。
-- **已经看过的**：现行规则在新数据上按年份前向打分（没碰锁定检验集）。市政 2024–26 年：高估时中位超出 56.5%，低估 16.5%。
-- **快照 3**：`handoff/scratchpad/p50fix/clean_snapshot_3/`，master_panel `ebedee86…`，清单在 `handoff/scratchpad/p50fix/SNAPSHOT_3.txt`。
-- 其余照登记 3 原文。
+### Addendum to registration 3 (2026-11-20 04:0x, before the round 5 re-run on snapshot 3 started)
+- **The rebuild used parser .24c, not just 3b**:
+  - .24 (3b): items classified by their head noun; "remove and rebuild" filed by what gets built; new families for box culverts and complete street lights.
+  - .24b: material supply (delivered to a yard or on site, picked up at the plant, material only) goes to other, so supply contracts stay out of the construction pool.
+  - .24c: milling and thin treatments (tack/prime coat, seal coat, microsurfacing, crack sealing) split out of the asphalt pavement family.
+- **All three change only the item classification**; the estimator code is unchanged (`src/estimate_low_bid.py` md5 `aeb59952…`). This entry was written before the re-run on snapshot 3 started, before any candidate's result on the new data was seen.
+- **Already seen**: the current rule scored forward by year on the new data (locked test set not touched). Municipal 2024–26: median overshoot when over 56.5%, under 16.5%.
+- **Snapshot 3**: `handoff/scratchpad/p50fix/clean_snapshot_3/`, master_panel `ebedee86…`, file list in `handoff/scratchpad/p50fix/SNAPSHOT_3.txt`.
+- Everything else as in the original registration 3.
 
-### 登记 3 的结果（2026-11-20 04:22，第三次打开锁定检验集）
-- **场数**：两边都打出分 56 场。B 打出分 57 场，变体 56 场，只有 B 打出分的 1 场：F1 规定没有带尺寸的格子就不定价，这场因此不足 90% 定价。
-- **B（现行）**：
-  - P80 低于最低价 9/56 = 16.1%；
-  - 高估时中位超出 35.9%；
-  - 平均 |ln| 0.290，P50 误差中位 18.4%；
-  - 落 1.00–1.13 的 16.1%，P80 乘数 1.396。
-- **V2+F1+F2**：
-  - P80 低于最低价 11/56 = 19.6%；
-  - 高估时中位超出 31.0%；
-  - 平均 |ln| 0.262；P50 误差中位 13.6%，比 B 低 4.8 点（90% 区间 −9.7 ~ −0.1）；
-  - 落带内 12.5%，P80 乘数 1.311。
-- **判定**：
-  - 条件 1，P80 低估 ≤ 20%：19.6%，满足，刚好在线内（11 场；56 场的 20% 是 11.2 场）。
-  - 条件 2，高估时中位超出低于 B：31.0% < 35.9%，满足。
-  - **两条都满足，确认。**
-- **区间都很宽**：
-  - 超出差 −4.9 点（−14.0 ~ +7.9）；
-  - 低估差 +3.6 点（−3.6 ~ +10.7）；
-  - 平均 |ln| 差 −0.028（−0.069 ~ +0.017）。
-- **分组（只报告）**：
-  - 冲刷/排水 9 场上变体更差：低估 0% → 11.1%，超出 59.3% → 67.2%，带内 22.2% → 0%。
-  - 其他 47 场：低估 19.1% → 21.3%，超出 34.7% → 30.3%。
-  - 逐年表见日志。
-- **下一步（按登记 3）**：接进 src，全量重建，跑两道守卫，按年份重测，然后上线。
-  - V2+F1+F2 没有现成补丁，要先把可比工程法（V2）、F1、F2 接进 src。
-  - 接好后要逐场核对，和确认时的实现一致：前向打分和诱饵都要对上。
-- **记录**：
-  - 日志：`reports/measurements/holdout_confirm_3_V2F1F2_20261120.txt`。
-  - 访问日志两行：04:21:37 开始，04:22:51 完成。
+### Result of registration 3 (2026-11-20 04:22, third opening of the locked test set)
+- **Lettings**: 56 scored by both sides. B scored 57, the variant 56; the 1 scored by B only: F1 does not price a line without a sized cell, so this letting fell below 90% priced.
+- **B (current)**:
+  - P80 below the low bid 9/56 = 16.1%;
+  - median overshoot when over 35.9%;
+  - mean |ln| 0.290, P50 median error 18.4%;
+  - within 1.00–1.13 16.1%, P80 multiplier 1.396.
+- **V2+F1+F2**:
+  - P80 below the low bid 11/56 = 19.6%;
+  - median overshoot when over 31.0%;
+  - mean |ln| 0.262; P50 median error 13.6%, 4.8 points below B (90% interval −9.7 ~ −0.1);
+  - in the band 12.5%, P80 multiplier 1.311.
+- **Verdict**:
+  - Condition 1, P80 under-share ≤ 20%: 19.6%, met, just inside the line (11 lettings; 20% of 56 lettings is 11.2).
+  - Condition 2, median overshoot when over below B: 31.0% < 35.9%, met.
+  - **Both met: confirmed.**
+- **The intervals are all wide**:
+  - overshoot difference −4.9 points (−14.0 ~ +7.9);
+  - under difference +3.6 points (−3.6 ~ +10.7);
+  - mean |ln| difference −0.028 (−0.069 ~ +0.017).
+- **By group (reported only)**:
+  - On the 9 erosion/drainage lettings the variant is worse: under 0% → 11.1%, overshoot 59.3% → 67.2%, in the band 22.2% → 0%.
+  - Other 47 lettings: under 19.1% → 21.3%, overshoot 34.7% → 30.3%.
+  - The year-by-year table is in the log.
+- **Next step (per registration 3)**: merge into src, full rebuild, run both guards, re-test by year, then go live.
+  - V2+F1+F2 has no ready-made patch; the comparables method (V2), F1 and F2 must first be brought into src.
+  - Once merged, check letting by letting that it matches the implementation used for the confirmation: both the forward scores and the decoy must agree.
+- **Records**:
+  - Log: `reports/measurements/holdout_confirm_3_V2F1F2_20261120.txt`.
+  - Two access-log rows: start 04:21:37, done 04:22:51.
 
-## 4. T1（只改 TxDOT）按前向证据上线；用 2026-11-20 以后的 TxDOT 新开标做前瞻核对（2026-11-20 05:4x 登记，在应用之前）
-**背景。** 第 6 轮在快照 4 上选中 T1，基线是现行生产 V2+F1+F2（登记 `handoff/scratchpad/p50fix/PREREGISTRATION_ROUND6.md`，md5 `ddc945cb…`；报告 `reports/p50_fix_round6.md`）。
-- **T1 是什么**：只在 TxDOT 上加 C4（动员费按清单比例定价，完全匹配优先）和 D1（随规模变的竞争折扣）。市政逐场不变。
-- **TxDOT 2023–26 年，796 场**：
-  - 高估时中位超出 37.2% → 31.3%（−5.9 点，90% 区间 −8.0 ~ −3.0）；
-  - 平均 |ln| −0.027（−0.034 ~ −0.020），P50 误差中位 20.2% → 16.6%；
-  - P80 低估 16.7% → 16.0%。2026 年是 22.5%，逐年上限 23.6%。
+## 4. T1 (TxDOT only) goes live on forward evidence; prospective check on new TxDOT lettings after 2026-11-20 (registered 2026-11-20 05:4x, before it was applied)
+**Background.** Round 6 chose T1 on snapshot 4, against the current production V2+F1+F2 as baseline (registration `handoff/scratchpad/p50fix/PREREGISTRATION_ROUND6.md`, md5 `ddc945cb…`; report `reports/p50_fix_round6.md`).
+- **What T1 is**: on TxDOT only, it adds C4 (mobilization priced as a share of the schedule, exact matches first) and D1 (a competition discount that varies with job size). Municipal is unchanged letting by letting.
+- **TxDOT 2023–26, 796 lettings**:
+  - median overshoot when over 37.2% → 31.3% (−5.9 points, 90% interval −8.0 ~ −3.0);
+  - mean |ln| −0.027 (−0.034 ~ −0.020), P50 median error 20.2% → 16.6%;
+  - P80 under-share 16.7% → 16.0%. 2026 is 22.5%, against a per-year cap of 23.6%.
 
-**为什么不在锁定检验集上确认。**
-- 锁定集只有市政开标，T1 对市政逐场不变，确认不出任何东西。
-- TxDOT 没有锁定集。
-- T1 的拟合量只来自 TxDOT 行。05:40 查过：TxDOT 两个来源（txdot、txdot_archive）没有一行是 internal 或 public_test。
+**Why it is not confirmed on the locked test set.**
+- The locked set holds municipal lettings only, and T1 leaves municipal unchanged letting by letting, so a confirmation could show nothing.
+- TxDOT has no locked set.
+- T1's fitted quantities come from TxDOT rows only. Checked at 05:40: neither TxDOT source (txdot, txdot_archive) has a single internal or public_test row.
 
-**决定。**
-- 按第 6 轮登记的规则上线 T1。
-- 开关 `estimate_low_bid.pricing_rule(txdot_c4d1=False)` 随时可以关掉。
+**Decision.**
+- T1 goes live under the rule registered for round 6.
+- The switch `estimate_low_bid.pricing_rule(txdot_c4d1=False)` can turn it off at any time.
 
-**前瞻核对（以后执行，写在任何新开标出现之前）。**
-- **什么时候做**：2026-11-20 以后开标、出现在 DFW TxDOT 数据里的开标累计到 100 场时；或者到 2027-03-31，先到为准。
-- **怎么做**：用当时的生产，在同一批新开标上，T1 开、T1 关各按时间往前打分。
-- **两条条件**：
-  1. T1 开的 P80 低于最低价 ≤ 20%；
-  2. T1 开的高估时中位超出低于 T1 关。
-- **不满足**：任何一条不满足就关掉 T1，如实报告。
+**Prospective check (to be run later; written before any new letting appeared).**
+- **When**: once 100 lettings bid after 2026-11-20 have appeared in the DFW TxDOT data, or on 2027-03-31, whichever comes first.
+- **How**: with the production of that time, on the same new lettings, score forward in time with T1 on and with T1 off.
+- **Two conditions**:
+  1. T1 on: P80 below the low bid ≤ 20%;
+  2. T1 on: median overshoot when over below T1 off.
+- **If not met**: if either condition fails, T1 is switched off and the result is reported as it is.
 
-**已知风险（写下来，届时一起看）。**
-- TxDOT 2026 年 P80 低估 22.5%。
-- 桥梁维护类 72 场的低估从 20.8% 升到 26.4%。
+**Known risks (written down, to be looked at then).**
+- TxDOT 2026 P80 under-share 22.5%.
+- Bridge maintenance, 72 lettings: under-share up from 20.8% to 26.4%.
 
-## 5. 第 10 轮选中的 MC（市政用市政价格格子），在“未覆盖”口径和 .26 数据上重跑后，在锁定检验集上确认（2026-11-20 10:3x 登记，重跑和工具都还没开始）
-**背景。** 第 10 轮在快照 5 上选中 MC。登记 `handoff/scratchpad/p50fix/PREREGISTRATION_ROUND10.md`，md5 `0eccbdc5…`；报告 `reports/p50_fix_round10.md`。
-- **MC 是什么**：市政行查价时，同一个键先用只含市政开标的格子（定价日前至少 3 场市政开标），不够才用混合格。
-- **快照 5 上市政 145 场的结果**：
-  - 高估时中位超出 51.3% → 45.0%（−6.3 点，90% 区间 −8.5 ~ −0.2）；
-  - P50 误差中位 26.0% → 20.6%；
-  - 低估 18.6% 不变，其中 2026 年 26.8%。
-- **TxDOT**：逐场不变。
+## 5. Confirm MC from round 10 (municipal lines priced from municipal price cells) on the locked test set, after a re-run under the "not covered" scope on the .26 data (registered 2026-11-20 10:3x, before the re-run and the tooling started)
+**Background.** Round 10 chose MC on snapshot 5. Registration `handoff/scratchpad/p50fix/PREREGISTRATION_ROUND10.md`, md5 `0eccbdc5…`; report `reports/p50_fix_round10.md`.
+- **What MC is**: when a municipal line is priced, the same key first uses a cell holding municipal lettings only (at least 3 municipal lettings before the pricing date), and the mixed cell only when that is not enough.
+- **Result on the 145 municipal lettings of snapshot 5**:
+  - median overshoot when over 51.3% → 45.0% (−6.3 points, 90% interval −8.5 ~ −0.2);
+  - P50 median error 26.0% → 20.6%;
+  - under-share unchanged at 18.6%, 26.8% in 2026.
+- **TxDOT**: unchanged letting by letting.
 
-**这次确认之前会变的两件事（都和 MC 本身无关）。**
-1. **解析器 .26 已上线。** 10:31 重建完成，守卫通过，master_panel `ed742d89…`。现行规则在新数据上：市政 144 场超出 48.6%，低估 18.1%，误差 24.5%。
-2. **“未覆盖”口径（用户 10:00 的决定）。**
-   - 规则在 `src/coverage.py`，md5 `5d14769b…`，在任何按新口径打分之前定下。
-   - 未覆盖的子目不定价。
-   - 判准度时：我们的已覆盖估价，对比最低价减去最低价人在这些子目上的金额。
-   - 敏感性另算一遍：改用各家的中位来扣。
-   - 补丁装好后才开始。
+**Two things that change before this confirmation (both unrelated to MC itself).**
+1. **Parser .26 is live.** The rebuild finished at 10:31, the guards passed, master_panel `ed742d89…`. The current rule on the new data: municipal 144 lettings, overshoot 48.6%, under 18.1%, error 24.5%.
+2. **The "not covered" scope (the user's decision at 10:00).**
+   - The rule is in `src/coverage.py`, md5 `5d14769b…`, fixed before any scoring under the new scope.
+   - Uncovered lines are not priced.
+   - When judging accuracy: our covered estimate against the low bid minus the low bidder's own amounts on those lines.
+   - A sensitivity version is computed as well: deducting each line's median bidder amount instead.
+   - It starts only once the patch is installed.
 
-**按什么定。**
-- 口径补丁装好、估价器重建后，做快照 6。
-- 在快照 6 上按第 10 轮的登记原样重跑：B 和 MC、CORE、CORE+LS 三个候选，同样的规则 (a)(b)(c) 和平手规则，B 和候选都按新口径。
-- 送去确认的是重跑选中的那个方案（可能仍是 MC，也可能是别的，或者一个都没有）。
-- 一个都不合格，就不打开锁定检验集。
+**What decides.**
+- After the scope patch is installed and the estimator rebuilt, snapshot 6 is made.
+- On snapshot 6, round 10 is re-run exactly as registered: B and the three candidates MC, CORE and CORE+LS, the same rules (a)(b)(c) and the same tie rule, B and the candidates all under the new scope.
+- What goes to confirmation is the option the re-run chooses (possibly still MC, possibly another, or none at all).
+- If none qualifies, the locked test set is not opened.
 
-**确认方法（打开一次，记进访问日志）。**
-- **工具**：src/holdout_eval.py 新增的配对模式（开关对比，B = 开关关，变体 = 开关开），在同一批留出开标上给两边打分。
-- **先验证**：只用诱饵集。要满足：
-  - 关开关时和 holdout_eval 原来的打分逐场一致；
-  - 泄漏检查全过；
-  - 流程端到端跑通。
-  验证完才打开。
-- **确认条件**（同登记 2、3），两条都要满足：
-  1. 选中方案的 P80 低于最低价 ≤ 20%；
-  2. 选中方案的高估时中位超出，低于现行规则在同一批开标上的值。
-- **只报告**：
-  - 平均 |ln|、P50 误差中位、1.00–1.13 的比例，都带 90% 区间；
-  - 冲刷/排水和其他分开；
-  - 用各家中位扣除未覆盖时的结果；
-  - 全价口径（不刨去未覆盖）的结果。
-- **确认了**：应用补丁，全量重建，跑两道守卫，按年份重测，然后上线。
-- **没确认**：不采用，如实报告。
+**Confirmation method (opened once, recorded in the access log).**
+- **Tool**: the new paired mode of src/holdout_eval.py (a switch comparison: B = switch off, variant = switch on), scoring both sides on the same held-out lettings.
+- **Verify first**: on the decoy only. It must:
+  - with the switch off, match holdout_eval's earlier scoring letting by letting;
+  - pass every leak check;
+  - run the flow end to end.
+  Only after that verification is the set opened.
+- **Confirmation conditions** (as in registrations 2 and 3), both must hold:
+  1. The chosen option's P80 below the low bid ≤ 20%;
+  2. The chosen option's median overshoot when over is below the current rule's value on the same lettings.
+- **Reported only**:
+  - mean |ln|, P50 median error, the 1.00–1.13 share, each with a 90% interval;
+  - erosion/drainage and other separately;
+  - the result when the uncovered lines are deducted at each line's median bidder amount;
+  - the result under the full-price scope (uncovered lines not taken out).
+- **If confirmed**: apply the patch, full rebuild, run both guards, re-test by year, then go live.
+- **If not confirmed**: not adopted, reported as it is.
 
-**说明。**
-- 锁定检验集已经打开过 3 次，这将是第 4 次。MC 从没在锁定检验集上算过。
-- 约 56 场，区间宽。
-- 锁定集只有市政开标，正好对应 MC 只改市政。
+**Notes.**
+- The locked test set has been opened 3 times; this will be the 4th. MC has never been computed on the locked test set.
+- About 56 lettings, wide intervals.
+- The locked set holds municipal lettings only, which fits MC changing municipal only.
 
-### 登记 5 的追加说明（2026-11-20 10:40，口径补丁装进 src 之后、快照 6 和重跑之前）
-**两处改动。** 都是看过子任务在快照 5 上按 v1 口径算出的前向分数之后定的。这里如实记下：那些分数里有现行规则的，也有 MC 的。
+### Addendum to registration 5 (2026-11-20 10:40, after the scope patch went into src, before snapshot 6 and the re-run)
+**Two changes.** Both were decided after seeing the forward scores the sub-task computed on snapshot 5 under the v1 scope. Recorded here as it is: those scores included the current rule's and MC's.
 
-1. **未覆盖规则改为 v2：`src/coverage.py`，md5 `1d3f16a9…`**（v1 是 `5d14769b…`，原件存在 `handoff/scratchpad/coverage_scope/coverage_v1_5d14769b.py`）。
-   - 只改了五处"意思判错"，都是接入子任务逐行看清单时指出来的：
-     - 给桥的栏杆清洗、油漆，判成了预制桥；
-     - 临时（租用）发电机判成了设备；
-     - 搬迁、复位现有设备判成了设备本身；
-     - contingency、unforeseen 这类定额措辞判成了设备；
-     - 建筑里的 HVAC 判成了整栋建筑。
-   - 另外，桥的后置写法要求紧挨着。
-   - 七个类别和其余判定都没变；自测从 29 例增到 36 例，全部通过。
-2. **整场不覆盖的规则 (b) 关掉。** 原来"一行 LS 写的是整座设施，整场就不给估价"。
-   - 它因为 Mesquite 25-8014 的一行 "lift station complete in place"，就把这张 248 行、3,400 万美元的整张清单判成了不给估价。
-   - 用户的原则是"能定价的定价，未覆盖的列出来，判准度只看已覆盖部分"。这对以设施为主的项目同样适用。
-   - 规则 (a) 保留：未覆盖行超过清单一半时，整场不给估价。
-   - 实现上是 `src/estimate_low_bid.py` 里的 `WHOLE_FACILITY_RULE = False`。每行未覆盖子目仍会标出 `whole_facility`。
+1. **The uncovered rule becomes v2: `src/coverage.py`, md5 `1d3f16a9…`** (v1 was `5d14769b…`; the original is kept at `handoff/scratchpad/coverage_scope/coverage_v1_5d14769b.py`).
+   - Only five "wrong meaning" cases were changed, all pointed out by the integration sub-task while reading schedules line by line:
+     - cleaning and painting a bridge's railing was classed as a prefab bridge;
+     - a temporary (rented) generator was classed as equipment;
+     - relocating or resetting existing equipment was classed as the equipment itself;
+     - allowance wording such as contingency and unforeseen was classed as equipment;
+     - HVAC inside a building was classed as the whole building.
+   - In addition, the trailing form of "bridge" must now be directly adjacent.
+   - The seven classes and every other rule are unchanged; the self-test grew from 29 to 36 cases, all passing.
+2. **Rule (b) for "not covered as a whole" is switched off.** It used to say "if one LS line describes the whole facility, the whole letting gets no estimate".
+   - Because of a single line, "lift station complete in place", in Mesquite 25-8014, it judged that whole 248-line, $34 million schedule unfit for an estimate.
+   - The user's principle is "price what can be priced, list what is not covered, judge accuracy on the covered part only". That holds for facility-centred projects too.
+   - Rule (a) stays: when uncovered lines are more than half of the schedule, the whole letting gets no estimate.
+   - In `src/estimate_low_bid.py` this is implemented as `WHOLE_FACILITY_RULE = False`. Each uncovered line is still flagged `whole_facility`.
 
-其余照登记 5 原文：快照 6 在估价器按新口径重建后做；第 10 轮原样重跑；用配对模式确认；同样两条确认条件。
-- **时间更正（10:5x 补记）**：`src/coverage.py` v2 和 `src/estimate_low_bid.py` 的注释里写的是“~11:00”，实际改动时间约 10:38（两个文件的修改时间是 10:39:24 和 10:39:53）。为了不改动已登记的 md5，注释原样不动。
+Everything else as in the original registration 5: snapshot 6 is made after the estimator is rebuilt under the new scope; round 10 is re-run unchanged; the confirmation uses the paired mode; the same two confirmation conditions.
+- **Time correction (added 10:5x)**: the comments in `src/coverage.py` v2 and in `src/estimate_low_bid.py` say "~11:00"; the actual change was at about 10:38 (the two files' modification times are 10:39:24 and 10:39:53). The comments were left as they are so as not to change the registered md5s.
 
-### 登记 5：重跑结果和送去确认的方案（2026-11-20 11:2x，打开锁定集之前）
-- **重跑的设置**：快照 6、未覆盖口径、按第 10 轮登记的规则原样重跑（报告 `handoff/scratchpad/p50fix/round10b/`）。
-- **结果**：三个候选都合格。按登记的平手规则，选中 **CORE**（MC + E + F1P + T2 + D），不是 MC。
-  - 原因：CORE 的市政中位超出最低（42.0%），CORE+LS（43.3%）在 2 个点以内，取两者中较简单的。
-  - MC 是 44.4%，比 CORE 高出 2.3 个点，不算平手。
-- **CORE 对 B（市政 142 场同批）**：
-  - 高估时中位超出 49.0% → 42.0%（−7.0 点，90% 区间 −12.0 ~ −3.0）；
-  - P50 误差中位 24.1% → 19.8%；
-  - 低估 18.3% 不变，其中 2026 年 25.0%，上限 25.5%，只差一场就超。
-- **补丁**：`handoff/scratchpad/p50fix/round10b/patch_CORE.diff`，md5 `1c5d3f99…`。
-  - 已打进 src，五个开关默认全关，生产不变。
-  - 预设 `round10_core` 一次打开这五个开关。
-- **确认前的检查（11:1x–11:2x）**：
-  - 自测全过；holdout 自测全过；
-  - 完整守卫 PASSED，1e 节 9 个量里 8 个 GATE HELD；
-  - 诱饵 7 配对演练正常；
-  - 访问日志没动。
-- **确认方式**：`--compare-switch round10_core --confirm`。B 是五个开关全关，变体是全开。
-- **确认条件不变**：
-  1. 变体的 P80 低于最低价 ≤ 20%；
-  2. 变体的高估时中位超出，低于 B 在同一批开标上的值。
-- **已知风险**（打开前写下）：
-  - 全价口径下 CORE 过不了 2026 年的底线；
-  - 冲刷/排水组多 1 场低估；
-  - T2 会把少数行退成不定价；
-  - 诱饵上 CORE 的低估最高到 19.0%，条件 1 可能偏紧。
+### Registration 5: re-run result and the option sent to confirmation (2026-11-20 11:2x, before the locked set was opened)
+- **Re-run set-up**: snapshot 6, the "not covered" scope, re-run exactly by the rule registered for round 10 (report `handoff/scratchpad/p50fix/round10b/`).
+- **Result**: all three candidates qualify. By the registered tie rule, **CORE** (MC + E + F1P + T2 + D) is chosen, not MC.
+  - Why: CORE has the lowest municipal median overshoot (42.0%), CORE+LS (43.3%) is within 2 points, and the simpler of the two is taken.
+  - MC is 44.4%, 2.3 points above CORE, which is not a tie.
+- **CORE vs B (the same 142 municipal lettings)**:
+  - median overshoot when over 49.0% → 42.0% (−7.0 points, 90% interval −12.0 ~ −3.0);
+  - P50 median error 24.1% → 19.8%;
+  - under-share unchanged at 18.3%, 25.0% in 2026 against a cap of 25.5%: one letting short of breaking it.
+- **Patch**: `handoff/scratchpad/p50fix/round10b/patch_CORE.diff`, md5 `1c5d3f99…`.
+  - Applied to src with all five switches off by default; production unchanged.
+  - The preset `round10_core` turns the five switches on at once.
+- **Checks before confirmation (11:1x–11:2x)**:
+  - self-tests all pass; the holdout self-test all passes;
+  - the full guard PASSED, 8 of the 9 quantities in section 1e GATE HELD;
+  - the paired rehearsal on decoy 7 normal;
+  - the access log untouched.
+- **How it is confirmed**: `--compare-switch round10_core --confirm`. B has all five switches off, the variant all on.
+- **Confirmation conditions unchanged**:
+  1. The variant's P80 below the low bid ≤ 20%;
+  2. The variant's median overshoot when over is below B's value on the same lettings.
+- **Known risks** (written down before opening):
+  - under the full-price scope CORE fails the 2026 floor;
+  - 1 more letting under in the erosion/drainage group;
+  - T2 turns a few lines back into unpriced;
+  - on the decoys CORE's under-share goes up to 19.0%, so condition 1 may be tight.
 
-### 登记 5 的结果（2026-11-20 11:23，第四次打开锁定检验集）
-- **场数**：两边都打出分 48 场。B 和变体各打出分 49 场，各有 1 场只有一边打出分。
-  - 登记时抽的 59 个键里，这次打出分 46 个；另有 3 个打出分的键不在登记表里，因为解析器 .25 重新编了键名，文件没变。
-- **B**（round10_core 关，即现行生产）：
-  - P80 低于最低价 9/48 = 18.8%；
-  - 高估时中位超出 30.4%；
-  - 平均 |ln| 0.231，P50 误差中位 15.2%；
-  - 落带内 14.6%，P80 乘数 1.391。
-- **CORE**（round10_core 开）：
-  - P80 低于最低价 14/48 = 29.2%；
-  - 高估时中位超出 33.4%；
-  - 平均 |ln| 0.216，P50 误差中位 15.8%；
-  - 落带内 10.4%，P80 乘数 1.310。
-- **判定**：
-  - 条件 1，低估 ≤ 20%：29.2%，**不满足**。差 +10.4 点，90% 区间 +4.2 ~ +18.8，整个区间都在 0 以上。
-  - 条件 2，超出低于 B：33.4% > 30.4%，**不满足**。
-  - **两条都不满足，未确认，不采用。**五个开关保持默认关，生产不变。
-- **只报告**：
-  - 准度略好：平均 |ln| −0.016（−0.031 ~ −0.001）。
-  - 但 P80 乘数降了 0.08，在锁定集上低估多了 5 场。
-  - 冲刷/排水 6 场：两边低估都是 0，超出 60.3% → 50.8%。
-  - 其他 42 场：低估 21.4% → 33.3%。
-  - 用各家中位扣除未覆盖的敏感性：B 18.4% / 30.5%，CORE 28.6% / 30.9%，结论一样。
-- **记录**：
-  - 日志 `reports/measurements/holdout_confirm_4_round10_core_20261120.txt`；
-  - 访问日志两行：11:22:53 开始，11:23:42 完成。
-- **说明**：锁定检验集已经打开 4 次。以后的确认改用 2026-11-20 以后的新开标做前瞻核对。
+### Result of registration 5 (2026-11-20 11:23, fourth opening of the locked test set)
+- **Lettings**: 48 scored by both sides. B and the variant each scored 49, each with 1 letting scored by one side only.
+  - Of the 59 keys registered at the draw, 46 were scored this time; another 3 scored keys are not in the registry because parser .25 renamed the keys; the files did not change.
+- **B** (round10_core off, i.e. current production):
+  - P80 below the low bid 9/48 = 18.8%;
+  - median overshoot when over 30.4%;
+  - mean |ln| 0.231, P50 median error 15.2%;
+  - in the band 14.6%, P80 multiplier 1.391.
+- **CORE** (round10_core on):
+  - P80 below the low bid 14/48 = 29.2%;
+  - median overshoot when over 33.4%;
+  - mean |ln| 0.216, P50 median error 15.8%;
+  - in the band 10.4%, P80 multiplier 1.310.
+- **Verdict**:
+  - Condition 1, under-share ≤ 20%: 29.2%, **not met**. The difference is +10.4 points, 90% interval +4.2 ~ +18.8, the whole interval above 0.
+  - Condition 2, overshoot below B: 33.4% > 30.4%, **not met**.
+  - **Neither condition is met: not confirmed, not adopted.** The five switches stay off by default; production unchanged.
+- **Reported only**:
+  - Slightly better accuracy: mean |ln| −0.016 (−0.031 ~ −0.001).
+  - But the P80 multiplier fell by 0.08, and on the locked set 5 more lettings came in under.
+  - Erosion/drainage, 6 lettings: under-share 0 on both sides, overshoot 60.3% → 50.8%.
+  - Other, 42 lettings: under 21.4% → 33.3%.
+  - Sensitivity with the uncovered lines deducted at each line's median bidder amount: B 18.4% / 30.5%, CORE 28.6% / 30.9%; the same conclusion.
+- **Records**:
+  - Log `reports/measurements/holdout_confirm_4_round10_core_20261120.txt`;
+  - Two access-log rows: start 11:22:53, done 11:23:42.
+- **Note**: the locked test set has now been opened 4 times. Future confirmations use new lettings after 2026-11-20, as a prospective check.

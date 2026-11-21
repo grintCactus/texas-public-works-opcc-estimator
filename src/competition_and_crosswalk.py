@@ -158,17 +158,17 @@ def main():
         print("no letting data")
         return
 
-    say("# 竞争折扣:用 %d 个开标标定,跨 %s-%s" % (
+    say("# Competition discount: calibrated on %d lettings, spanning %s-%s" % (
         len(d), d.year.replace("", np.nan).dropna().min(),
         d.year.replace("", np.nan).dropna().max()))
     say()
-    say("最低价是 N 家报价的最小值,所以瞄准市场中位的估价作为最低价预测器必然偏高,"
-        "且偏高幅度随 N 增大。这个折扣是整个架构唯一依赖的结构性参数,"
-        "下面先合并标定,再检验它是否跨年份稳定。")
+    say("The low bid is the minimum of N bids, so an estimate aimed at the market median is bound to run high as a predictor of the low bid, "
+        "and by more as N grows. This discount is the one structural parameter the whole architecture depends on; "
+        "below it is first calibrated pooled, then tested for stability across years.")
     say()
-    say("## 1. 数据来源")
+    say("## 1. Data sources")
     say()
-    say(md(d.groupby("src").agg(开标数=("low", "size"),
+    say(md(d.groupby("src").agg(开标数=("low", "size"),  # column names kept (keyword names): lettings / first year / last year / median bidders
                                 年份起=("year", "min"), 年份止=("year", "max"),
                                 家数中位=("n_bidders", "median")).reset_index(), fmt="%.0f"))
     say()
@@ -183,12 +183,12 @@ def main():
     (pooled.assign(train_scope="public_external_only")
      .to_csv(os.path.join(CLEAN, "competition_discount_pooled.csv"),
              index=False, encoding="utf-8-sig"))
-    say("## 2. 合并标定(可直接使用的折扣表)")
+    say("## 2. Pooled calibration (a discount table ready to use)")
     say()
     say(md(pooled))
     say()
     sig = float(np.nanmedian(d.sigma_log))
-    say(f"组内报价对数标准差中位数 **σ = {sig:.3f}**。")
+    say(f"Median within-letting standard deviation of log bids **σ = {sig:.3f}**.")
     say()
 
     # ---- is pooling legitimate? ----------------------------------------
@@ -202,7 +202,7 @@ def main():
     muni = d[d.src == "municipal"]
     tx = d[d.src != "municipal"]
     if len(muni) >= 20 and len(tx) >= 20:
-        say("## 2b. 市政 vs 州公路:合并是否成立(按家数配对)")
+        say("## 2b. Municipal vs state highway: does pooling hold (matched by number of bidders)")
         say()
         cmp_rows = []
         for n in range(2, 13):
@@ -217,7 +217,7 @@ def main():
                 pv = float(mannwhitneyu(a, b, alternative="two-sided").pvalue)
             except Exception:
                 pv = np.nan
-            cmp_rows.append({"家数": n, "市政开标": len(a),
+            cmp_rows.append({"家数": n, "市政开标": len(a),  # keys kept (CSV columns of competition_discount_by_market.csv): bidders / municipal lettings / municipal discount / state-highway lettings / state-highway discount / difference
                              "市政折扣": float(a.median()),
                              "州公路开标": len(b),
                              "州公路折扣": float(b.median()),
@@ -232,9 +232,9 @@ def main():
                      index=False, encoding="utf-8-sig"))
             say(md(c))
             say()
-            wsum = (c["市政开标"] * c["差"]).sum() / c["市政开标"].sum()
+            wsum = (c["市政开标"] * c["差"]).sum() / c["市政开标"].sum()  # municipal lettings, difference
             nsig = int((c.p < 0.05).sum()) if c.p.notna().any() else -1
-            say("按市政开标数加权的平均差 **%+.4f**。" % wsum)
+            say("Mean difference weighted by municipal lettings **%+.4f**." % wsum)
             say()
             # Per-band tests are the wrong instrument here and saying so is
             # part of the answer: the municipal arm has 82, 62, 33 ... 8
@@ -242,8 +242,8 @@ def main():
             # "0 of 9 reach p<0.05" is not evidence of no difference.  Two
             # combined tests use the information the per-band split throws
             # away.
-            neg = int((c["差"] < 0).sum())
-            pos = int((c["差"] > 0).sum())
+            neg = int((c["差"] < 0).sum())  # difference column
+            pos = int((c["差"] > 0).sum())  # difference column
             k = neg + pos
             try:
                 from scipy.stats import binomtest, wilcoxon
@@ -255,7 +255,7 @@ def main():
             # TxDOT median, then ask whether the pooled deviation is zero.
             # This keeps all 276 observations instead of 9 band signs, and
             # removes the bidder-count mix, which is the confound.
-            base = dict(zip(c["家数"], c["州公路折扣"]))
+            base = dict(zip(c["家数"], c["州公路折扣"]))  # bidders -> state-highway discount
             dev = np.array([r.low_over_median - base[r.n_bidders]
                             for r in muni.itertuples(index=False)
                             if r.n_bidders in base])
@@ -263,15 +263,15 @@ def main():
                 p_str = float(wilcoxon(dev).pvalue) if len(dev) >= 10 else np.nan
             except Exception:
                 p_str = np.nan
-            say("- 单档检验:%s —— 但市政每档只有 %d~%d 个开标,**功效不足**,"
-                "\"没有一档显著\"不等于没有差异。"
-                % (("%d / %d 档 p<0.05" % (nsig, len(c))) if nsig >= 0
-                   else "scipy 不可用", int(c["市政开标"].min()),
+            say("- Per-band tests: %s -- but the municipal side has only %d~%d lettings per band, **too little power**, "
+                "so \"no band is significant\" does not mean there is no difference."
+                % (("%d / %d bands p<0.05" % (nsig, len(c))) if nsig >= 0
+                   else "scipy not available", int(c["市政开标"].min()),  # municipal lettings column
                    int(c["市政开标"].max())))
-            say("- 跨档符号检验:%d / %d 档市政折扣更低,p = %s" % (
+            say("- Sign test across bands: in %d / %d bands the municipal discount is lower, p = %s" % (
                 neg, k, "%.4f" % p_sign if p_sign == p_sign else "n/a"))
-            say("- 分层检验(每个市政开标减去同家数档的州公路中位,共 %d 个观测):"
-                "中位偏差 %+.4f,Wilcoxon p = %s" % (
+            say("- Stratified test (each municipal letting minus the state-highway median of its bidder-count band, %d observations): "
+                "median deviation %+.4f, Wilcoxon p = %s" % (
                     len(dev), float(np.median(dev)) if len(dev) else float("nan"),
                     "%.3g" % p_str if p_str == p_str else "n/a"))
             say()
@@ -280,19 +280,19 @@ def main():
             differs = ((p_sign == p_sign and p_sign < 0.05)
                        or (p_str == p_str and p_str < 0.05))
             if differs:
-                say("合并表和市政专表在统计上**可区分**,而且差异是单向的:市政折扣"
-                    "系统性地更低(最低价离中位更远)。**DFW 市政估价用市政专表**;"
-                    "州公路那一臂的价值在于它有 2,400 个开标和 10 年跨度,"
-                    "可以检验这个参数随时间是否稳定 —— 见第 3 节。")
+                say("The pooled table and the municipal-only table are **statistically distinguishable**, and the difference runs one way: the municipal discount "
+                    "is systematically lower (the low bid sits further from the median). **DFW municipal estimates use the municipal table**; "
+                    "the value of the state-highway arm is its 2,400 lettings over 10 years, "
+                    "which can test whether this parameter is stable over time -- see section 3.")
                 say()
-                say("方向是可解释的,不是噪声:市政标段小、投标人里小承包商占比高、"
-                    "报价离散度更大(市政 σ 中位 %.3f vs 州公路 %.3f),"
-                    "而最低价是 N 个报价的次序统计量,离散度越大,最低价相对中位就压得越低。"
+                say("The direction makes sense and is not noise: municipal jobs are small, small contractors make up more of the bidders, "
+                    "and bids are more dispersed (median σ municipal %.3f vs state highway %.3f), "
+                    "while the low bid is an order statistic of N bids: the wider the dispersion, the further the low bid is pushed below the median."
                     % (float(muni.sigma_log.median()), float(tx.sigma_log.median())))
             else:
-                say("两个市场在跨档符号检验和分层检验上都分不开 —— **合并成立**,"
-                    "合并表可直接用于 DFW 市政工程,州公路那 2,400 个开标是在给同一个"
-                    "结构性参数加精度,不是在引入另一个市场的偏差。")
+                say("The two markets cannot be told apart by the sign test across bands or by the stratified test -- **pooling holds**; "
+                    "the pooled table can be used directly for DFW municipal work, and the 2,400 state-highway lettings add precision to the same "
+                    "structural parameter rather than bringing in another market's bias.")
             say()
             # ONE PARAMETER, not nine per-bidder-count medians.
             #
@@ -350,19 +350,19 @@ def main():
              .to_csv(os.path.join(CLEAN,
                                   "competition_discount_municipal.csv"),
                      index=False, encoding="utf-8-sig"))
-            say("市政折扣 = 合并表 × **%.4f**(单参数,拟合在 %d 个市政开标上)。"
-                "原来那张 9 档表的样本内表现是算术上被迫等于 1.0000 的 —— "
-                "每档的 f 就是同一批开标比值的中位数,所以它必然\"命中\"自己。"
-                "样本外留一法:9 档表 0.9975 / 7.09%%,单参数移位 1.0016 / 7.59%%,"
-                "合并表原样 1.0230 / 6.41%%;400 次对半分里移位胜 9 档表的次数是 200/400,"
-                "平手。所以九个参数没买到任何东西,而移位只有一个。"
+            say("Municipal discount = pooled table × **%.4f** (one parameter, fitted on %d municipal lettings). "
+                "The old 9-band table's in-sample score was arithmetically forced to 1.0000 -- "
+                "each band's f is the median of those very lettings' ratios, so it is bound to \"hit\" itself. "
+                "Out of sample, leave-one-out: 9-band table 0.9975 / 7.09%%, one-parameter shift 1.0016 / 7.59%%, "
+                "pooled table as is 1.0230 / 6.41%%; over 400 half-splits the shift beats the 9-band table 200/400 times, "
+                "a tie. So the nine parameters bought nothing, while the shift is a single one."
                 % (shift, len(rel)))
             say()
-            say("合并表原样误差最低但系统性高 2.3%% —— 对投标估价,"
-                "宁可多付 0.7 个百分点的离散度换一个无偏的中心,"
-                "因为系统性高报丢的是本来能中的活。这是一个判断,写在这里。")
+            say("The pooled table as is has the lowest error but runs 2.3%% high systematically -- for bid estimates "
+                "it is better to pay 0.7 points more spread for an unbiased centre, "
+                "because systematically high bids lose work that would have been won. This is a judgement, written down here.")
             say()
-            say("市政折扣表(= 合并表 × %.4f):" % shift)
+            say("Municipal discount table (= pooled table × %.4f):" % shift)
             say()
             say(md(mo))
             say()
@@ -377,20 +377,20 @@ def main():
     (by.assign(train_scope="public_external_only")
      .to_csv(os.path.join(CLEAN, "competition_discount_by_year.csv"),
              index=False, encoding="utf-8-sig"))
-    say("## 3. 跨年份稳定性(限 3~9 家投标,消除家数构成影响)")
+    say("## 3. Stability across years (3~9 bidders only, to remove the bidder-count mix)")
     say()
     say(md(by))
     say()
     if len(by) >= 4:
         rng = by.low_over_median.max() - by.low_over_median.min()
-        say(f"折扣在 {by.year.min()}-{by.year.max()} 的波动区间 "
+        say(f"Over {by.year.min()}-{by.year.max()} the discount ranges "
             f"**{by.low_over_median.min():.3f} ~ {by.low_over_median.max():.3f}"
-            f"(极差 {rng:.3f})**,σ 波动 "
-            f"{by.sigma_log.min():.3f} ~ {by.sigma_log.max():.3f}。")
+            f" (spread {rng:.3f})**, σ ranges "
+            f"{by.sigma_log.min():.3f} ~ {by.sigma_log.max():.3f}.")
         if rng <= 0.06:
-            say("波动很小 —— 这个折扣可以当结构性常数用,不需要按年重估。")
+            say("Small swings -- the discount can be used as a structural constant, with no need to re-estimate it every year.")
         else:
-            say("波动不小 —— 说明折扣随市场周期变化,应按近期窗口重估,不要用全历史均值。")
+            say("Sizeable swings -- the discount moves with the market cycle; re-estimate it on a recent window rather than using the all-history mean.")
     say()
 
     # ---- 6xxx -> 7xxx crosswalk -----------------------------------------
@@ -466,36 +466,36 @@ def main():
         tail_n = len(both)
         cw.to_csv(os.path.join(CLEAN, "txdot_code_crosswalk.csv"), index=False,
                   encoding="utf-8-sig")
-        say("## 4. 6xxx -> 7xxx 编码对照表")
+        say("## 4. 6xxx -> 7xxx code crosswalk")
         say()
-        say(f"存档 6xxx 编码 **{len(a6)}** 个,现行 7xxx 编码 **{len(c7)}** 个,"
-            f"建立对照 **{len(cw)}** 条(覆盖 6xxx 的 {len(cw)/max(len(a6),1)*100:.0f}%)。")
+        say(f"Archived 6xxx codes **{len(a6)}**, current 7xxx codes **{len(c7)}**, "
+            f"crosswalk entries built **{len(cw)}** (covering {len(cw)/max(len(a6),1)*100:.0f}% of the 6xxx codes).")
         say()
-        say(md(cw.match_rule.value_counts().rename_axis("规则")
-               .reset_index(name="条数"), fmt="%.0f"))
+        say(md(cw.match_rule.value_counts().rename_axis("rule")
+               .reset_index(name="count"), fmt="%.0f"))
         say()
         if tail_n:
-            say(f"### 一条看起来对、实际错的规则(已废弃)")
+            say(f"### A rule that looks right and is wrong (discarded)")
             say()
-            say(f"「同规范项 + 尾号相同」(`104-6001` -> `104-7001`)看似自然,"
-                f"但尾号在换代时被**重新编号**了。在两种规则都能匹配的 {tail_n} 个编码里,"
-                f"尾号规则有 **{tail_wrong} 个({tail_wrong/tail_n*100:.0f}%)** 指向了"
-                f"和描述匹配不同的目标编码。")
+            say(f"'Same spec item + same tail number' (`104-6001` -> `104-7001`) looks natural, "
+                f"but the tail numbers were **renumbered** in the changeover. Among the {tail_n} codes both rules can match, "
+                f"the tail rule points **{tail_wrong} of them ({tail_wrong/tail_n*100:.0f}%)** to a "
+                f"target code different from the description match.")
             say()
-            say("实例:`666-6042 REFL PAV MRK TY I (W)12\"(SLD)` 的尾号对应项是 "
-                "`666-7042 REFL PAV MRK TY I (W)(ARROW)` —— 一个是 12 英寸实线、"
-                "一个是箭头符号;`677-6006 (18\")` 对应到 `677-7006 (12\")`。"
-                "两者都不会报错,但会把不同的活当成同一个活。")
+            say("Examples: the tail-number match of `666-6042 REFL PAV MRK TY I (W)12\"(SLD)` is "
+                "`666-7042 REFL PAV MRK TY I (W)(ARROW)` -- one is a 12-inch solid line, "
+                "the other an arrow symbol; `677-6006 (18\")` maps to `677-7006 (12\")`. "
+                "Neither raises an error, but both treat different work as the same work.")
             say()
-            say("**所以本表只用描述匹配,不用尾号。**")
+            say("**So this table matches on descriptions only, never on tail numbers.**")
             say()
-        say("抽样:")
+        say("Sample:")
         say()
         say(md(cw.head(12)[["code_6xxx", "code_7xxx", "desc_6xxx", "desc_7xxx",
                             "unit_a", "match_rule"]]))
         say()
-        say("**不要直接按 bid_code join 历史和现行数据** —— 匹配率近零且不报错。"
-            "要么经这张对照表,要么按 `desc_norm` + `unit` join。")
+        say("**Do not join historical and current data on bid_code directly** -- the match rate is near zero and no error is raised. "
+            "Either go through this crosswalk or join on `desc_norm` + `unit`.")
         say()
 
     os.makedirs(REPORTS, exist_ok=True)

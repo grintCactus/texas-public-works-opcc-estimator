@@ -3,13 +3,14 @@
 Version 2 (2026-11-20 ~11:00): five meaning fixes, see the v2 notes below;
 v1 was md5 5d14769b (handoff/scratchpad/coverage_scope/coverage_v1_5d14769b.py).
 
-The user: "如果遇到泵、发动机、预制桥这些我们几乎没有什么可比的类型，我们就说是
-未覆盖，并且在给报价的时候把这块标识出来……未覆盖你的任何报价都是不合理的……
-judge 的时候……刨去未覆盖的这一部分，看看标价的准确度如何。"
+The user: "If we run into pumps, generators, prefab bridges -- types we have almost nothing
+comparable for -- we say they are not covered, and we flag that part when we give the quote ...
+any price you give for something not covered is unreasonable ...
+when we judge ... take out the not-covered part and see how accurate the price is."
 
 So a line in one of these classes is NOT priced at all:
   - the quote's P50/P80 cover the other lines only;
-  - the uncovered lines are listed by name as "未覆盖 -- price separately";
+  - the uncovered lines are listed by name as "Not covered -- get a separate quote";
   - accuracy is judged on the covered part: the estimate of the covered lines
     against the low bid minus the low bidder's own amounts on the uncovered lines.
 

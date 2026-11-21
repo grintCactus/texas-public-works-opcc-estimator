@@ -139,9 +139,9 @@ def main():
     print("item_vocabulary.csv: %d distinct items, %d item families"
           % (len(vocab), vocab.item_family.nunique()))
     n80 = int((vocab.cum_pct_dollars <= 80).sum()) + 1
-    print("金额集中度: 前 %d 个子目(共 %d 个)= 80%% 的金额"
+    print("Dollar concentration: the top %d items (of %d) = 80%% of the dollars"
           % (n80, len(vocab)))
-    print("\n=== 金额最大的 15 个子目(单价基准最该做准的) ===")
+    print("\n=== The 15 items with the most dollars (where the unit-price baseline most needs to be right) ===")
     show = vocab.head(15)[["item_family", "unit", "n_projects", "n_bid_observations",
                            "pooled_median_price", "pct_of_all_dollars",
                            "example_description"]]
@@ -151,8 +151,8 @@ def main():
                  r.pooled_median_price, r.pct_of_all_dollars,
                  str(r.example_description)[:46]))
 
-    print("\n=== 外部价格最该优先补的 20 个子目 ===")
-    print("   (金额大 x 我们自己证据薄 x 投标人之间分歧大)")
+    print("\n=== The 20 items most worth filling in first from outside prices ===")
+    print("   (many dollars x thin evidence of our own x wide disagreement between bidders)")
     for r in pri.head(20).itertuples(index=False):
         print("  %-18s %-5s proj=%d obs=%-3d spread=%4.1fx  $%-9.0f %4.1f%%  %s"
               % (r.item_family, r.unit, r.n_projects, r.n_bid_observations,
