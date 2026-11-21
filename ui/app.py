@@ -436,6 +436,7 @@ def r_classify(req):
                 if pm.enabled() else CORRECTIONS)
         out = intake.annotate(ENGINE, lines, out, market, corr,
                               history_ready=bool(_matching_state["ready"]))
+        out = ENGINE.add_unit_evidence(out, lines, d.get("bid_date"))
     except ep.EngineNotReady as e:
         raise ApiError(503, str(e))
     return {"lines": out}
@@ -519,8 +520,27 @@ def r_history_search(req):
             d["family_from_parser"] = True
         d["item_family"] = fam
         d["family_label"] = ep.family_label(fam)
+        if d.get("kind") == "family":           # plain words, no internal ids
+            d["label"], d["detail"] = _family_average_label(fam, d)
         out.append(d)
     return {"candidates": out}
+
+
+def _family_average_label(fam, d):
+    """(label, detail) for an item type's average in the Change search:
+    "All gabion mattresses (SY) — average of 19 earlier projects", not
+    "gabion_mattress (SY) -- family average" (batch 3, 2026-11-20)."""
+    unit = d.get("unit") or ""
+    n = int(ep._f(d.get("n_projects")) or 0)
+    if fam in ("other", "needs_review", "") or \
+            "unclassified" in str(d.get("label") or "").lower():
+        return ("Unclassified lines (%s) \u2014 no item type matched" % unit,
+                "")
+    lab = ep.family_label(fam)
+    if len(lab) > 1 and lab[1:2].islower():     # "Gabion ..." -> "gabion ...",
+        lab = lab[:1].lower() + lab[1:]          # "RCP ..." stays
+    return ("All %s (%s) \u2014 average of %d earlier project%s"
+            % (lab, unit, n, "" if n == 1 else "s"), "")
 
 
 @route("POST", "/api/bidders/suggest")

@@ -559,6 +559,57 @@ class PageInteractions(unittest.TestCase):
             finally:
                 browser.close()
 
+    def test_unit_hint_and_printed_cap_picks_leave_the_estimate_alone(self):
+        """Batch 3: the CF demo gets "Converted from CY bids" quick picks and
+        a "5% Max" mobilization line gets "Printed cap"; picking them changes
+        your OPCC, never P50 / P80 (the same request through the API)."""
+        demo = "\n".join(["101\tMobilization (5% Max)\tLS\t1", "102\tExcavation\tCF\t113,400",
+                          "103\tEmbankment\tCF\t48,600", "104\tConcrete Sidewalk, 4 inch\tSF\t12,000",
+                          "105\tBlock Sod\tSF\t30,000", "106\tReinforced Concrete Pipe, 24 inch\tLF\t800"])
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                browser = getattr(self.pw, engine).launch()
+                self.addCleanup(browser.close)
+                page = browser.new_page(viewport={"width": 1440, "height": 900})
+                errors = []
+                page.on("pageerror", lambda e: errors.append(str(e)))
+                page.goto(self.url + "/")
+                page.wait_for_function(SAMPLE_READY, timeout=60000)
+                page.evaluate("t => { document.querySelector('#paste-text').value = t; }", demo)
+                page.click("#btn-parse-text")
+                page.wait_for_function("() => S.lines.length === 6 && S.lines.every(l => l.cls)", timeout=30000)
+                page.wait_for_function("() => S.lines.filter(l => l.cls.unit_hint).length === 2", timeout=30000)
+                self.assertIn("unit: few bids", page.inner_text("#review-body"))
+                page.click("#btn-estimate")
+                page.wait_for_function("() => S.result && S.ws.refs", timeout=30000)
+                page.evaluate("() => { document.documentElement.style.scrollBehavior = 'auto'; }")
+                p50, p80 = page.evaluate("() => [S.result.headline.p50, S.result.headline.p80]")
+                opts = page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('#result-body tr.clickrow')]
+                    .map(tr => [S.lines.find(l => l.row_id === tr.dataset.line).item_no,
+                                [...(tr.querySelector('select.pick') || {options: []}).options].map(o => o.text)]))""")
+                self.assertTrue(any(o.startswith("Converted from CY bids: $") and "/CF" in o for o in opts["102"]), opts["102"])
+                self.assertTrue(any(o.startswith("Converted from CY bids: $") for o in opts["103"]), opts["103"])
+                self.assertTrue(any(o.startswith("Printed cap: 5% of the total bid = $") for o in opts["101"]), opts["101"])
+                for k in ("104", "105", "106"):
+                    self.assertFalse(any(o.startswith(("Converted", "Printed cap")) for o in opts[k]), k)
+                self.assertIn("Bidders usually price it at or just under the printed cap.",
+                              page.inner_text("#result-body"))
+                # pick both: your OPCC moves, the estimate does not
+                k101 = page.evaluate("() => S.lines.find(l => l.item_no === '101').row_id")
+                k103 = page.evaluate("() => S.lines.find(l => l.item_no === '103').row_id")
+                page.select_option('tr[data-line="%s"] select.pick' % k103, "unit")
+                page.wait_for_timeout(300)
+                page.select_option('tr[data-line="%s"] select.pick' % k101, "cap")
+                page.wait_for_timeout(300)
+                self.assertEqual(page.evaluate("() => [S.result.headline.p50, S.result.headline.p80]"), [p50, p80])
+                api = page.evaluate("""async () => { const r = await fetch('/api/estimate', {method: 'POST',
+                    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(S.resultReq)});
+                    const j = await r.json(); return [j.headline.p50, j.headline.p80]; }""")
+                self.assertEqual(api, [p50, p80])
+                your103 = float(page.input_value('tr[data-line="%s"] input.yourp' % k103))
+                self.assertTrue(0.3 < your103 < 3.0, your103)            # about $1/CF, not $11.25
+                self.assertEqual(errors, [])
+
     def test_jump_bar_and_hint(self):
         for engine in self.engines:
             with self.subTest(engine=engine):

@@ -314,6 +314,20 @@ def plain_codes(s):
     return _CODE.sub(sub, str(s))
 
 
+#: The estimator's own reasons for an unpriced line, in plain words.
+_WHY_PLAIN = {
+    "no price_reference entry": "no earlier bids for this item type in this unit",
+    "no reference cell": "no earlier bids for this item type in this unit",
+}
+
+
+def plain_why(s):
+    """An estimator's "why" for the page: known codes in plain words, the
+    rest as english() gives it."""
+    s = english(s)
+    return _WHY_PLAIN.get(s.strip(), s)
+
+
 def has_cjk(obj):
     """True when any string inside obj carries CJK text (for the tests)."""
     if isinstance(obj, str):
@@ -792,6 +806,9 @@ class ReferenceIndex:
             by_unit[un].append(i)
         self.by_unit = dict(by_unit)
         self.keys = {r[1] for r in pool}
+        #: the unit hint's evidence (set by the engine: it needs the
+        #: lettings' availability dates)
+        self.unit_evidence = None
         self.load_s = time.time() - t0
 
     def members(self, kind, key):
@@ -852,6 +869,185 @@ def _cell_label(kind, key):
         return "family %s, %s, %s, quantity band %s" % (fam, key[1], size,
                                                        key[3])
     return "family %s, %s, %s, any quantity" % (fam, key[1], size)
+
+
+# ---------------------------------------------------------------------------
+# unit hint (batch 3, 2026-11-20): presentation only, never an input
+# ---------------------------------------------------------------------------
+# The user (22:25): takeoffs come in CY or CF, SY or SF or AC, TON or LB.
+# Pooling units and converting automatically were tried and NOT adopted
+# (reports/unit_conversion_2026-11-20.md, U3: a rarer unit often marks a
+# different product), so the conversion is offered as a reference the
+# estimator chooses. The logic is U3's (handoff/scratchpad/p50fix/units/
+# patch_u3/unit_fallback.diff: UnitEvidence, unit_factor, the target rule),
+# reused here; src/ is not changed and P50 / P80 never see it.
+
+UNIT_HINT_MIN = 5                  # a family cell is usable with 5 lettings
+UNIT_CANONICAL = {"length": "LF", "area": "SY", "volume": "CY",
+                  "weight": "TON", "liquid": "GAL"}
+#: unit -> (dimension, num, den): quantity in the dimension's canonical unit
+#: = quantity x num / den
+UNIT_CONVERSIONS = {
+    "LF": ("length", 1, 1), "FT": ("length", 1, 1),
+    "SY": ("area", 1, 1), "SF": ("area", 1, 9), "AC": ("area", 4840, 1),
+    "CY": ("volume", 1, 1), "CF": ("volume", 1, 27),
+    "TON": ("weight", 1, 1), "LB": ("weight", 1, 2000),
+    "CWT": ("weight", 1, 20),
+    "GAL": ("liquid", 1, 1), "MG": ("liquid", 1000, 1),
+    "TGL": ("liquid", 1000, 1)}
+#: never converted (outside the table): counts, lump sums, allowances, time,
+#: vertical feet, stations, miles, a bare SQ (TxDOT's is per SY, a roofing
+#: square is 100 SF) or YD
+UNIT_NEVER_CONVERT = (
+    "EA", "EACH", "LS", "L.S.", "LUMP SUM", "ALLOW", "ALLOWANCE", "ALW",
+    "ALLW", "DOL", "LOT", "MO", "MONTH", "WK", "WEEK", "DAY", "HR", "HOUR",
+    "YR", "CYC", "VF", "VLF", "STA", "MI", "LMI", "SQ", "YD", "YARD")
+UNIT_FAMILIES_EXCLUDED = ("other", "needs_review", "")
+
+
+def unit_spelling(unit):
+    """A unit as UNIT_CONVERSIONS keys it: upper case, no dots or spaces."""
+    return re.sub(r"[.\s]", "", str(unit or "").upper())
+
+
+def unit_factor(unit, to_unit):
+    """(num, den): quantity in `to_unit` = quantity in `unit` x num / den,
+    for two units of one dimension in UNIT_CONVERSIONS; else None."""
+    a = UNIT_CONVERSIONS.get(unit_spelling(unit))
+    b = UNIT_CONVERSIONS.get(unit_spelling(to_unit))
+    if a is None or b is None or a[0] != b[0]:
+        return None
+    return a[1] * b[2], a[2] * b[1]
+
+
+def _canon_qty(q, num, den):
+    """A converted quantity to 12 significant digits (999.9999999999 is
+    1000), so a quantity band's edge does not move with the unit."""
+    return float("%.12g" % (q * num / den))
+
+
+class UnitEvidence:
+    """Per (family key, unit): the availability dates of the distinct public
+    lettings with price-pool rows of that family key in that unit (any size
+    bucket). n(fk, unit, D) counts those available strictly before D."""
+
+    def __init__(self, rows, fks, avail):
+        lets = collections.defaultdict(set)
+        for r, fk in zip(rows, fks):
+            fam, un, pk = r[2], r[3], r[1]
+            if not un or fk is None or (fam or "") in UNIT_FAMILIES_EXCLUDED:
+                continue
+            sp = unit_spelling(un)
+            if sp in UNIT_CONVERSIONS:
+                lets[(fk, sp)].add(pk)
+        never = getattr(_E(), "NEVER", "9999-12-31")
+        self.dates = {k: sorted(avail.get(pk) or never for pk in v)
+                      for k, v in lets.items()}
+        self.units = collections.defaultdict(set)   # (fk, dimension) -> units
+        for fk, sp in self.dates:
+            self.units[(fk, UNIT_CONVERSIONS[sp][0])].add(sp)
+
+    def n(self, fk, unit, D=None):
+        d = self.dates.get((fk, unit_spelling(unit)))
+        if not d:
+            return 0
+        return len(d) if D is None else bisect.bisect_left(d, D)
+
+
+def unit_hint_target(ev, family, unit, description, D, unpriced=False):
+    """(target unit, num, den, own lettings, target lettings) when a line
+    should be offered a converted price: its own unit has fewer than
+    UNIT_HINT_MIN earlier lettings (or the line is unpriced) and a unit of
+    the same dimension has at least UNIT_HINT_MIN; else None. The target is
+    the same-dimension unit with the most lettings (ties: the canonical
+    unit, then alphabetical) -- U3's rule."""
+    if ev is None or (family or "") in UNIT_FAMILIES_EXCLUDED:
+        return None
+    sp = unit_spelling(unit)
+    c = UNIT_CONVERSIONS.get(sp)
+    if c is None:
+        return None
+    fk = _E().family_key(family, description or "")
+    own = ev.n(fk, sp, D)
+    if own >= UNIT_HINT_MIN and not unpriced:
+        return None
+    best = None
+    for v in ev.units.get((fk, c[0]), ()):
+        if v == sp:
+            continue
+        k = (-ev.n(fk, v, D), v != UNIT_CANONICAL[c[0]], v)
+        if best is None or k < best:
+            best = k
+    if best is None or -best[0] < UNIT_HINT_MIN:
+        return None
+    v = best[2]
+    num, den = unit_factor(sp, v)
+    return v, num, den, own, -best[0]
+
+
+def _lettings(n):
+    return "%d earlier letting%s" % (n, "" if n == 1 else "s")
+
+
+def _rate(v):
+    """A unit price for a sentence: $0.97, $26.13, $1,234."""
+    if v is None:
+        return "?"
+    return ("${:,.0f}".format(v) if abs(v) >= 1000 else
+            "${:,.2f}".format(v) if abs(v) >= 0.1 else "${:,.4f}".format(v))
+
+
+def unit_evidence_text(unit, target, own, n_target, unpriced=False):
+    """"Only 1 earlier letting prices this in CF; 570 price it in CY." """
+    if unpriced and own >= UNIT_HINT_MIN:
+        head = ("This line found no price in %s (%s); %d price it in %s."
+                % (unit, _lettings(own), n_target, target))
+    elif own == 0:
+        head = ("No earlier letting prices this in %s; %d price it in %s."
+                % (unit, n_target, target))
+    else:
+        head = ("Only %s price%s this in %s; %d price it in %s."
+                % (_lettings(own), "s" if own == 1 else "", unit, n_target,
+                   target))
+    return head
+
+
+# ---------------------------------------------------------------------------
+# a printed cap on mobilization (batch 3; reports/p50_fix_round14.md)
+# ---------------------------------------------------------------------------
+# A mobilization line that prints a cap ("5% Max", "Max 5% of Total Bid",
+# "not to exceed 5%", "(5% max)") is priced by bidders at about 0.95 x the
+# cap, while the model's price runs 3.9x on jobs under $2M and 0.38x on
+# larger ones. The page offers the cap as a quick pick, computed live
+# from the user's other amounts. Read from the line's description as
+# written (desc_norm drops "%").
+_PCT = r"(\d{1,2}(?:\.\d{1,2})?)\s*(?:%|percent\b|pct\b)"
+_CAP_RES = (
+    re.compile(_PCT + r"\s*\)?\s*(?:max(?:imum)?\b\.?|cap\b)", re.I),
+    re.compile(r"\b(?:max(?:imum)?\.?|not\s+to\s+exceed|nte|n\.t\.e\.?|up\s+to|"
+               r"no\s+more\s+than|limited\s+to|cap(?:ped)?\s+at)\s*(?:of\s+)?\(?\s*"
+               + _PCT, re.I),
+)
+_CAP_REST = re.compile(r"\bof\s+(?:the\s+)?(?:rest|remaining|remainder|"
+                       r"(?:all\s+)?other\s+(?:bid\s+)?items)\b", re.I)
+
+
+def printed_cap(description):
+    """{"pct": 0.05, "basis": "total" | "rest", "text": "5%"} when the line
+    prints a cap, else None. "of the rest" (or the remaining / other items)
+    makes the cap a share of the other items; otherwise it is a share of the
+    total bid / contract."""
+    s = str(description or "")
+    for rx in _CAP_RES:
+        m = rx.search(s)
+        if m:
+            pct = float(m.group(1))
+            if not 0 < pct < 50:
+                return None
+            return {"pct": pct / 100.0,
+                    "basis": "rest" if _CAP_REST.search(s) else "total",
+                    "text": ("%g%%" % pct)}
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1114,6 +1310,108 @@ class ProductionEngine:
                     c, ln.get("file_amount"), ln.get("file_unit_price"),
                     ln.get("quantity"))
                 out.append(c)
+        return out
+
+    def add_unit_evidence(self, cls, lines, bid_date=None):
+        """The unit hint's evidence on classified lines (after any remembered
+        choice is applied): c["unit_hint"] = {unit, target, own, n_target,
+        factor, text} when the line's unit is thin in the history and a unit
+        of the same dimension is not. The converted price comes with the
+        reference lines (unit_hints). Nothing when the reference index is not built
+        yet."""
+        ev = self.refs.unit_evidence if self.refs is not None else None
+        if ev is None:
+            return cls
+        D = bid_date if (isinstance(bid_date, str)
+                         and re.fullmatch(r"\d{4}-\d{2}-\d{2}", bid_date)) \
+            else _dt.date.today().isoformat()
+        for c, ln in zip(cls, lines):
+            h = unit_hint_target(ev, c.get("family"), c.get("unit"),
+                                 str(ln.get("description") or ""), D)
+            if h is not None:
+                tu, num, den, own, n_t = h
+                c["unit_hint"] = {
+                    "unit": c.get("unit"), "target": tu, "own": own,
+                    "n_target": n_t, "factor": num / den,
+                    "text": unit_evidence_text(c.get("unit"), tu, own, n_t)}
+        return cls
+
+    def unit_hints(self, q, items, cls, r, to_year, target, bidders):
+        """{line index: hint} for the lines whose own unit is thin in the
+        history (fewer than UNIT_HINT_MIN earlier lettings, or the line is
+        unpriced) while a unit of the same dimension is not. A virtual copy
+        of each such line, written in that unit (quantity x factor), is
+        priced by one more estimate_low_bid.estimate() over the schedule --
+        the production path, same bidders, market, date and target -- and its
+        price comes back per the line's own unit. The result shown (P50, P80,
+        every line) is the first run's and is not touched: the hint is a
+        reference the estimator may pick on the page, never an input.
+        Call with the lock held."""
+        ev = self.refs.unit_evidence if self.refs is not None else None
+        if ev is None:
+            return {}
+        E = _E()
+        D = q["bid_date"] or _dt.date.today().isoformat()
+        conv, items_v = {}, []
+        for i, (it, c, t) in enumerate(zip(items, cls, r["trace"])):
+            status = self.line_status(t, it)
+            h = None
+            if status in ("priced", "unpriced") and (it.get("quantity") or 0) > 0:
+                h = unit_hint_target(ev, c.get("family"), it.get("unit"),
+                                     it.get("description") or "", D,
+                                     unpriced=(status == "unpriced"))
+            if h is None:
+                items_v.append(it)
+                continue
+            tu, num, den, own, n_t = h
+            x = dict(it)
+            x["unit"] = tu
+            x["quantity"] = _canon_qty(_f(it.get("quantity"), 0.0), num, den)
+            up = _f(it.get("unit_price"))
+            if up is not None:
+                x["unit_price"] = up * den / num
+            conv[i] = (tu, num, den, own, n_t, status)
+            items_v.append(x)
+        if not conv:
+            return {}
+        rv = E.estimate(self.tab, items_v, bidders["n"], q["market"], to_year,
+                        target)
+        el = r.get("expected_low")
+        tot = r.get("market_total") or 0.0
+        fx = r.get("fixed_total") or 0.0
+        s50 = (el - fx) / tot if (el is not None and tot > 0) else None
+        out = {}
+        for i, (tu, num, den, own, n_t, status) in conv.items():
+            tv, xv, it = rv["trace"][i], items_v[i], items[i]
+            if self.line_status(tv, xv) != "priced" or not tv.get("price"):
+                continue
+            f = num / den                     # target units per unit of the line
+            qv = xv.get("quantity") or 0.0
+            ratio = ((tv.get("quantity_effective") or qv) / qv) if qv else 1.0
+            mkt_tu = tv["price"]              # the typical bid per target unit
+            unit = it.get("unit") or ""
+            p50_tu = mkt_tu * ratio * s50 if s50 is not None else None
+            p50 = p50_tu * f if p50_tu is not None else None
+            head = unit_evidence_text(unit, tu, own, n_t,
+                                      unpriced=(status == "unpriced"))
+            conv_txt = (("Converted: about %s/%s (= %s/%s) at the expected-low-"
+                         "bid level; typical bid %s/%s." % (
+                             _rate(p50), unit, _rate(p50_tu), tu,
+                             _rate(mkt_tu * f), unit))
+                        if p50 is not None else
+                        ("Converted: typical bid about %s/%s (= %s/%s)."
+                         % (_rate(mkt_tu * f), unit, _rate(mkt_tu), tu)))
+            out[i] = {
+                "unit": unit, "target": tu, "factor": f, "own": own,
+                "n_target": n_t, "status": status,
+                "unit_price": p50 if p50 is not None else mkt_tu * f,
+                "unit_price_target": p50_tu if p50_tu is not None else mkt_tu,
+                "market_unit_price": mkt_tu * f,
+                "market_unit_price_target": mkt_tu,
+                "level": "p50" if p50 is not None else "market",
+                "n_projects": _f(tv.get("n_projects")),
+                "text": head + " " + conv_txt + " Reference only \u2014 check it "
+                        "is the same kind of work."}
         return out
 
     @staticmethod
@@ -1571,6 +1869,12 @@ class ProductionEngine:
                          "escalation": t.get("escalation"),
                          "escalation_basis": t.get("escalation_basis")},
             "accuracy": acc, "warnings": warns,
+            # a printed cap on a mobilization line ("5% Max"): the page
+            # offers it as a quick pick, computed from the user's amounts
+            "printed_cap": (printed_cap(it.get("description"))
+                            if "mobilization" in (c.get("family"),
+                                                  c.get("lowconf_class"))
+                            else None),
         }
 
     @staticmethod
@@ -1616,7 +1920,7 @@ class ProductionEngine:
                      % (100 * (t.get("mobilization_ratio") or 0)))
         else:
             first = (t.get("why") or ["no reference cell"])[0]
-            basis = "Not priced: %s" % english(first)
+            basis = "Not priced: %s" % plain_why(first)
         u = str(t.get("usable") or "")
         if status == "priced":
             if u == "unclassified":
@@ -1962,6 +2266,7 @@ class ProductionEngine:
         try:
             self.require()
             idx = ReferenceIndex()
+            idx.unit_evidence = UnitEvidence(idx.rows, idx.fk, self.panel.avail)
             with self._lock:
                 self.refs = idx
                 self.refs_state.update(ready=True, loading=False,
@@ -2100,11 +2405,13 @@ class ProductionEngine:
         reference projects' median-bidder unit prices escalated to the bid
         year (low / median / high, how many), the most recent one, and the
         projects to pick a price from. Read-only: nothing here is stored,
-        and nothing the user picks or types ever comes back in."""
+        and nothing the user picks or types ever comes back in. A line whose
+        unit is thin in the history also gets `unit_hint` (unit_hints)."""
         self.require()
         out = []
         with self._lock:
             q, items, cls, r, to_year, target, bidders = self._run(request)
+            hints = self.unit_hints(q, items, cls, r, to_year, target, bidders)
             for i, c in enumerate(cls):
                 x = self._references_for(i, q, items, cls, r, to_year, target)
                 refs = x.get("references") or []
@@ -2136,7 +2443,8 @@ class ProductionEngine:
                     "picks": [pick(rf) for rf in refs[:picks]],
                     "generic": w.startswith("Generic match"),
                     "thin": w.startswith("Thin evidence"),
-                    "warning": w or None})
+                    "warning": w or None,
+                    "unit_hint": hints.get(i)})
         return {"lines": out, "to_year": to_year,
                 "note": ("Reference range: the median-bidder unit prices of "
                          "the line's reference projects (public lettings "
@@ -2174,7 +2482,7 @@ class ProductionEngine:
         if status == "unpriced":
             return dict(base, special="unpriced", text=(
                 "Not priced: %s. The totals leave this line out."
-                % english((t.get("why") or ["no reference cell"])[0])))
+                % plain_why((t.get("why") or ["no reference cell"])[0])))
         pk = t.get("price_key")
         p50_unit = (t["price"] * s50) if s50 else None
         tail = (" At the P50 level the line is ×%.4f of that (the "

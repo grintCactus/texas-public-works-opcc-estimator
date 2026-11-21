@@ -611,6 +611,10 @@ code.inline { font-family: var(--mono); background: var(--code-bg); padding: 1px
 .badge.check      { color: var(--warn-ink); background: var(--warn-bg); border-color: var(--warn); }
 .badge.remembered { color: var(--info-ink); background: var(--info-bg); border-color: var(--info-line); }
 .badge.claude     { color: var(--violet-ink); background: var(--violet-bg); border-color: var(--violet-line); }
+/* the unit hint and a printed cap (batch 3): reference only, in words */
+.badge.unith      { color: var(--info-ink); background: var(--info-bg); border-color: var(--info-line); border-style: dashed; }
+.unithint { margin-top: 4px; font-size: 12px; color: var(--ink-dim); line-height: 1.45; overflow-wrap: anywhere; }
+.unithint .badge { margin-right: 4px; }
 tr.checkrow > td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .suggest { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; font-size: 12px; }
 .chip {

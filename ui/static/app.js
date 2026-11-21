@@ -871,7 +871,7 @@ async function forgetCorrection(l) {
 // The classify request; in the public demo it carries this browser's
 // corrections (used for that request only, never stored on the server).
 function classifyBody(lines) {
-  const b = { market: S.market, lines };
+  const b = { market: S.market, lines, bid_date: ($('#in-biddate') || {}).value || null };
   if (PUBLIC) b.corrections = browserCorrections();
   return b;
 }
@@ -1028,6 +1028,8 @@ function clsCell(l) {
       + (l.remembered.unit ? ', unit ' + l.remembered.unit : '') + '. To forget it: Change \u2192 '
       + '\u201cNot sure \u2014 keep our reading\u201d.',
     text: 'remembered' }));
+  const uh = unitHintText(l);
+  if (uh) badges.push(el('span', { class: 'badge unith', text: 'unit: few bids' }));
   const ia = c.intake || {};
   if (ia.low) badges.push(el('span', { class: 'badge check',
     title: 'Low confidence \u2014 check this line: ' + (ia.reasons || []).map(x => x.text).join('; ')
@@ -1064,8 +1066,48 @@ function clsCell(l) {
       el('span', { class: 'unitn', text: c.unit || 'no unit' }),
     ]),
     badges.length ? el('div', { class: 'badges' }, badges) : null,
+    uh ? el('div', { class: 'unithint', text: uh }) : null,
     sugg,
   ]);
+}
+
+// The unit hint (batch 3): this line's unit has few earlier bids while the
+// same work in another unit of the same kind has plenty. The worksheet's
+// text (with the converted price) once there is an estimate, else the
+// takeoff's evidence. Reference only -- nothing is converted automatically.
+function unitHintText(l) {
+  const x = (S.ws && S.ws.refs) ? S.ws.refs[l.row_id] : null;
+  if (x && x.unit_hint) return x.unit_hint.text;
+  const h = l.cls && l.cls.unit_hint;
+  if (!h) return '';
+  return h.text + ' After you estimate, the worksheet offers a price converted from '
+    + h.target + ' as a quick pick. Reference only \u2014 check it is the same kind of work.';
+}
+
+function capText(l) {
+  const a = printedCapAmount(l);
+  const cap = l.printed_cap;
+  return 'The bid form caps this at ' + cap.text + ' of the '
+    + (cap.basis === 'rest' ? 'rest of the bid' : 'total bid')
+    + (a !== null ? ' = ' + money(a) + ' with your other amounts' : '')
+    + '. Bidders usually price it at or just under the printed cap.';
+}
+
+// A printed cap on a mobilization line ("5% Max"): the amount it allows,
+// from the user's own amounts on every other line. "of the total bid":
+// c / (1 - c) x the rest; "of the rest": c x the rest.
+function printedCapAmount(l) {
+  const cap = l.printed_cap;
+  if (!cap || !S.result) return null;
+  let rest = 0;
+  (S.result.lines || []).forEach(o => {
+    if (o.row_id === l.row_id) return;
+    const a = wsAmount(o, wsLine(o));
+    if (a !== null) rest += a;
+  });
+  if (!(rest > 0)) return null;
+  const c = Number(cap.pct);
+  return cap.basis === 'rest' ? c * rest : c / (1 - c) * rest;
 }
 
 function gridRow(l, i) {
@@ -1483,9 +1525,8 @@ function openPicker(l) {
     cands.forEach(c => list.appendChild(el('div', { class: 'pick' + (c.item_family === cur ? ' sel' : '') }, [
       el('span', { class: 'lab' }, [
         el('span', { class: 't', text: c.label || '(unnamed)' }),
-        el('span', { class: 's', text: c.family_label + ' · '
-          + c.unit + ' · ' + c.detail
-          + (c.median_price ? ' · median ' + rate(c.median_price) + '/' + c.unit : '') }),
+        el('span', { class: 's', text: [c.family_label, c.unit, c.detail,
+          c.median_price ? 'median ' + rate(c.median_price) + '/' + c.unit : ''].filter(Boolean).join(' · ') }),
       ]),
       el('span', { class: 'badge ' + (c.n_projects >= 5 ? 'ok' : c.n_projects >= 3 ? 'thin' : 'no'),
         text: c.n_projects >= 5 ? 'plenty of bids' : c.n_projects >= 3 ? 'few bids' : 'too few bids' }),
@@ -2196,6 +2237,16 @@ function wsPicks(l) {
   if (l.unit_price_p50) out.push({ v: 'model', price: l.unit_price_p50, label: 'Model price ' + rate(l.unit_price_p50) });
   if (x && x.range) out.push({ v: 'ref_median', price: x.range.median, label: 'Reference median ('
     + x.n_refs + ', ' + yr + ') ' + rate(x.range.median), note: 'reference median of ' + x.n_refs + ' projects' });
+  const uh = x && x.unit_hint;
+  if (uh && isNum(uh.unit_price)) out.push({ v: 'unit', price: uh.unit_price,
+    label: 'Converted from ' + uh.target + ' bids: ' + rate(uh.unit_price) + '/' + l.unit
+      + ' (= ' + rate(uh.unit_price_target) + '/' + uh.target + ')',
+    note: 'converted from ' + uh.target + ' bids (' + uh.n_target + ' earlier lettings); check it is the same kind of work' });
+  const capAmt = printedCapAmount(l);
+  if (capAmt !== null && isNum(l.quantity) && l.quantity > 0) out.push({ v: 'cap', price: capAmt / l.quantity,
+    label: 'Printed cap: ' + l.printed_cap.text + ' of the '
+      + (l.printed_cap.basis === 'rest' ? 'rest of the bid' : 'total bid') + ' = ' + money(capAmt),
+    note: 'printed cap ' + l.printed_cap.text + '; bidders usually price it at or just under the cap' });
   const sp = similarPick(l);
   if (sp) out.push({ v: 'similar', price: sp.m.their_low_unit, label: 'Most recent similar: '
     + sp.c.project + ' (' + sp.c.date + ') low ' + rate(sp.m.their_low_unit),
@@ -2325,6 +2376,8 @@ async function loadWsRefs(tries) {
     (x.lines || []).forEach(v => { S.ws.refs[v.row_id] = v; });
     S.ws.refsReq = req;
     renderWorksheet(S.result);
+    // the takeoff grid's unit hints now carry the converted price
+    if ((x.lines || []).some(v => v.unit_hint)) renderGrid();
   } catch (e) {
     if (e.status === 503 && (tries || 0) < 20) { setTimeout(() => loadWsRefs((tries || 0) + 1), 1500); return; }
     toast('Reference ranges could not be loaded: ' + e.message, 'err');
@@ -2573,7 +2626,12 @@ function resultRow(l, judg, isOpen) {
     el('span', { class: 'ldesc', text: l.description }),
     el('div', { class: 'dim small', text: l.family_label + (l.size_bucket ? ' · ' + l.size_bucket : '')
       + (l.basis ? ' · ' + l.basis : '') }),
-    tags.length ? el('span', { class: 'tags' }, tags) : null]));
+    tags.length ? el('span', { class: 'tags' }, tags) : null,
+    // reference only: a price converted from another unit, a printed cap
+    (wsRefs(l) || {}).unit_hint ? el('div', { class: 'unithint' }, [el('span', { class: 'badge unith', text: 'unit: few bids' }),
+      document.createTextNode(' ' + wsRefs(l).unit_hint.text)]) : null,
+    l.printed_cap ? el('div', { class: 'unithint' }, [el('span', { class: 'badge unith', text: 'printed cap' }),
+      document.createTextNode(' ' + capText(l))]) : null]));
   tr.appendChild(el('td', { class: 'num money', text: qtyFmt(l.quantity) }));
   tr.appendChild(el('td', { text: l.unit }));
   tr.appendChild(el('td', { class: 'num money', text: l.unit_price_p50 ? rate(l.unit_price_p50)
