@@ -46,9 +46,9 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
 5. **Build your OPCC.**
    - In the worksheet, keep the model's unit price or pick one from the references, line by line. Add notes.
    - The estimate is laid out as an OPCC: the items, then the **subtotal**, then the **contingency** below it, then the **total**. This holds for P50, for P80 and for your own OPCC. A contingency given as a percentage stays that percentage of the subtotal at P50 and at P80.
-   - Pick your own contingency from a list (0–25% of the subtotal): 10% by default, 0% when the schedule already carries a contingency line (then any extra shows as an additional contingency row). The page shows how often an OPCC that high came in under the low bid on past jobs: in cities, P50 + 10% did on about 30% of jobs, and P80 on about 14%.
+   - Pick your own construction contingency from a list (0–25% of the subtotal): 10% by default, 0% when the schedule already carries a contingency line (then any extra shows as an additional construction contingency row). The page shows how often an OPCC that high came in under the low bid on past jobs: in cities, P50 + 10% did on about 30% of jobs, and P80 on about 14%.
    - "Your OPCC" is shown next to the model's P50 and P80.
-6. **Export** the worksheet to Excel or CSV, laid out the same way (items, subtotal, contingency, total), with your prices, notes and a references appendix.
+6. **Export** the worksheet to Excel or CSV. The first sheet is the OPCC itself, in the usual layout: item no., description, unit, quantity, unit cost and total cost, then Sub-Total, Construction Contingency and Project Total. After it come a summary next to the model's P50 / P80, every line with the model's prices and your notes, and a references appendix.
 
 ![The estimate for a public creek-bank schedule: expected low bid (P50) and recommended OPCC (P80) with their ranges, and one line opened to the earlier public bids behind its price](assets/screenshot-estimate.png)
 

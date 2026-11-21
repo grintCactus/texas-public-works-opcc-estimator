@@ -258,13 +258,48 @@ def _m(v):
     return "" if v is None else round(float(v), 2)
 
 
+#: The deliverable's own sheet, laid out as an OPCC is (user, 2026-11-21,
+#: showing one: items, Sub-Total, Construction Contingency (10%), Project
+#: Total): the estimator's prices only, no model or reference columns.
+OPCC_HEADER = ["Item No.", "Description", "Unit", "Quantity", "Unit Cost",
+               "Total Cost"]
+
+
+def opcc_rows(t: dict, ws: dict) -> list:
+    rows = []
+    for l, w, a in t["rows"]:
+        q = _f(l.get("quantity"))
+        if l.get("status") == "owner_set" or w.get("src") == "quote":
+            unit = (a / q) if (a is not None and q) else None
+        else:
+            unit = _f(w.get("your_unit"))
+        rows.append([l.get("item_no") or "", l.get("description") or "",
+                     l.get("unit") or "", q if q is not None else "",
+                     _m(unit), _m(a)])
+    rows.append([""] * 6)
+    rows.append(["", "Sub-Total", "", "", "", _m(t["subtotal"])])
+    for l, w, a in t["below"]:
+        pct = share_pct(l)
+        rows.append([l.get("item_no") or "", "%s (%s)" % (
+            l.get("description") or "Contingency",
+            "%g%% of the sub-total" % pct if pct is not None
+            else "owner's fixed amount"), "", "", "", _m(a)])
+    if t["contingency"]:
+        rows.append(["", "%s (%g%%)" % (
+            "Additional Construction Contingency" if t["below"]
+            else "Construction Contingency", t["contingency_pct"]),
+            "", "", "", _m(t["contingency"])])
+    rows.append(["", "Project Total", "", "", "", _m(t["your_opcc"])])
+    return rows
+
+
 def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
     """(title, header, rows) for the CSV / XLSX export -- the estimator's
     deliverable: their prices, notes and totals, the model's P50 / P80 for
     comparison, and a references appendix with source links."""
     t = totals(result, ws)
     inp = result.get("inputs") or {}
-    out = []
+    out = [("OPCC estimate", OPCC_HEADER, opcc_rows(t, ws))]
     head_rows = [
         ["Project", ws.get("project_name") or ""],
         ["Owner", inp.get("owner_label") or ""],
@@ -285,11 +320,12 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
                                    " (%g%% of the subtotal)" % pct
                                    if pct is not None else
                                    " (the owner's fixed amount)"), _m(a)])
-    extra = "Additional contingency" if t["below"] else "Contingency"
+    extra = ("Additional construction contingency" if t["below"]
+             else "Construction contingency")
     head_rows += [
         [extra + " %", "" if t["contingency_pct"] is None else t["contingency_pct"]],
         [extra + " (on the subtotal)", _m(t["contingency"])],
-        ["YOUR OPCC (total)", _m(t["your_opcc"])],
+        ["YOUR OPCC (project total)", _m(t["your_opcc"])],
         [],
         ["Model P50 (expected low bid)", _m(t["p50"])],
     ]
@@ -353,10 +389,11 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
         r[0], r[4], r[14] = l.get("item_no") or "", ("%g%%" % pct) if pct is not None else "", w.get("note") or ""
         rows.append(r)
     if t["contingency"]:
-        rows.append(foot("%s %g%% of the subtotal" % (
-            "Additional contingency" if t["below"] else "Contingency",
-            t["contingency_pct"]), None, t["contingency"], "yours only: not in P50 / P80"))
-    rows.append(foot("TOTAL", t["p50"], t["your_opcc"]))
+        rows.append(foot("%s (%g%% of the subtotal)" % (
+            "Additional construction contingency" if t["below"]
+            else "Construction contingency", t["contingency_pct"]), None,
+            t["contingency"], "yours only: not in P50 / P80"))
+    rows.append(foot("PROJECT TOTAL", t["p50"], t["your_opcc"]))
     out.append(("OPCC lines",
                 ["Item", "Description", "Qty", "Unit", "Model $/unit (P50)",
                  "Model amount (P50)", "Reference low $/unit",
@@ -411,7 +448,8 @@ def to_xlsx(result, ws, refs) -> bytes:
     for title, head, rows in sections(result, ws, refs):
         sh = wb.active if first else wb.create_sheet()
         first = False
-        sh.title = {"OPCC worksheet": "OPCC", "OPCC lines": "Lines",
+        sh.title = {"OPCC estimate": "OPCC", "OPCC worksheet": "Summary",
+                    "OPCC lines": "Lines",
                     "References appendix": "References"}[title]
         sh.append([title])
         sh.cell(row=1, column=1).font = bold
@@ -421,9 +459,14 @@ def to_xlsx(result, ws, refs) -> bytes:
                 c.font = bold
         for r in rows:
             sh.append(list(r))
-            if r and r[0] == "YOUR OPCC":
+            if r and (str(r[0]).startswith("YOUR OPCC") or (len(r) > 1 and r[1] in (
+                    "Sub-Total", "Project Total", "SUBTOTAL", "PROJECT TOTAL"))):
                 for c in sh[sh.max_row]:
                     c.font = bold
+        if title == "OPCC estimate":
+            for row in sh.iter_rows(min_row=3, min_col=5, max_col=6):
+                for c in row:
+                    c.number_format = "#,##0.00"
         for col in sh.columns:
             width = max((len(str(c.value)) for c in col if c.value is not None),
                         default=8)

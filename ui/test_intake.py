@@ -552,8 +552,9 @@ class WorksheetComparison(unittest.TestCase):
         self.assertEqual(t["model_p50"], 784000.0)
         self.assertEqual(t["vs_p50"]["amount"], 0.0)
         self.assertAlmostEqual(t["model_p80"], 1064000.0)
-        rows = dict((r[0], r[1:]) for r in worksheet.sections(self.RESULT, ws, None)[0][2]
-                    if r)
+        summary = next(sec for sec in worksheet.sections(self.RESULT, ws, None)
+                       if sec[0] == "OPCC worksheet")
+        rows = dict((r[0], r[1:]) for r in summary[2] if r)
         self.assertEqual(rows["Your OPCC vs P50 + not-covered lines"][0], 0.0)
 
     def test_without_not_covered_lines_nothing_changes(self):

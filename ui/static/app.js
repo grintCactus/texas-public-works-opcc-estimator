@@ -2589,10 +2589,10 @@ function renderWsTotals(r) {
   const parts = ['subtotal ' + money(t.sub) + (t.own ? ' (incl. owner-set allowances ' + money(t.own) + ')' : '')
     + (t.quotes ? ' (incl. vendor quotes ' + money(t.quotes) + ')' : '')];
   if (cl.length) parts.push(contingencyLabel(r.headline.contingency).toLowerCase() + ' ' + money(t.below));
-  if (t.c) parts.push((cl.length ? 'additional contingency ' : 'contingency ') + t.c + '% ' + money(t.cont));
+  if (t.c) parts.push((cl.length ? 'additional construction contingency ' : 'construction contingency ') + t.c + '% ' + money(t.cont));
   host.appendChild(el('div', { class: 'wstot' }, [
     el('div', { class: 'yours' }, [
-      el('div', { class: 'lab', text: 'Your OPCC (total)' }),
+      el('div', { class: 'lab', text: 'Your OPCC (project total)' }),
       el('div', { class: 'big', text: money(t.yours) }),
       el('div', { class: 'dim', text: parts.join(' + ') }),
       t.missing ? el('div', { class: 'warnnote', text: t.missing + ' line' + (t.missing === 1 ? ' has' : 's have')
@@ -2605,8 +2605,8 @@ function renderWsTotals(r) {
         el('span', { class: 'dim', text: '  you ' + vs(t.m80) })]),
       t.nc ? el('div', { class: 'dim small', text: 'P50 ' + money(t.p50) + ' and P80 ' + money(t.p80)
         + ' leave the not-covered lines out; your ' + money(t.nc) + ' for them is added to both here.' }) : null,
-      el('div', { class: 'cont' }, [el('span', { class: 'lab', text: (cl.length ? 'Additional contingency '
-        : 'Your contingency ') }), cin, el('span', { class: 'dim', text: ' of the subtotal' })]),
+      el('div', { class: 'cont' }, [el('span', { class: 'lab', text: (cl.length ? 'Additional construction contingency '
+        : 'Construction contingency ') }), cin, el('span', { class: 'dim', text: ' of the subtotal' })]),
       contingencyGuide(r, t),
     ]),
   ]));
@@ -2621,9 +2621,9 @@ function renderWsTotals(r) {
     + (t.missing === 1 ? '' : 's') + ' without a price)' : ''), t.sub,
     'expected low bid' + plusNc + 'subtotal ' + money(t.msub)));
   cl.forEach(l => foot.appendChild(contingencyRow(l)));
-  if (t.c) foot.appendChild(footRow('wscont', (cl.length ? 'Additional contingency ' : 'Contingency ')
-    + t.c + '% of the subtotal', t.cont, 'yours only: not in P50 / P80'));
-  foot.appendChild(footRow('wstotal', 'Total (your OPCC)', t.yours,
+  if (t.c) foot.appendChild(footRow('wscont', (cl.length ? 'Additional construction contingency ('
+    : 'Construction contingency (') + t.c + '% of the subtotal)', t.cont, 'yours only: not in P50 / P80'));
+  foot.appendChild(footRow('wstotal', 'Project total (your OPCC)', t.yours,
     'expected low bid' + plusNc + money(t.m50)));
 }
 
