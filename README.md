@@ -137,6 +137,24 @@ Municipal figures use the "covered" scope (see below). The discount uses each le
 - **Status:** as registered, it stays switched off until 40 new municipal lettings after 2026-11-20 confirm it (`data/test_holdout/REGISTRATIONS.md`, section 6).
 - **A second change** shrank prices backed by a single earlier letting. It fixed the worst single lines (a 48-inch water line went from 3.7× to 0.8× the bids), but it did not make job totals more accurate.
 
+**Line fixes that did not narrow the margin (round 14, registered before scoring).** Three general fixes were tried, alone and together:
+- a mobilization line that prints a cap ("5% Max") priced at that cap times the rest of the job;
+- weakly matched item-word prices blended with the price for that kind of item at its size;
+- round 13's shrinkage of prices backed by a single earlier letting.
+
+What happened:
+- **The lines became clearly more accurate.**
+  - Over 8,766 city lines, the total miss against the median bidder fell from $299M to $266M with all three.
+  - Capped mobilization lines went from 2.0× to 1.0× the bids.
+- **Job totals did not.** No variant lowered the median overshoot by the registered margin.
+- **None passed the line-accuracy route either.**
+  - That route was registered this round, because the worksheet shows our line prices. It also requires that the median overshoot not rise by more than 1 point at the upper end of its 90% interval.
+  - The variants reached +1.9 to +2.9 points.
+- **Why the totals did not move.**
+  - On small jobs, correcting the overpriced mobilization exposed unit-priced lines that run low.
+  - On large jobs, the misses come from weakly matched main items, not from mobilization.
+- **Status:** not adopted; production is unchanged.
+
 ## Item-level accuracy
 
 How close the price of each kind of line item is, before the lines are added up. Job totals are more accurate than single lines, because line errors partly cancel.
