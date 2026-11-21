@@ -15,7 +15,15 @@ Routes (JSON in, JSON out unless noted):
   POST /api/takeoff/file      multipart field "file" (or a raw body with
                               ?name=) -> parsed takeoff lines
   POST /api/classify          {market, lines: [{row_id, description, unit,
-                              family?}]} -> the parser's classification
+                              family?, quantity?, confidence?, issues?,
+                              keep_parser?}]} -> the parser's classification,
+                              plus intake help per line: a remembered
+                              correction, low-confidence reasons and the top-3
+                              history suggestions (ui/intake.py)
+  GET  /api/corrections       the corrections memory's file and size
+  POST /api/corrections       {description, family, unit?, source?} ->
+                              remember a correction (ui/.local/)
+  POST /api/corrections/forget {description} -> forget it
   GET  /api/history/search    ?q=&unit=&limit= -> earlier public line items
   POST /api/bidders/suggest   {market, work_type, bid_date, items} -> N1
   POST /api/estimate          the production estimate; an OPCC / engineer's
@@ -28,6 +36,33 @@ Routes (JSON in, JSON out unless noted):
   POST /api/bidtab/parse      multipart "file" -> parse preview (staged in
                               ui/.inbox/ for the ETL)
   GET  /api/bidtab/inbox
+  GET  /api/letting?key=      the full public bid tabulation of one letting
+                              (every line, every bidder, totals; built from
+                              master_panel source_set == external rows,
+                              on demand, cached)
+  GET  /api/letting/csv?key=  the same tab as a CSV file
+  GET  /api/source-file?path= the local copy of a public letting's original
+                              document -- only a file inside data/external/
+                              that is the source of a public letting
+  POST /api/worksheet/refs    {request} -> per line: the reference range
+                              (low / median / high, escalated), the most
+                              recent reference, the projects to pick from
+  POST /api/worksheet/export/csv|xlsx  {result, request, worksheet} -> the
+                              OPCC worksheet (the estimator's deliverable)
+  GET  /api/worksheet/list    saved worksheets (ui/.local/worksheets/)
+  GET  /api/worksheet/load?file=
+  POST /api/worksheet/save    {name, worksheet} -> ui/.local/worksheets/
+                              The worksheet's prices are OUTPUT ONLY: never
+                              read by the estimator or written anywhere else.
+  GET  /api/claude/status     the optional Claude reader: active backend
+                              (api -> cli -> none), model, privacy text
+  POST /api/claude/preview    multipart "file" (a PDF) -> pages, requests,
+                              local cost estimate. Local only: nothing sent.
+  POST /api/claude/count?consent=yes   multipart "file" -> exact input
+                              tokens from the token-counting endpoint (API
+                              backend; sends the document)
+  POST /api/claude/read?consent=yes    multipart "file" -> lines read by
+                              Claude, as a takeoff parse (sends the document)
 Everything else is served from ui/static/ (uncached).
 
 `dispatch()` is the whole API as a plain function, so the test suite calls
@@ -59,8 +94,9 @@ if _HERE not in sys.path:
 
 import engine_production as ep  # noqa: E402
 import exporter  # noqa: E402
+import intake  # noqa: E402
 import upstream  # noqa: E402
-from ingest import bidtab, ocr as ocr_mod, takeoff  # noqa: E402
+from ingest import bidtab, claude_reader, ocr as ocr_mod, takeoff  # noqa: E402
 
 log = logging.getLogger("ui")
 
@@ -70,15 +106,23 @@ MAX_JSON_BYTES = 16 * 1024 * 1024
 VERSION = "2.0.0"
 
 ENGINE = ep.ProductionEngine()
+#: The estimator's own classification corrections (ui/.local/, local only).
+CORRECTIONS = intake.Corrections()
 
 _matching_state: Dict[str, Any] = {"ready": False, "error": ""}
 
+#: The OPCC worksheet's fields. The estimator's chosen prices, notes and
+#: OPCC are OUTPUT ONLY: /api/estimate refuses a request that carries them.
+WORKSHEET_FIELDS = ("worksheet", "your_opcc", "your_unit", "your_amount",
+                    "contingency_pct", "src_label")
+
 
 class ApiError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, extra: Optional[dict] = None):
         super().__init__(message)
         self.status = status
         self.message = message
+        self.extra = extra or {}
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +137,12 @@ def start_background_load() -> threading.Thread:
         # the per-line references (one more read of master_panel.csv);
         # estimates are served meanwhile
         ENGINE.load_references()
+        # where each public letting sits in master_panel.csv, so a full bid
+        # tabulation opens without reading the whole file
+        try:
+            ENGINE.tabs.ensure()
+        except Exception as e:  # noqa: BLE001 - built again on first use
+            log.warning("bid tabulation index failed: %s", e)
         try:
             import matching
             matching.index()
@@ -213,7 +263,17 @@ def r_status(req):
         "bidtab_import": bidtab.available(),
         "history_search": dict(_matching_state),
         "xlsx_export": exporter.xlsx_available(),
+        "corrections": CORRECTIONS.status(),
+        "claude_reader": _claude_status(),
     }
+
+
+def _claude_status():
+    try:
+        return claude_reader.status()
+    except Exception as e:  # noqa: BLE001 - the page must load regardless
+        return {"available": False, "backend": "none", "label": "off",
+                "reason": "status check failed: %s" % type(e).__name__}
 
 
 @route("GET", "/api/options")
@@ -250,10 +310,47 @@ def r_takeoff_file(req):
 def r_classify(req):
     d = req.json()
     market = str(d.get("market") or "municipal")
+    lines = [ln for ln in (d.get("lines") or []) if isinstance(ln, dict)]
     try:
-        return {"lines": ENGINE.classify(d.get("lines") or [], market)}
+        out = ENGINE.classify(lines, market)
+        out = intake.annotate(ENGINE, lines, out, market, CORRECTIONS,
+                              history_ready=bool(_matching_state["ready"]))
     except ep.EngineNotReady as e:
         raise ApiError(503, str(e))
+    return {"lines": out}
+
+
+@route("GET", "/api/corrections")
+def r_corrections(req):
+    return CORRECTIONS.status()
+
+
+@route("POST", "/api/corrections")
+def r_corrections_save(req):
+    d = req.json()
+    fam = str(d.get("family") or "").strip()
+    try:
+        known = {f["id"] for f in ENGINE.options()["families"]}
+    except ep.EngineNotReady as e:
+        raise ApiError(503, str(e))
+    if fam not in known:
+        raise ApiError(400, "Unknown item family %r." % fam)
+    unit = str(d.get("unit") or "").strip()
+    if unit and upstream.norm_unit(unit).upper() not in upstream.KNOWN_UNITS:
+        unit = ""
+    try:
+        entry = CORRECTIONS.remember(d.get("description"), fam, unit,
+                                     str(d.get("source") or "picker"))
+    except ValueError as err:
+        raise ApiError(400, str(err))
+    return {"saved": entry, "status": CORRECTIONS.status()}
+
+
+@route("POST", "/api/corrections/forget")
+def r_corrections_forget(req):
+    d = req.json()
+    return {"forgotten": CORRECTIONS.forget(d.get("description")),
+            "status": CORRECTIONS.status()}
 
 
 @route("GET", "/api/history/search")
@@ -308,6 +405,14 @@ def r_estimate(req):
                 "nor a feature of this estimate -- it is only a backtest "
                 "baseline. Feeding it in would recycle the very bias the tool "
                 "exists to remove." % k)
+    # the OPCC worksheet's prices are output only: refused, never read
+    bad = [k for k in WORKSHEET_FIELDS if k in payload] + sorted({
+        k for it in (payload.get("items") or []) if isinstance(it, dict)
+        for k in WORKSHEET_FIELDS if k in it})
+    if bad:
+        raise ApiError(400, "'%s' belongs to the OPCC worksheet: the "
+                            "estimator's own prices are output only and never "
+                            "an input to the estimate." % bad[0])
     try:
         return ENGINE.estimate(payload)
     except ep.EngineNotReady as e:
@@ -392,13 +497,212 @@ def r_bidtab_inbox(req):
     return {"files": bidtab.inbox(), "dir": bidtab.INBOX}
 
 
+# -- the OPCC worksheet (output only) -------------------------------------------
+
+def _plain_request(request):
+    """The estimate request, refused if it carries an OPCC input."""
+    if not isinstance(request, dict):
+        raise ApiError(400, "Send the /api/estimate request as \"request\".")
+    for k in ep.FORBIDDEN_INPUTS:
+        if k in request:
+            raise ApiError(400, "'%s' is not an accepted input." % k)
+    return request
+
+
+@route("POST", "/api/worksheet/refs")
+def r_worksheet_refs(req):
+    d = req.json()
+    try:
+        return ENGINE.worksheet_refs(_plain_request(d.get("request")))
+    except ep.EngineNotReady as e:
+        raise ApiError(503, str(e))
+    except ep.BadRequest as e:
+        raise ApiError(400, str(e))
+
+
+def _worksheet_export(req, kind):
+    import worksheet
+    d = req.json()
+    result = d.get("result") if isinstance(d.get("result"), dict) else None
+    ws = d.get("worksheet") if isinstance(d.get("worksheet"), dict) else None
+    if result is None or ws is None:
+        raise ApiError(400, "Send {result, request, worksheet}.")
+    refs = None
+    if isinstance(d.get("request"), dict) and ENGINE.refs_state.get("ready"):
+        try:
+            refs = ENGINE.worksheet_refs(_plain_request(d["request"]))
+        except (ep.BadRequest, ep.EngineNotReady) as e:
+            log.warning("worksheet references failed: %s", e)
+    stamp = time.strftime("%Y%m%d-%H%M")
+    if kind == "csv":
+        return FileReply(worksheet.to_csv(result, ws, refs),
+                         "text/csv; charset=utf-8", "opcc_worksheet_%s.csv" % stamp)
+    if not exporter.xlsx_available():
+        raise ApiError(501, "XLSX export needs openpyxl; use CSV.")
+    return FileReply(worksheet.to_xlsx(result, ws, refs),
+                     "application/vnd.openxmlformats-officedocument."
+                     "spreadsheetml.sheet", "opcc_worksheet_%s.xlsx" % stamp)
+
+
+@route("POST", "/api/worksheet/export/csv")
+def r_worksheet_csv(req):
+    return _worksheet_export(req, "csv")
+
+
+@route("POST", "/api/worksheet/export/xlsx")
+def r_worksheet_xlsx(req):
+    return _worksheet_export(req, "xlsx")
+
+
+@route("GET", "/api/worksheet/list")
+def r_worksheet_list(req):
+    import worksheet
+    return {"worksheets": worksheet.listing(),
+            "folder": "ui/.local/worksheets (local; not in git)"}
+
+
+@route("GET", "/api/worksheet/load")
+def r_worksheet_load(req):
+    import worksheet
+    try:
+        return worksheet.load((req.query.get("file") or [""])[0])
+    except FileNotFoundError as e:
+        raise ApiError(404, str(e))
+    except ValueError:
+        raise ApiError(400, "That worksheet file is not valid JSON.")
+
+
+@route("POST", "/api/worksheet/save")
+def r_worksheet_save(req):
+    import worksheet
+    d = req.json()
+    try:
+        return worksheet.save(d.get("name") or "worksheet", d.get("worksheet"))
+    except ValueError as e:
+        raise ApiError(400, str(e))
+
+
+# -- full bid tabulations and original documents ------------------------------
+
+def _letting_key(req) -> str:
+    key = (req.query.get("key") or [""])[0].strip()
+    if not key:
+        raise ApiError(400, "Send ?key=<letting key>.")
+    return key
+
+
+def _letting_view(req):
+    key = _letting_key(req)
+    if not ENGINE.state.get("ready"):
+        raise ApiError(503, "The estimator is still loading.")
+    try:
+        v = ENGINE.tabs.view(key, ENGINE)
+    except OSError as e:
+        raise ApiError(503, "master_panel.csv could not be read: %s" % e)
+    if v is None:
+        raise ApiError(404, "No public letting with that key.")
+    return v
+
+
+@route("GET", "/api/letting")
+def r_letting(req):
+    return _letting_view(req)
+
+
+@route("GET", "/api/letting/csv")
+def r_letting_csv(req):
+    import lettings
+    v = _letting_view(req)
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_"
+                   for ch in (v.get("project") or "letting"))[:60]
+    return FileReply(lettings.to_csv(v), "text/csv; charset=utf-8",
+                     "bid_tab_%s.csv" % safe)
+
+
+@route("GET", "/api/source-file")
+def r_source_file(req):
+    """The local copy of a public letting's original document: only a file
+    that resolves inside data/external/ AND is the source of a public
+    letting. Top-level data/ files, ui/.inbox and ui/.cache are never
+    reachable."""
+    import lettings
+    rel = (req.query.get("path") or [""])[0]
+    try:
+        ENGINE.tabs.ensure()
+        known = ENGINE.tabs.files
+    except OSError:
+        raise ApiError(503, "The letting index is not available.")
+    full = lettings.resolve_source(rel, known)
+    if full is None:
+        raise ApiError(404, "Not a public letting's original document.")
+    ctype, inline = lettings.content_type(full)
+    with open(full, "rb") as fh:
+        data = fh.read()
+    return FileReply(data, ctype, os.path.basename(full), inline=inline,
+                     headers={"X-Content-Type-Options": "nosniff",
+                              "Cache-Control": "no-store"})
+
+
+# -- the optional Claude reader (opt-in, per document) -------------------------
+
+def _consent(req) -> bool:
+    return (req.query.get("consent") or [""])[0].strip().lower() in (
+        "yes", "true", "1")
+
+
+def _claude(fn, req):
+    """Run one Claude-reader call on the uploaded PDF; typed errors become
+    HTTP errors with their code. The upload is a temporary file outside
+    ui/ and is deleted afterwards."""
+    name, data = _uploaded_file(req.headers, req.query, req.body)
+    if not name.lower().endswith(".pdf"):
+        raise ApiError(400, "Only PDF files can be read with Claude here.",
+                       {"code": "not_pdf"})
+
+    def run(path):
+        try:
+            return fn(path, name)
+        except claude_reader.ClaudeReaderError as e:
+            d = e.to_dict()
+            d.pop("detail", None)
+            raise ApiError(e.http, e.message, d)
+    return _with_temp(name, data, run)
+
+
+@route("GET", "/api/claude/status")
+def r_claude_status(req):
+    return claude_reader.status(refresh=True)
+
+
+@route("POST", "/api/claude/preview")
+def r_claude_preview(req):
+    return _claude(lambda path, name: claude_reader.preview(path, name), req)
+
+
+@route("POST", "/api/claude/count")
+def r_claude_count(req):
+    consent = _consent(req)
+    return _claude(lambda path, name: claude_reader.count_tokens(
+        path, consent=consent, name=name), req)
+
+
+@route("POST", "/api/claude/read")
+def r_claude_read(req):
+    consent = _consent(req)
+    return _claude(lambda path, name: claude_reader.read_pdf(
+        path, consent=consent, name=name), req)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
 class FileReply:
-    def __init__(self, data: bytes, ctype: str, filename: str):
+    def __init__(self, data: bytes, ctype: str, filename: str,
+                 inline: bool = False, headers: Optional[dict] = None):
         self.data, self.ctype, self.filename = data, ctype, filename
+        self.inline = inline
+        self.headers = headers or {}
 
 
 class Request:
@@ -430,16 +734,18 @@ def dispatch(method: str, raw_path: str, headers=None, body: bytes = b"",
         try:
             out = fn(Request(method, path, query, headers, body or b""))
         except ApiError as e:
-            return _json_reply(e.status, {"detail": e.message})
+            return _json_reply(e.status, dict(e.extra, detail=e.message))
         except Exception as e:  # noqa: BLE001
             log.error("unhandled error on %s: %s", path, e)
             return _json_reply(500, {
                 "error": "%s: %s" % (type(e).__name__, e), "where": path,
                 "traceback": traceback.format_exc().splitlines()[-6:]})
         if isinstance(out, FileReply):
-            return (200, out.ctype, out.data,
-                    {"Content-Disposition": 'attachment; filename="%s"'
-                                            % out.filename})
+            fn = out.filename.replace('"', "").replace("\r", "").replace("\n", "")
+            return (200, out.ctype, out.data, dict(
+                out.headers, **{"Content-Disposition": '%s; filename="%s"' % (
+                    "inline" if out.inline else "attachment",
+                    fn.encode("ascii", "replace").decode("ascii"))}))
         return _json_reply(200, out)
     if method not in ("GET", "HEAD"):
         return _json_reply(405, {"detail": "method not allowed"})

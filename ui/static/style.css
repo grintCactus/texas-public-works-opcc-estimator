@@ -283,6 +283,7 @@ textarea { resize: vertical; min-height: 150px; font-family: var(--mono); font-s
   background: var(--panel-2); color: var(--ink-dim); margin-top: -4px; }
 .disc.caution { border-color: var(--warn-line); }
 .disc.severe { border-color: var(--bad-line); color: var(--bad-ink); }
+.warnnote { color: var(--bad-ink); font-weight: 600; }
 .help { display: inline-block; width: 14px; height: 14px; line-height: 14px; text-align: center;
   border-radius: 50%; background: var(--chip); font-size: 10px; cursor: help; color: var(--ink); }
 
@@ -574,6 +575,81 @@ code.inline { font-family: var(--mono); background: var(--code-bg); padding: 1px
 .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
 .tabs button:hover { color: var(--ink); }
 .tabpane { display: none; } .tabpane.active { display: block; }
+
+/* ------------------------------------------------- messy-takeoff intake */
+
+.badge.check      { color: var(--warn-ink); background: var(--warn-bg); border-color: var(--warn); }
+.badge.remembered { color: var(--info-ink); background: var(--info-bg); border-color: var(--info-line); }
+.badge.claude     { color: var(--violet-ink); background: var(--violet-bg); border-color: var(--violet-line); }
+tr.checkrow > td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.suggest { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; font-size: 11px; }
+.chip {
+  display: inline-flex; flex-direction: column; align-items: flex-start; gap: 0;
+  max-width: 100%; padding: 2px 7px; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--panel-2); color: var(--ink); cursor: pointer; text-align: left; font: inherit;
+}
+.chip:hover, .chip:focus-visible { border-color: var(--accent); }
+.chip .t { font-size: 11px; overflow-wrap: anywhere; }
+.chip .s { font-size: 10.5px; color: var(--ink-faint); }
+.claudebox { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 9px; }
+#btn-claude.off { color: var(--ink-faint); }
+
+/* ------------------------------------- project sources and full bid tabs */
+
+.srclinks { display: flex; flex-wrap: wrap; gap: 3px 10px; font-size: 11px; margin-top: 1px; }
+.srclink { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
+.srclink:hover { text-decoration: underline; }
+.srclink.local { color: var(--ink-dim); }
+.projlink { color: var(--accent); font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+.projlink:hover { text-decoration: underline; }
+.modal.wide { max-width: min(1500px, 96vw); max-height: 88vh; }
+.bidtab .bthead { margin-bottom: 6px; }
+.bidtab .btname { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.bttotals { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
+.bttot {
+  display: inline-flex; flex-direction: column; padding: 3px 8px; border-radius: 5px;
+  border: 1px solid var(--line); background: var(--panel-2); font-size: 11px;
+}
+.bttot .n { color: var(--ink-dim); }
+.bttot .v { font-family: var(--mono); color: var(--ink); }
+.bttot.low { border-color: var(--ok-line); background: var(--ok-bg); }
+.bttot.low .v { color: var(--ok-ink); font-weight: 600; }
+.bttot.ee { border-style: dashed; }
+.bttools { gap: 10px; align-items: center; margin: 4px 0 6px; font-size: 11px; }
+label.chk { display: inline-flex; gap: 4px; align-items: center; font-size: 11.5px; cursor: pointer; }
+.btwrap { overflow: auto; max-height: 68vh; border: 1px solid var(--line-soft); border-radius: 5px; }
+table.btgrid { width: auto; min-width: 100%; }
+table.btgrid thead th { position: sticky; top: 0; background: var(--th); z-index: 1; vertical-align: bottom; }
+table.btgrid td.btdesc { min-width: 220px; max-width: 360px; }
+table.btgrid td.lowcol, table.btgrid th.lowcol { background: var(--ok-bg); }
+table.btgrid .eecol { background: var(--chip); }
+table.btgrid tr.hl > td { background: var(--info-bg); }
+table.btgrid tr.hl > td.btmk { color: var(--accent); }
+table.btgrid tr.tot > td { border-top: 2px solid var(--line); font-weight: 600; }
+.btmatch { margin-top: 3px; font-size: 10.5px; line-height: 1.4; }
+.btmatch .mk { display: block; color: var(--info-ink); font-weight: 600; }
+.btmatch .nums { display: block; font-family: var(--mono); color: var(--ink-dim); }
+
+/* ------------------------------------------------------- OPCC worksheet */
+
+#p-worksheet > h2 { font-size: 15px; }
+.wstot { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: flex-start; margin-bottom: 8px; }
+.wstot .yours { min-width: 260px; }
+.wstot .yours .lab { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-dim); }
+.wstot .yours .big { font-size: 26px; font-weight: 700; font-family: var(--mono); color: var(--ink); }
+.wstot .cmp { display: flex; flex-direction: column; gap: 4px; font-size: 12px; padding-top: 4px; }
+.wstot .cmp .lab { color: var(--ink-dim); }
+.wstot .cmp .v { font-family: var(--mono); font-weight: 600; }
+.wstools { align-items: center; gap: 8px; }
+.wstools .spacer { flex: 1; }
+.badge.judg { color: var(--warn-ink); background: var(--warn-bg); border-color: var(--warn-line); }
+tr.judgrow > td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.yourcell { display: flex; gap: 4px; align-items: center; }
+.yourcell .yourp { width: 92px; }
+.yourcell select.pick { max-width: 104px; font-size: 11px; }
+.cellinput.note { width: 100%; }
+.btn.twisty { padding: 0 5px; margin-right: 4px; }
+.small { font-size: 10.5px; }
 
 /* ---------------------------------------------------------- narrow screens */
 

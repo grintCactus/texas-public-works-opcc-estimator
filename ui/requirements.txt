@@ -8,3 +8,7 @@ pdfplumber>=0.11        # 0.11.9  -- PDF takeoffs (text layer + word coordinates
 # Optional:
 # python-docx>=1.0      # .docx takeoffs; without it a .docx upload is refused
 #                       # with a message (save as .xlsx / .csv, or paste)
+# anthropic>=2.12       # 2.12.0  -- only for the optional "Read a PDF with Claude"
+#                       # (API backend). Without it the Claude reader uses the
+#                       # claude CLI if present, else it is off; nothing else
+#                       # needs it. See ui/README.md, "Setting up Claude reading".

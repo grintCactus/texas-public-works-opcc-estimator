@@ -72,7 +72,12 @@
         <div class="tabpane" id="pane-file">
           <div class="dropzone" id="dropzone">
             <div class="big">Drop a takeoff here, or click to choose</div>
-            <div class="small">Excel (.xlsx) &middot; CSV &middot; PDF (text layer) &middot; Word (.docx)</div>
+            <div class="small">Excel (.xlsx) &middot; CSV &middot; PDF (text layer or scanned, read offline) &middot; Word (.docx)</div>
+          </div>
+          <div class="claudebox" id="claude-box">
+            <button class="btn sm" id="btn-claude" type="button">Read a PDF with Claude&hellip;</button>
+            <span class="muted-note" id="claude-note"></span>
+            <input type="file" id="claude-input" hidden accept=".pdf,application/pdf">
           </div>
           <input type="file" id="file-input" hidden
                  accept=".xlsx,.xlsm,.csv,.txt,.tsv,.pdf,.docx,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp">
@@ -104,6 +109,9 @@
       <span class="badge lowc">low confidence</span>
       <span class="badge allow">owner-set money?</span>
       <span class="badge uncl">unclassified</span>
+      <span class="badge check">check: &hellip;</span>
+      <span class="badge remembered">remembered</span>
+      <span class="badge claude">read by Claude</span>
     </span>
     <button class="btn sm" id="btn-add-row">+ Add row</button>
   </div>
@@ -138,21 +146,26 @@
           <div class="seg" id="in-market">
             <button data-v="municipal" aria-pressed="true">City / County</button>
             <button data-v="txdot" aria-pressed="false">TxDOT</button>
+            <button data-v="not_sure" aria-pressed="false" title="Priced as City / County, the default market">Not sure</button>
           </div>
           <span class="sub">Picks the price history, the competition table and the
             calibration the estimate uses.</span>
         </label>
         <label class="field">
           <span class="lab">Owner <span class="dim">(optional)</span></span>
-          <select id="in-owner"><option value="">&mdash; not specified &mdash;</option></select>
-          <span class="sub">Earlier jobs of the same owner count 1.5&times; when the
-            comparables are chosen.</span>
+          <input type="text" id="in-owner" list="owner-list" autocomplete="off"
+                 placeholder="type or pick an owner">
+          <datalist id="owner-list"></datalist>
+          <span class="sub" id="owner-note">Earlier jobs of the same owner count 1.5&times; when the
+            comparables are chosen. Not listed? Pick "Other &mdash; not in the list" or just type it.</span>
         </label>
         <label class="field">
           <span class="lab">Work type <span class="dim">(optional)</span></span>
-          <select id="in-worktype"><option value="">&mdash; not specified &mdash;</option></select>
-          <span class="sub">Same work type counts 1.5&times; in the comparables, and
-            picks the bidder-count history.</span>
+          <input type="text" id="in-worktype" list="worktype-list" autocomplete="off"
+                 placeholder="type or pick a work type">
+          <datalist id="worktype-list"></datalist>
+          <span class="sub" id="worktype-note">Same work type counts 1.5&times; in the comparables, and
+            picks the bidder-count history. Not listed? Pick "Other / not listed" or just type it.</span>
         </label>
       </div>
       <div>
@@ -211,6 +224,44 @@
       <div id="r-warnings"></div>
     </div>
   </div>
+  <div class="panel flush" id="p-worksheet">
+    <h2>OPCC worksheet <span class="hint">your unit prices next to the model&rsquo;s and the
+      reference projects&rsquo;; your prices are output only &mdash; they never feed back into the estimator</span></h2>
+    <div class="body">
+      <div id="ws-totals"></div>
+      <div class="row-actions wstools" id="ws-tools">
+        <label class="chk"><input type="checkbox" id="ws-filter"> only lines that need your judgment
+          <span id="ws-filter-n"></span></label>
+        <span class="spacer"></span>
+        <button class="btn sm" id="ws-save" type="button">Save</button>
+        <button class="btn sm" id="ws-open" type="button">Open&hellip;</button>
+        <button class="btn sm" id="ws-xlsx" type="button">Worksheet (.xlsx)</button>
+        <button class="btn sm" id="ws-csv" type="button">CSV</button>
+        <button class="btn sm ghost" id="ws-json" type="button">Download JSON</button>
+        <input type="file" id="ws-upload" hidden accept=".json,application/json">
+      </div>
+    </div>
+    <div class="tablewrap tall">
+      <table class="grid" id="result-table">
+        <thead>
+          <tr>
+            <th style="width:54px">Item</th>
+            <th>Description</th>
+            <th style="width:82px" class="num">Qty</th>
+            <th style="width:46px">Unit</th>
+            <th style="width:104px" class="num" title="The model&rsquo;s unit price at the P50 level">Model $/unit</th>
+            <th style="width:170px" class="num" title="Low &ndash; median &ndash; high of this line&rsquo;s reference projects&rsquo; median-bidder unit prices, escalated to the bid year">Reference range</th>
+            <th style="width:110px">Accuracy</th>
+            <th style="width:210px">Your $/unit</th>
+            <th style="width:118px" class="num">Your amount</th>
+            <th style="width:190px">Note</th>
+          </tr>
+        </thead>
+        <tbody id="result-body"></tbody>
+        <tfoot id="result-foot"></tfoot>
+      </table>
+    </div>
+  </div>
   <div class="panel" id="p-notcovered">
     <h2>Not covered &mdash; get a vendor quote <span class="hint" id="nc-sub"></span></h2>
     <div class="body" id="r-notcovered"></div>
@@ -218,29 +269,6 @@
   <div class="panel" id="p-lowconf">
     <h2>Low confidence <span class="hint">mobilization and general-condition lump sums</span></h2>
     <div class="body" id="r-lowconf"></div>
-  </div>
-  <div class="panel flush">
-    <h2>Line items <span class="hint">amounts at the P50 level; they add up to P50. Click a row for the reference projects behind its price.</span></h2>
-    <div class="tablewrap tall">
-      <table class="grid" id="result-table">
-        <thead>
-          <tr>
-            <th style="width:54px">Item</th>
-            <th>Description</th>
-            <th style="width:190px">Classification</th>
-            <th style="width:86px" class="num">Qty</th>
-            <th style="width:50px">Unit</th>
-            <th style="width:104px" class="num">Unit price</th>
-            <th style="width:112px" class="num">Amount</th>
-            <th style="width:250px">Basis</th>
-            <th style="width:122px">Accuracy</th>
-            <th style="width:150px">Flags</th>
-          </tr>
-        </thead>
-        <tbody id="result-body"></tbody>
-        <tfoot id="result-foot"></tfoot>
-      </table>
-    </div>
   </div>
   <div class="panel">
     <h2>Competition <span class="hint">bidders and the discount</span></h2>

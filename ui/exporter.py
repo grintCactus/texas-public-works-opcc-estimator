@@ -221,7 +221,7 @@ def sections(result: Dict[str, Any]) -> List[tuple]:
                  "Bidders", "Low bid", "2nd low", "Median bid", "High bid",
                  "Size vs this job (their low / our P50)", "Shares",
                  "Similarity", "This job at their low-bid prices",
-                 "Source document", "Source URL"], rows or [["(none)"]]))
+                 "Source document", "source_url"], rows or [["(none)"]]))
     rows = []
     for c in sim.get("cards") or []:
         for m in c.get("matched_lines") or []:
@@ -246,10 +246,10 @@ def sections(result: Dict[str, Any]) -> List[tuple]:
     for x in result.get("top_references") or []:
         rows.append([x.get("item_no"), x.get("description"), x.get("unit"),
                      x.get("status"), "", "", "", "", "", "", "", "",
-                     x.get("text") or ""])
+                     x.get("text") or "", ""])
         if x.get("warning"):
             rows.append(["", "", "", "", "", "", "", "", "", "", "", "",
-                         x["warning"]])
+                         x["warning"], ""])
         for k, rf in enumerate(x.get("references") or [], 1):
             rows.append(["", "#%d" % k, rf.get("project"), rf.get("owner"),
                          rf.get("date"), rf.get("bidders"),
@@ -257,14 +257,16 @@ def sections(result: Dict[str, Any]) -> List[tuple]:
                          rf.get("quantity"), _money(rf.get("median_unit")),
                          _money(rf.get("low_unit")),
                          _money(rf.get("escalated_unit")),
-                         (rf.get("source") or {}).get("document") or ""])
+                         (rf.get("source") or {}).get("document") or "",
+                         (rf.get("source") or {}).get("url") or ""])
     if rows:
         out.append(("Line references (top 3 per line)",
                     ["Item", "Description / rank", "Unit / project",
                      "Status / owner", "Letting date", "Bidders",
                      "Project low bid", "Item as written", "Their qty",
                      "Median bid $/unit", "Low bid $/unit",
-                     "Median bid in bid-year dollars", "How priced / source"],
+                     "Median bid in bid-year dollars", "How priced / source",
+                     "source_url"],
                     rows))
     return out
 

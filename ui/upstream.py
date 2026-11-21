@@ -252,8 +252,38 @@ except Exception as e:  # noqa: BLE001
     OCR_IMPORT_ERROR = "%s: %s" % (type(e).__name__, e)
 
 
+# ---------------------------------------------------------------------------
+# OCR for scanned PDFs -- the pipeline's own engines (src/ocr_scans.py)
+# ---------------------------------------------------------------------------
+#
+# Apple Vision, RapidOCR (in .venv) and Tesseract (tools/), whichever this
+# machine has, all offline. ocr_pages() renders each page and lays the words
+# out as text rows; ui/ingest/takeoff.py parses those rows.
+
+PDF_OCR_ENGINES = []
+PDF_OCR_ERROR = ""
+try:
+    import ocr_scans as _ocrs  # type: ignore
+    PDF_OCR_ENGINES = list(_ocrs.available_engines())
+except Exception as e:  # noqa: BLE001
+    PDF_OCR_ERROR = "%s: %s" % (type(e).__name__, e)
+
+
+def ocr_pdf_pages(path, dpi=300, engine=None):
+    """({page: laid-out text}, engine) for a scanned PDF, or ({}, "")."""
+    if not PDF_OCR_ENGINES:
+        return {}, ""
+    import tempfile
+    from pathlib import Path
+    eng = engine or PDF_OCR_ENGINES[0]
+    with tempfile.TemporaryDirectory(prefix="ui_ocr_") as tmp:
+        return _ocrs.ocr_pages(Path(path), dpi, Path(tmp), eng), eng
+
+
 def status() -> dict:
     return {
+        "pdf_ocr_engines": PDF_OCR_ENGINES,
+        "pdf_ocr_error": PDF_OCR_ERROR,
         "parser_available": PARSER_AVAILABLE,
         "parser_error": IMPORT_ERROR,
         "parser_version": PARSER_VERSION,

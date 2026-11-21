@@ -148,6 +148,12 @@ class TakeoffLine:
     #: to owner-set allowance lines (face-value money nobody bids).
     amount: Optional[float] = None
     unit_price: Optional[float] = None
+    #: Who read the line: "" for the local readers, "claude" for a line the
+    #: optional Claude reader transcribed (ui/ingest/claude_reader.py) -- the
+    #: grid tags those "read by Claude".
+    origin: str = ""
+    #: The PDF page the line was read from, when the reader knows it.
+    page: Optional[int] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -412,6 +418,14 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
         item_no = cell(ii)
         amount = _num(cell(ai)) if ai is not None else None
         unit_price = _num(cell(pi)) if pi is not None else None
+        if qty is None or not unit:
+            # quantity and unit in one cell: "1,745 SY", "1745SY"
+            for j in ([qi] if qi is not None else []) + ([ui] if ui is not None else []):
+                q2, u2 = _split_qty_unit(cell(j))
+                if q2 is not None:
+                    qty = qty if qty is not None else q2
+                    unit = unit or u2
+                    break
 
         if not desc:
             # A row with a quantity but no description is a wrapped line or a
@@ -545,16 +559,45 @@ def from_text(text: str, source: str = "pasted text") -> TakeoffParse:
     out.notes.append(
         "No column structure detected; each line parsed as "
         "description + unit + quantity in any order.")
-    n = 0
+    n = joined = 0
     for k, raw in enumerate(nonempty):
         line = _parse_free_line(raw)
         if line is None:
             out.skipped.append({"row": k + 1, "reason": "no item found",
                                 "raw": raw[:200]})
             continue
+        if _HEADER_LINE_RE.fullmatch(line.description.lower()) and \
+                line.quantity is None:
+            out.skipped.append({"row": k + 1, "reason": "column header",
+                                "raw": raw[:200]})
+            continue
+        # a wrapped description belongs to the line above it:
+        #   item line (with unit and quantity) + a bare text line, or
+        #   item line cut before its unit + the rest with unit and quantity
+        prev = out.lines[-1] if out.lines else None
+        if prev is not None and not line.item_no:
+            # no quantity, and no unit -- or only a unit word inside running
+            # text ("pipe, all depths": "all" reads as ALLOW)
+            bare = line.quantity is None and (not line.unit
+                                              or not _unit_at_end(raw))
+            if bare and prev.quantity is not None:
+                prev.description = _txt(prev.description + " " + line.description)
+                joined += 1
+                continue
+            if (not bare and prev.quantity is None and not prev.unit
+                    and prev.item_no):
+                prev.description = _txt(prev.description + " " + line.description)
+                prev.unit, prev.quantity = line.unit, line.quantity
+                prev.issues = [i for i in line.issues]
+                prev.confidence = line.confidence
+                joined += 1
+                continue
         n += 1
         line.row_id = "r%d" % n
         out.lines.append(line)
+    if joined:
+        out.notes.append("%d wrapped description line(s) joined to the line "
+                         "above." % joined)
     if not out.lines:
         out.notes.append(
             "No line yielded a description. Expected something like "
@@ -562,9 +605,24 @@ def from_text(text: str, source: str = "pasted text") -> TakeoffParse:
     return out
 
 
+def _unit_at_end(raw: str) -> bool:
+    toks = _txt(raw).split()
+    return bool(toks) and _unit_score(toks[-1].strip(".,;:"))
+
+
 def _csv_like(lines: Sequence[str]) -> bool:
-    with_comma = sum(1 for l in lines if l.count(",") >= 2)
-    return with_comma >= max(2, 0.6 * len(lines))
+    """Comma-separated columns: most lines have 2+ separating commas, and
+    most of those the same number. Thousands separators ("1,745") and the
+    odd comma in a description ("Block Sod, Bermuda") do not count -- free
+    text full of them is not a CSV."""
+    def seps(l):
+        return re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", l).count(",")
+    counts = [seps(l) for l in lines]
+    multi = [c for c in counts if c >= 2]
+    if len(multi) < max(2, 0.6 * len(lines)):
+        return False
+    modal = max(multi.count(c) for c in set(multi))
+    return modal >= 0.6 * len(lines)
 
 
 def _parse_free_line(raw: str) -> Optional[TakeoffLine]:
@@ -578,6 +636,16 @@ def _parse_free_line(raw: str) -> Optional[TakeoffLine]:
         parts = s.split()
     parts = [_txt(p) for p in parts]
 
+    # quantity and unit glued together ("1745SY") -> two parts
+    split_parts = []
+    for p in parts:
+        m = re.fullmatch(r"([\d,]*\.?\d+)([A-Za-z][A-Za-z.]{0,10})", p.strip())
+        if m and _unit_score(m.group(2)):
+            split_parts.extend([m.group(1), m.group(2)])
+        else:
+            split_parts.append(p)
+    parts = [p for p in split_parts if p]
+
     item_no = ""
     # A leading short integer/code is an item number, not a quantity.
     if parts and re.fullmatch(r"\d{1,4}[.)]?|[A-Z]?\d{1,3}[-.]\d{1,4}", parts[0]):
@@ -590,19 +658,39 @@ def _parse_free_line(raw: str) -> Optional[TakeoffLine]:
             break
 
     qty, qty_i = None, -1
-    # Prefer a number to the right of the unit (desc, unit, qty is the common
-    # order); otherwise take the last number on the line.
-    search_order = (list(range(unit_i + 1, len(parts))) + list(range(len(parts) - 1, -1, -1))
-                    if unit_i >= 0 else list(range(len(parts) - 1, -1, -1)))
-    for i in search_order:
-        if i == unit_i:
-            continue
-        v = _num(parts[i])
-        if v is not None and v > 0:
-            qty, qty_i = v, i
-            break
 
-    desc_parts = [p for i, p in enumerate(parts) if i not in (unit_i, qty_i)]
+    def pos(i):
+        v = _num(parts[i])
+        return v is not None and v > 0
+
+    if unit_i >= 0:
+        # desc, unit, qty [, prices] is a takeoff's usual order; a bid form
+        # prints qty, unit, unit price, amount -- so a plain number right of
+        # the unit wins, then the plain number right before the unit, and a
+        # money-looking number ($ 48,000.00) only when there is nothing else
+        after = [i for i in range(unit_i + 1, len(parts)) if pos(i)]
+        plain = [i for i in after if not _money_like(parts[i])]
+        b = unit_i - 1
+        if plain:
+            qty_i = plain[0]
+        elif b >= 0 and pos(b) and not _money_like(parts[b]) and \
+                not (b == 0 and item_no == "" and len(parts) <= 2):
+            qty_i = b
+        elif after:
+            qty_i = after[0]
+    if qty_i < 0:
+        for i in range(len(parts) - 1, -1, -1):
+            if i != unit_i and pos(i):
+                qty_i = i
+                break
+    if qty_i >= 0:
+        qty = _num(parts[qty_i])
+
+    # numbers after the description are price / amount columns, not words
+    first_num = min([i for i in (unit_i, qty_i) if i >= 0] or [len(parts)])
+    desc_parts = [p for i, p in enumerate(parts) if i not in (unit_i, qty_i)
+                  and not (i > first_num and (_money_like(p) or _num(p) is not None))
+                  and not re.fullmatch(r"[$\s]+", p)]
     desc = _txt(" ".join(desc_parts))
     if len(desc) < 3:
         return None
@@ -616,6 +704,107 @@ def _parse_free_line(raw: str) -> Optional[TakeoffLine]:
                        item_no=item_no,
                        confidence="low" if issues else "ok",
                        issues=issues, raw=s[:300])
+
+
+_HEADER_LINE_RE = re.compile(
+    r"(?:(?:bid|pay|line)?\s*items?\s*(?:no\.?|#|number)?|descriptions?|units?|"
+    r"u/m|uom|quantity|qty|est\.?|estimated|approx\.?|unit\s+price|amount|"
+    r"total|price|[\s.,/&-])+")
+_QTY_UNIT_RE = re.compile(
+    r"^\s*\(?\$?([\d,]*\.?\d+)\)?\s*([A-Za-z][A-Za-z./ ]{0,14}?)\.?\s*$")
+
+
+def _split_qty_unit(s):
+    """(quantity, unit) from one cell holding both ("1,745 SY", "1745SY"),
+    else (None, "")."""
+    m = _QTY_UNIT_RE.match(_txt(s))
+    if not m:
+        return None, ""
+    q = _num(m.group(1))
+    u = m.group(2).strip()
+    if q is None or not u or not _unit_score(u):
+        return None, ""
+    return q, upstream.norm_unit(u).upper()
+
+
+def _money_like(p):
+    """A price / amount cell: '$1,234.50', '1,234.50', '(500.00)'."""
+    t = _txt(p)
+    return bool(re.fullmatch(r"\(?\$?\s*[\d,]*\.\d{2}\)?|\$\s*[\d,]+", t))
+
+
+def _quality(p):
+    """How usable a parse is: complete lines count most."""
+    sc = 0.0
+    for l in p.lines:
+        sc += 1.0 if (l.quantity is not None and l.unit) else 0.3
+        if l.item_no:
+            sc += 0.2
+        if l.confidence == "low":
+            sc -= 0.5
+    return sc
+
+
+def _pdf_layout(path, name):
+    """pdftotext -layout (tools/poppler) -> the text parser."""
+    import shutil
+    import subprocess
+    exe = os.path.join(os.path.dirname(upstream.SRC_DIR), "tools", "poppler",
+                       "bin", "pdftotext")
+    if not os.path.exists(exe):
+        exe = shutil.which("pdftotext")
+    if not exe:
+        return None
+    out = subprocess.run([exe, "-layout", path, "-"], capture_output=True,
+                         text=True, timeout=120)
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    p = from_text(out.stdout, name)
+    p.method = "pdf/pdftotext-layout"
+    return p
+
+
+def _pdf_bidtab(path, name):
+    """The pipeline's bid-tab reader (src/parse_bidtabs.read_pdf_best): one
+    line per bid-form item, bidders' prices dropped."""
+    if not upstream.PARSER_AVAILABLE or os.environ.get("TAKEOFF_NO_BIDTAB"):
+        return None          # (the switch lets intake_eval score the rest alone)
+    stats = {"cells_blank_price": 0, "sheets_no_header": []}
+    got = upstream.read_pdf_best(path, stats)
+    recs = got[0] if isinstance(got, tuple) else got
+    out = TakeoffParse(source=name, method="pdf/bid-tab parser")
+    seen = set()
+    for r in recs or []:
+        k = (r.get("item_no"), r.get("description"), r.get("unit"),
+             r.get("quantity"))
+        if k in seen or not r.get("description"):
+            continue
+        seen.add(k)
+        issues = []
+        if r.get("quantity") is None:
+            issues.append("no quantity found")
+        if not r.get("unit"):
+            issues.append("no unit found")
+        out.lines.append(TakeoffLine(
+            row_id="r%d" % (len(out.lines) + 1),
+            description=_txt(r.get("description")),
+            unit=_txt(r.get("unit")), quantity=r.get("quantity"),
+            item_no=_txt(r.get("item_no")),
+            confidence="low" if issues else "ok", issues=issues))
+    return out if out.lines else None
+
+
+def _pdf_ocr(path, name):
+    """A scanned PDF: the pipeline's OCR engines, then the text parser."""
+    pages, eng = upstream.ocr_pdf_pages(path)
+    if not pages:
+        return None
+    text = "\n".join(t for _, t in sorted(pages.items()))
+    p = from_text(text, name)
+    p.method = "pdf/ocr (%s)" % eng
+    p.notes.append("Scanned PDF read with OCR (%s engine, offline). Check "
+                   "every quantity." % eng)
+    return p
 
 
 # ---------------------------------------------------------------------------
@@ -709,15 +898,26 @@ def _from_pdf(path: str, name: str) -> TakeoffParse:
         candidates.append(_lines_from_grid(merged, name, "pdf/tables"))
     if word_grid:
         candidates.append(_lines_from_grid(word_grid, name, "pdf/coordinates"))
+    # the pipeline's own readers: pdftotext -layout, the bid-tab parser, and
+    # OCR when the page has no text layer -- all local, all deterministic
+    readers = [_pdf_layout, _pdf_bidtab]
+    if not word_grid:
+        readers.append(_pdf_ocr)
+    failed = []
+    for fn in readers:
+        try:
+            c = fn(path, name)
+        except Exception as e:  # noqa: BLE001 - one reader failing is fine
+            failed.append("%s: %s" % (fn.__name__.lstrip("_"), e))
+            c = None
+        if c is not None:
+            candidates.append(c)
 
     if not candidates:
         return TakeoffParse(source=name, method="pdf", notes=[
-            "No text layer in this PDF (%d page(s)) -- it is probably a scan. "
-            "Upload it as an image once OCR is available, or paste the rows "
-            "in as text." % n_pages])
-    # Same approach the bid-tab parser uses: run both strategies, keep the
-    # one that actually produced items.
-    best = max(candidates, key=lambda p: len(p.lines))
+            "No text layer in this PDF (%d page(s)) and OCR read nothing -- "
+            "paste the rows in as text." % n_pages] + failed)
+    best = pick_pdf_candidate(candidates)
     best.notes.append(
         "PDF: %d page(s). Strategies tried -- %s. Kept %s."
         % (n_pages,
@@ -728,6 +928,18 @@ def _from_pdf(path: str, name: str) -> TakeoffParse:
             "A text layer was found but no pay items could be read from it. "
             "Check the file, or paste the rows in as text.")
     return best
+
+
+def pick_pdf_candidate(candidates: List[TakeoffParse]) -> TakeoffParse:
+    """The validated bid-tab reader wins when it read a complete schedule
+    (>= 3 lines, >= 80% with both a quantity and a unit); otherwise the
+    reader whose lines are most complete (_quality), first one on a tie."""
+    bt = [c for c in candidates if c.method == "pdf/bid-tab parser"]
+    if bt and len(bt[0].lines) >= 3 and sum(
+            1 for l in bt[0].lines if l.quantity is not None and l.unit
+    ) >= 0.8 * len(bt[0].lines):
+        return bt[0]
+    return max(candidates, key=_quality)
 
 
 def _from_docx(path: str, name: str) -> TakeoffParse:

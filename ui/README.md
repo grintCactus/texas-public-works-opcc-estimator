@@ -1,6 +1,9 @@
 # Bid Estimator (`ui/`)
 
 A local web page on top of the production estimator (`src/estimate_low_bid.py`).
+It is an **assistant for preparing an OPCC**: the model's number is one input,
+and the page's main job is to put useful reference material in front of the
+estimator, who sets their own prices in the **OPCC worksheet** (see below).
 A bid schedule (takeoff) goes in; out come:
 
 - **Expected low bid (P50)** and **Recommended OPCC (P80)** — the low bid came in
@@ -12,10 +15,15 @@ A bid schedule (takeoff) goes in; out come:
   what earlier low bidders gave them;
 - every line at the P50 level with its basis and a **typical accuracy** badge;
 - the competition step, and the **similar past projects** the estimate leans on;
-- a CSV / Excel export of all of it.
+- the **OPCC worksheet**: per line the model's price, the reference range, your
+  own price with quick picks and a note, and **Your OPCC** next to P50 / P80;
+- for every project shown, its **full bid tabulation** and its **public source
+  page**;
+- a CSV / Excel export of all of it, and of the worksheet (your deliverable).
 
-Every price on the page is the production estimator's own number. The UI adds
-display, never a price.
+Every model price on the page is the production estimator's own number. The UI
+adds display, never a model price; your own prices in the worksheet are output
+only and never feed back into anything.
 
 ## Run it (macOS)
 
@@ -82,14 +90,17 @@ r = estimate(tab, items, n_bidders, market, to_year,
 
 1. **Status bar:** when `data/clean` was built and the latest letting in it, the
    estimator file's md5 and rule (for example V2+F1+F2, T1 on TxDOT, coverage
-   scope), load time and memory, parser and OCR availability, and the theme
-   toggle.
-2. **Takeoff:** paste or upload (.xlsx, .csv, PDF with a text layer, .docx),
-   then the editable confirmation grid. Each line shows its classification:
-   family, size bucket and unit, and badges for not covered, low confidence,
-   possible owner-set money and unclassified. **Change** corrects the family or
-   searches earlier public line items. An **Owner-set $** column takes an
-   allowance's amount at face value.
+   scope), load time and memory, parser, the OCR engines for scanned PDFs, the
+   Claude reader's backend (or "off"), the number of remembered corrections,
+   and the theme toggle.
+2. **Takeoff:** paste or upload (.xlsx, .csv, PDF with a text layer or scanned,
+   .docx), or the optional **Read a PDF with Claude**; then the editable
+   confirmation grid. Each line shows its classification: family, size bucket
+   and unit, and badges for not covered, low confidence, possible owner-set
+   money, unclassified, **check** (low-confidence reading, with up to three
+   one-click suggestions), **remembered** and **read by Claude**. **Change**
+   corrects the family or searches earlier public line items. An **Owner-set $**
+   column takes an allowance's amount at face value.
 3. **Project details:** market (City / County or TxDOT), owner and work type
    (lists from the public lettings on record), bid date, **expected bidders**
    (prefilled, editable, with the history it came from), an **Owner-set
@@ -99,10 +110,11 @@ r = estimate(tab, items, n_bidders, market, to_year,
    1. **P50 and P80**, the half-of-lettings and 80%-of-lettings bands, and the
       number of lettings that calibrated them.
    2. **One context line:** the market's forward accuracy, for example city /
-      municipal 2024–26: P50 median error 23%, P80 under the low bid on 15% of
-      lettings, median overshoot 45%; TxDOT 2023–26: 16% / 16% / 32%. The figures
-      are `MARKET_ACCURACY` in `engine_production.py`, copied from the project
-      README's "Where it stands" table; update them together.
+      municipal 2024–26 (186 lettings): P50 median error 19%, P80 under the low
+      bid on 16% of lettings, median overshoot 43%; TxDOT 2023–26 (806
+      lettings): 16% / 16% / 32% (parser .29). The figures are `MARKET_ACCURACY`
+      in `engine_production.py`, copied from the project README's "Where it
+      stands" table; update them together.
    3. **Alerts** decided on the result's keys (no estimate, unpriced lines,
       not-covered lines, unpriced allowances, thin evidence), then the
       estimator's own warnings verbatim as notes.
@@ -112,16 +124,168 @@ r = estimate(tab, items, n_bidders, market, to_year,
    5. **Low confidence:** each mobilization / general-condition class with our
       amount at the P50 level, its share of P50, the earlier low bidders'
       share-of-job range (p25–p75) and the dollar range it implies.
-   6. **Line table:** item, description, classification, quantity, unit, unit
-      price and amount at the P50 level, the basis, the accuracy badge and flags.
-      A line's P50-level amount is its market amount × (P50 − owner-set money) /
-      market total, so the lines add up to P50 exactly; owner-set lines stay at
-      face value. Click a row for its derivation.
+   6. **OPCC worksheet** (right under the estimate, the centre of the page):
+      see below. The model's unit price per line is its P50-level price: a
+      line's market amount × (P50 − owner-set money) / market total, so the
+      model's lines add up to P50 exactly; owner-set lines stay at face value.
+      The ▸ on a line opens the reference projects behind its price.
    7. **Competition:** the bidders used (and the rule's suggestion) and the
       discount factor with its table, bin and lettings.
    8. **Similar past projects:** see below.
 5. **Export:** CSV, and Excel (.xlsx) with one sheet per block, including each
-   line's top-3 references.
+   line's top-3 references and their `source_url`. The worksheet has its own
+   export (below).
+
+## Messy takeoffs
+
+Uploads and pastes are read by the pipeline's own readers, all offline: the
+grid / table readers, `pdftotext -layout` (tools/poppler), the bid-tab parser
+(`src/parse_bidtabs.read_pdf_best`, preferred when it reads a complete
+schedule), and for a scanned PDF the pipeline's OCR engines
+(`src/ocr_scans.py`: Apple Vision, RapidOCR, Tesseract). Free text copes with
+quantity and unit in one cell ("1,745 SY", "1745SY"), price and amount columns
+after the quantity, quantity-before-unit bid forms, wrapped descriptions, column
+headers and page footers.
+
+Low-confidence lines are marked **check** with the reasons: no item family
+matched, a weak match to the public price history (best history score under
+`matching.WEAK_MATCH`), no unit, no quantity, or the reader was unsure.
+Not-covered and owner-set lines have their own flags and are not marked. Each
+marked line gets up to three earlier public line items as one-click
+suggestions: same unit when the line has one, ranked by the history search's
+token similarity. A click sets the family (and the unit when the line has
+none).
+
+Corrections are remembered: a suggestion clicked, or a family picked under
+**Change**, is stored per wording (the parser's normalised description) in
+`ui/.local/corrections.json`, local to this machine and excluded from git
+(`.git/info/exclude`). The same wording gets the same family next time, tagged
+**remembered**; "Not sure — keep the parser's classification" forgets it. Units
+are remembered only to fill a missing one; quantities and prices never.
+
+Measured on 25 public bid-tab PDFs (20 with a text layer, 5 scans; 983 ground
+truth lines from the panel) and messy text variants, by `intake_eval.py`
+(results in `handoff/scratchpad/intake_eval/`):
+
+```sh
+.venv/bin/python ui/intake_eval.py --tag after          # the local readers
+TAKEOFF_NO_BIDTAB=1 .venv/bin/python ui/intake_eval.py --tag generic
+.venv/bin/python ui/intake_eval.py --reader claude      # the Claude reader (costs money)
+```
+
+## Setting up Claude reading
+
+Optional. **Read a PDF with Claude** sends one PDF to Anthropic to transcribe
+its pay items (item no, description, unit, quantity, plus Claude's per-line
+confidence and notes; never prices). It is opt-in per document: a dialog shows
+the file name, the page count, the cost estimate and the privacy note, and
+nothing is sent until you press **Read** (the server also refuses without
+`?consent=yes`). Files in `ui/.inbox` and `ui/.cache` are never sent.
+The lines land in the grid tagged **read by Claude**, after checks: unknown
+units, missing quantities, lump sums with a quantity other than 1, fractional
+EA, repeated item numbers, rows that look like totals (dropped), Claude's own
+"low" confidence, and a cross-check against the local reader by item number.
+
+The backend is chosen in this order, and the status bar says which:
+
+1. **Anthropic API** — when the `anthropic` package (`pip install anthropic`,
+   optional in `requirements.txt`) finds a credential. Either:
+   - `brew install anthropics/tap/ant`, then `ant auth login` (stores a profile
+     under `~/.config/anthropic/` that the SDK reads), or
+   - an API key from the Anthropic Console in `ANTHROPIC_API_KEY`.
+   Model `claude-opus-5-5`, the PDF as a base64 document block, structured
+   outputs (a JSON schema), effort `low`, server-side refusal fallbacks
+   (`fallbacks: "default"`). **Count tokens** in the dialog gives the exact input
+   size from the token-counting endpoint (that also sends the PDF). PDFs over
+   20 pages (or 20 MB) are sent in parts; the API's own limits are 600 pages and
+   32 MB a request.
+2. **Your Claude login** — else, when the Claude Code CLI (`claude`) is on this
+   machine and signed in: "This sends the document to Anthropic through your
+   Claude login and uses your Claude plan's usage limits." It runs headless
+   (`claude -p`) in a fresh temporary directory holding only the PDF, with only
+   the Read tool (`--tools Read --allowedTools Read --permission-mode dontAsk`,
+   Bash / Edit / Write / web tools denied, no MCP servers), the same JSON
+   schema, a spending cap, a 15-minute timeout and no saved session; the
+   directory is deleted afterwards. `claude --help` (2.1.141) has no turn-limit
+   flag; the cap, the timeout and the one-file, one-tool setup bound the run.
+3. Otherwise it is off.
+
+To measure it on the 25-PDF set once a backend is set up (this costs money on
+the API backend):
+
+```sh
+.venv/bin/python ui/intake_eval.py --reader claude
+```
+
+## Full bid tabulations and sources
+
+Every project name the page shows — a line's references, "show all", the
+similar-project cards — opens that letting's **full bid tabulation**: owner,
+name, letting date, work type, bidders and each bidder's total (low bid
+marked), the engineer's estimate only when the tab printed one (labelled; never
+an input), and every line item as written with each bidder's unit price and
+extended amount and the median. The lines that matched the line you came from
+are highlighted, with their low and median and our P50 unit price inline; a
+similar-project card expands to the same full bid with "matched lines only" as
+an option. CSV export per tab. Built on demand from `master_panel.csv`,
+`source_set == "external"` rows only (one background pass records each
+letting's byte ranges in the file), cached in memory.
+
+Under every project name: its **public source page** — from the harvest
+manifests (`data/external/**/_manifest*.csv`), else `project_metadata.csv` —
+labelled with the host and kind ("Source: legistar1.granicus.com — council
+agenda attachment"), http(s) only, opening in a new tab; or "no public link
+recorded". Next to it the **local copy** of the original file, served only when
+the path resolves inside `data/external/` to the source file of a public
+letting (no `..`, no symlink out, never top-level `data/` files, `.inbox` or
+`.cache`).
+
+## OPCC worksheet
+
+The results' line table is the estimator's worksheet. Per line: item,
+description, quantity, unit; the **model unit price** (P50 level); the
+**reference range** — low, median and high of the line's reference projects'
+median-bidder unit prices, escalated to the bid year; the accuracy badge;
+**your unit price** (defaults to the model's; quick picks: the model, the
+reference median, the most recent similar project's low bid, or any reference
+project's low or median bid); **your amount**; and a free-text **note** (filled
+in for you from a project pick, e.g. "used Coppell 2025 … median bid").
+
+Lines where the model is weak are marked **needs your judgment**: fewer than
+3 references, a generic or unclassified match, lump sums, low confidence or
+weak item accuracy, not covered, an allowance without its amount. "Only lines
+that need your judgment" filters to them and opens their references.
+
+**Your OPCC** = your line amounts (owner-set allowances at face value, vendor
+quotes as given) + an optional contingency %, shown next to the model's P50 and
+P80 with the differences. The model's P80/P50 ratio is shown as a suggestion
+for the contingency only.
+
+Export the worksheet as Excel (OPCC, Lines, References sheets) or CSV: your
+prices, notes and totals, the model's P50 / P80, and a references appendix
+with `source_url`. Save it under `ui/.local/worksheets/` (local, not in git) or
+download it as JSON, and reopen it later: the takeoff and project details come
+back, the model is re-run on today's data, your prices and notes are kept.
+
+**Your prices are output only.** They never feed back into the estimator, its
+tables, training or calibration: `/api/estimate` refuses a request that carries
+worksheet fields, the page never sends them, and only `ui/worksheet.py` reads or
+writes worksheet files (`test_ui.Worksheet`).
+
+## Choice lists with an "Other" path
+
+- **Owner:** a type-ahead field. Owner IDs of one city are merged under one name
+  (for example `coppell` and `legistar/coppell` are "Coppell"), and the estimator
+  gets the ID with the most history, so the same-owner weighting still works.
+  "Other — not in the list", or any typed name not in the price history, is
+  kept for the results header and the export; the estimator then gets no owner
+  (no owner-specific weighting), and the page says so. A name close to a known
+  one gets "Did you mean ...?".
+- **Work type:** the same, with "Other / not listed": the estimator gets the
+  generic (blank) work type, and the page says so.
+- **Market:** "Not sure" prices as City / County, the default, and the result
+  says the market was not given.
+- **Classification picker:** "Not sure — keep the parser's classification".
 
 ## Owner-set allowances
 
@@ -228,8 +392,12 @@ line-accuracy pass has been re-run (see the project README):
 .venv/bin/python ui/build_item_accuracy.py LINES_CSV FWD_REC_JSON  # other inputs
 ```
 
-The defaults are `handoff/scratchpad/line_accuracy/out/mob_lines_28.csv` and
-`fwd_rec_28.json`. The file records its inputs' md5s.
+The defaults are `handoff/scratchpad/line_accuracy/out/mob_lines_29.csv` and
+`fwd_rec_29.json` (parser .29). The group labels are read from the README
+generator (`gen_readme_items.py`'s `LAB` / `TX_LAB`, parsed, not executed),
+and after writing, every published group is checked against the project
+README's item tables (label, lines, lettings and every printed figure); a
+difference is listed and the exit code is 1. The file records its inputs' md5s.
 
 ## Similar past projects
 
@@ -277,8 +445,9 @@ price. They must be identical.
 
 ## Tests
 
-`test_ui.py` (stdlib `unittest`, 96 tests, about 30-45 s including the loads)
-pins, among others:
+159 tests (stdlib `unittest`, about 40 s including the loads):
+`test_intake.py` (37, offline: no `data/clean`, no network, fake Claude
+backends) and `test_ui.py` (122). They pin, among others:
 
 - **Safety:** the OPCC is refused; unclassified, unpriced and quantity-less lines
   are never priced silently; one bidder gets no discount; a bidder count far
@@ -297,6 +466,21 @@ pins, among others:
 - **References:** every priced line's listed lettings reproduce its price; all
   public and dated before the bid date.
 - **Theme:** no colour literal outside the two token blocks; WCAG AA contrast.
+- **ClaudeReader** (offline, faked SDK client and CLI): off without a credential
+  or CLI and says how to set it up; backend order; nothing sent without
+  consent; the documented request (model, JSON schema, effort, fallbacks,
+  base64 PDF, no file name); type checks; price columns dropped; bad JSON,
+  refusal, truncation, rate limit, auth and network errors typed; splitting;
+  company folders refused; the CLI's command line (Read only, no permission
+  bypass), timeout and clean-up.
+- **TakeoffReading / CorrectionsMemory / IntakeAssist:** messy text, PDF reader
+  choice, OCR wiring; the memory round trip; flags and same-unit suggestions.
+- **FullBidTab / SourcePaths / SourceLinksShown:** no internal row in a tab;
+  bidder totals equal the panel's; the file endpoint stays inside
+  `data/external` (`..`, absolute paths, symlinks); manifest URLs shown; only
+  http(s) links.
+- **Worksheet:** reference ranges, totals, export, save / reopen, and the hard
+  rule that your prices are output only.
 - **ExpectedBidders, ItemAccuracy, Contract, Export, Http, Matching,
   TakeoffParsing, OCRGate, DataContract.**
 
@@ -312,17 +496,23 @@ ui/
   build_item_accuracy.py  writes item_accuracy.json
   item_accuracy.json      per-item forward accuracy for the badges
   integration_check.py    UI vs run_schedule() on one takeoff
-  test_ui.py              the regression suite
+  intake.py               low-confidence marks, suggestions, corrections memory
+  lettings.py             full bid tabulations, source links, original files
+  worksheet.py            the OPCC worksheet: totals, export, save / reopen
+  intake_eval.py          intake measurement on 25 public PDFs
+  test_ui.py, test_intake.py   the regression suite
   matching.py             history search for the classification picker
   data_access.py          read-only loader for the search tables
   ingest/                 takeoff parsing (xlsx / csv / pdf / docx / text),
-                          bid-tab preview (stages files in .inbox/), OCR gate
+                          bid-tab preview (stages files in .inbox/), OCR gate,
+                          claude_reader.py (the optional Claude reader)
   static/                 index.html, app.js, style.css
   pricing.py              superseded engine, unused
 ```
 
 Nothing here writes to `data/` or `src/`. `.inbox/` and `.cache/` stay local and
-are never read by the pricing path.
+are never read by the pricing path. `.local/` (corrections, worksheets) is local
+too and excluded from git.
 
 ## API
 
@@ -338,3 +528,11 @@ are never read by the pricing path.
 | `POST /api/references` | the reference projects behind one line (`{request, row_id}`) |
 | `POST /api/export/csv`, `/api/export/xlsx` | the export |
 | `POST /api/bidtab/parse`, `GET /api/bidtab/inbox` | bid-tab preview and staging |
+| `GET /api/corrections`, `POST /api/corrections`, `POST /api/corrections/forget` | the corrections memory |
+| `GET /api/letting?key=`, `GET /api/letting/csv?key=` | a letting's full bid tabulation |
+| `GET /api/source-file?path=` | the local copy of a public letting's original file |
+| `POST /api/worksheet/refs` | per line: reference range, latest reference, picks |
+| `POST /api/worksheet/export/csv`, `/xlsx` | the OPCC worksheet export |
+| `GET /api/worksheet/list`, `GET /api/worksheet/load?file=`, `POST /api/worksheet/save` | saved worksheets (`ui/.local/worksheets/`) |
+| `GET /api/claude/status`, `POST /api/claude/preview` | the Claude reader's backend; a PDF's pages and estimate (nothing sent) |
+| `POST /api/claude/count?consent=yes`, `/api/claude/read?consent=yes` | exact token count / read (sends the PDF) |

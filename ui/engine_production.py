@@ -51,6 +51,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+import lettings
 import upstream
 
 log = logging.getLogger("ui.engine")
@@ -76,13 +77,13 @@ FORBIDDEN_INPUTS = ("opcc", "opcc_total", "engineer_estimate",
 #: adopts an estimator change and re-scores.
 MARKET_ACCURACY = {
     "municipal": {"label": "City / municipal (DFW) lettings, 2024-26",
-                  "lettings": 184, "p50_median_error": 0.23,
-                  "p80_under": 0.15, "median_overshoot": 0.45,
-                  "as_of": "2026-11-20"},
+                  "lettings": 186, "p50_median_error": 0.19,
+                  "p80_under": 0.16, "median_overshoot": 0.43,
+                  "as_of": "2026-11-20 (parser .29)"},
     "txdot": {"label": "TxDOT (DFW counties) lettings, 2023-26",
-              "lettings": 805, "p50_median_error": 0.16,
+              "lettings": 806, "p50_median_error": 0.16,
               "p80_under": 0.16, "median_overshoot": 0.32,
-              "as_of": "2026-11-20"},
+              "as_of": "2026-11-20 (parser .29)"},
 }
 
 COVERAGE_LABELS = {
@@ -186,6 +187,16 @@ def owner_label(oid):
     slug = oid.split("/", 1)[1] if legi else oid
     name = OWNER_NAMES.get(slug) or slug.replace("_", " ").title()
     return name + (" (Legistar)" if legi else "")
+
+
+def owner_name(oid):
+    """The owner's display name, one per city: "legistar/coppell" and
+    "coppell" are both "Coppell" (two document sources of one owner)."""
+    return owner_label(oid).replace(" (Legistar)", "")
+
+
+def _norm_name(x):
+    return re.sub(r"[^a-z0-9]+", "", str(x or "").lower())
 
 
 def work_type_label(w):
@@ -781,7 +792,9 @@ class ReferenceIndex:
             if e is None:
                 e = g[(pk, yr)] = {"key": pk, "market": mk, "year": yr,
                                    "owner_raw": ow, "us": [], "qs": [],
-                                   "low": [], "bids": [], "dn": dn}
+                                   "low": [], "bids": [], "dn": dn,
+                                   "unit": un, "lines": set()}
+            e["lines"].add((dn, q))
             e["us"].append(u)
             if q is not None:
                 e["qs"].append(q)
@@ -830,6 +843,10 @@ class ProductionEngine:
         self.refs_state = {"ready": False, "loading": False, "error": "",
                            "load_s": None}
         self.accuracy = ItemAccuracy()
+        #: public source pages and local copies of the lettings shown
+        self.sources = lettings.SourceLinks()
+        #: full bid tabulations, read from master_panel on demand
+        self.tabs = lettings.LettingTabs()
         self.state = {"ready": False, "loading": False, "error": "",
                       "step": "", "started": None, "load_s": None,
                       "history_s": None, "rss_mb": None, "peak_rss_mb": None,
@@ -901,10 +918,21 @@ class ProductionEngine:
             pool = pools.get(mk)
             L = pool.ctx.L if pool is not None else []
             oc = collections.Counter(Lc["owner"] for Lc in L if Lc["owner"])
-            self._owners[mk] = sorted(
-                ({"id": o, "label": owner_label(o), "lettings": n}
-                 for o, n in oc.items()),
-                key=lambda x: (x["label"].lower(), x["id"]))
+            # one entry per owner: ids of the same city merged under its
+            # name; the estimator gets the id with the most history, so the
+            # same-owner weighting still finds it
+            groups = collections.defaultdict(list)
+            for o, n in oc.items():
+                groups[_norm_name(owner_name(o))].append((n, o))
+            entries = []
+            for g in groups.values():
+                g.sort(key=lambda x: (-x[0], x[1]))
+                entries.append({"id": g[0][1], "label": owner_name(g[0][1]),
+                                "lettings": sum(n for n, _ in g),
+                                "ids": sorted(o for _, o in g)})
+            self._owners[mk] = sorted(entries,
+                                      key=lambda x: (x["label"].lower(),
+                                                     x["id"]))
             wc = collections.Counter(Lc["wtype"] for Lc in L)
             self._work_types[mk] = sorted(
                 ({"id": w, "label": work_type_label(w), "lettings": n}
@@ -1044,6 +1072,8 @@ class ProductionEngine:
 
     def classify(self, lines, market="municipal"):
         _E()
+        if market not in MARKETS:          # "not sure": the default market
+            market = "municipal"
         out = []
         with self._lock:
             for ln in lines or []:
@@ -1103,6 +1133,13 @@ class ProductionEngine:
                     "in would recycle the very bias the tool exists to "
                     "remove." % k)
         market = str(payload.get("market") or "municipal").strip().lower()
+        market_note = ""
+        if market in ("not_sure", "other", "unsure"):
+            # "Not sure": City / County is the default market (the company's
+            # work is mostly municipal) -- said in the result
+            market = "municipal"
+            market_note = ("Market not given: priced as City / County "
+                           "(municipal), the default.")
         if market not in MARKETS:
             raise BadRequest("market must be 'municipal' or 'txdot', got %r"
                              % payload.get("market"))
@@ -1125,10 +1162,43 @@ class ProductionEngine:
                                  "'auto', got %r" % (nb,))
             if n < 1 or n > 60:
                 raise BadRequest("n_bidders must be between 1 and 60")
+        # owner / work type: the estimator gets a known id or nothing; what
+        # the user typed is kept for the results header and the export
+        owner_in = str(payload.get("owner") or "").strip()
+        owner_text = str(payload.get("owner_text") or "").strip()
+        owner = self.resolve_owner(market, owner_in or owner_text)
+        wt_in = str(payload.get("work_type") or "").strip()
+        wt_text = str(payload.get("work_type_text") or "").strip()
+        work_type = self.resolve_work_type(market, wt_in or wt_text)
         return {"market": market, "raw": raw, "bid_date": bid_date,
-                "n": n, "auto": auto,
-                "owner": str(payload.get("owner") or "").strip(),
-                "work_type": str(payload.get("work_type") or "").strip()}
+                "n": n, "auto": auto, "market_note": market_note,
+                "owner": owner,
+                "owner_text": "" if owner else (owner_text or owner_in),
+                "work_type": work_type,
+                "work_type_text": "" if work_type else (wt_text or wt_in)}
+
+    def resolve_owner(self, market, text):
+        """The estimator's owner id for a typed or picked owner name (or
+        id), or "" when it is not in the price history."""
+        t = _norm_name(text)
+        if not t:
+            return ""
+        for e in self._owners.get(market, []):
+            if t == _norm_name(e["label"]) or any(
+                    t == _norm_name(i) for i in e["ids"]):
+                return e["id"]
+        return ""
+
+    def resolve_work_type(self, market, text):
+        """The estimator's work type for a typed or picked one, or "" (the
+        generic work type) when it is not in the price history."""
+        t = _norm_name(text)
+        if not t:
+            return ""
+        for e in self._work_types.get(market, []):
+            if t in (_norm_name(e["label"]), _norm_name(e["id"])):
+                return e["id"]
+        return ""
 
     def build_items(self, raw, market="municipal"):
         """(estimator line dicts, classifications) for the included lines --
@@ -1265,12 +1335,21 @@ class ProductionEngine:
         return {
             "ok": el is not None,
             "inputs": {"market": market, "market_label": MARKET_LABELS[market],
+                       "market_note": q.get("market_note") or "",
                        "owner": q["owner"],
-                       "owner_label": owner_label(q["owner"])
-                       if q["owner"] else "",
+                       "owner_label": (owner_name(q["owner"]) if q["owner"]
+                                       else ("%s (not in the price history)"
+                                             % q["owner_text"])
+                                       if q.get("owner_text") else ""),
+                       "owner_in_history": bool(q["owner"]),
                        "work_type": q["work_type"],
-                       "work_type_label": work_type_label(q["work_type"])
-                       if q["work_type"] else "",
+                       "work_type_label": (work_type_label(q["work_type"])
+                                           if q["work_type"] else
+                                           ("%s (not in the price history; "
+                                            "generic work type used)"
+                                            % q["work_type_text"])
+                                           if q.get("work_type_text") else ""),
+                       "work_type_in_history": bool(q["work_type"]),
                        "bid_date": q["bid_date"], "to_year": to_year,
                        "comparables_before": (r.get("comparables") or {})
                        .get("date") or q["bid_date"],
@@ -1763,6 +1842,7 @@ class ProductionEngine:
                     "our_unit_p50": ours["unit_price_p50"],
                     "their_item_no": tl[0] if tl else "",
                     "their_description": tl[1] if tl else "",
+                    "their_dn": tl[2] if tl else "",
                     "their_quantity": ln["q"], "their_unit": ln["unit"],
                     "their_low_unit": ln["u"],
                     "their_median_unit": tl[6] if tl else None,
@@ -1786,7 +1866,7 @@ class ProductionEngine:
                 "rank": rank, "key": pk,
                 "project": project_title(pk, market),
                 "title": meta.get("title") or "",
-                "owner_id": Lc["owner"], "owner": owner_label(Lc["owner"]),
+                "owner_id": Lc["owner"], "owner": owner_name(Lc["owner"]),
                 "date": Lc["date"],
                 "work_type": (work_type_label(Lc["wtype"])
                               if market == "municipal"
@@ -1806,10 +1886,8 @@ class ProductionEngine:
                                             if view["Wsum"] else None)},
                 "at_their_prices": at,
                 "matched_lines": matched,
-                "source": {"document": pk.split("::")[0].rsplit("/", 1)[-1]
-                           if market == "municipal" else pk,
-                           "url": meta.get("url") or "",
-                           "county": meta.get("county") or ""},
+                "source": dict(self.sources.get(pk, meta),
+                               county=meta.get("county") or ""),
             })
         nc = cm.get("n_candidates") or 0
         why = None
@@ -1979,6 +2057,54 @@ class ProductionEngine:
                             "references": x["references"][:top]})
         return out
 
+    def worksheet_refs(self, request, picks=6):
+        """What the OPCC worksheet shows next to each line: the range of its
+        reference projects' median-bidder unit prices escalated to the bid
+        year (low / median / high, how many), the most recent one, and the
+        projects to pick a price from. Read-only: nothing here is stored,
+        and nothing the user picks or types ever comes back in."""
+        self.require()
+        out = []
+        with self._lock:
+            q, items, cls, r, to_year, target, bidders = self._run(request)
+            for i, c in enumerate(cls):
+                x = self._references_for(i, q, items, cls, r, to_year, target)
+                refs = x.get("references") or []
+                esc = [(rf.get("escalated_unit") or rf.get("median_unit"))
+                       for rf in refs]
+                esc = sorted(v for v in esc if v)
+                latest = max(refs, key=lambda rf: rf["date"]) if refs else None
+
+                def pick(rf):
+                    f = rf.get("escalation") or None
+                    return {"key": rf["key"], "project": rf["project"],
+                            "owner": rf["owner"], "date": rf["date"],
+                            "median_unit": rf.get("median_unit"),
+                            "low_unit": rf.get("low_unit"),
+                            "escalation": f,
+                            "median_esc": (rf["median_unit"] * f)
+                            if (f and rf.get("median_unit")) else rf.get("median_unit"),
+                            "low_esc": (rf["low_unit"] * f)
+                            if (f and rf.get("low_unit")) else rf.get("low_unit"),
+                            "source": rf.get("source")}
+                w = x.get("warning") or ""
+                out.append({
+                    "row_id": c["row_id"], "status": x.get("status"),
+                    "special": x.get("special"), "to_year": to_year,
+                    "n_refs": len(refs),
+                    "range": ({"low": esc[0], "median": statistics.median(esc),
+                               "high": esc[-1]} if esc else None),
+                    "latest": pick(latest) if latest else None,
+                    "picks": [pick(rf) for rf in refs[:picks]],
+                    "generic": w.startswith("Generic match"),
+                    "thin": w.startswith("Thin evidence"),
+                    "warning": w or None})
+        return {"lines": out, "to_year": to_year,
+                "note": ("Reference range: the median-bidder unit prices of "
+                         "the line's reference projects (public lettings "
+                         "dated before the bid date), escalated to %s "
+                         "dollars." % (to_year or "bid-year"))}
+
     def _references_for(self, i, q, items, cls, r, to_year, target):
         E = _E()
         t, it, c = r["trace"][i], items[i], cls[i]
@@ -2146,7 +2272,7 @@ class ProductionEngine:
             refs.append({
                 "key": pkk, "project": project_title(pkk, market),
                 "title": meta.get("title") or "",
-                "owner": (owner_label(oid) if oid else
+                "owner": (owner_name(oid) if oid else
                           (("TxDOT, %s County" % meta["county"])
                            if meta.get("county") else "TxDOT")),
                 "same_owner": same_owner,
@@ -2165,10 +2291,10 @@ class ProductionEngine:
                           "quantity": qq, "low": bool(w)}
                          for b, u, qq, w in sorted(e["bids"],
                                                    key=lambda x: x[1])],
-                "source": {"document": (pkk.split("::")[0].rsplit("/", 1)[-1]
-                                        if market == "municipal" or
-                                        pkk.startswith("external/") else pkk),
-                           "url": meta.get("url") or ""}})
+                "match": [{"dn": d, "unit": e["unit"], "quantity": qq}
+                          for d, qq in sorted(e["lines"], key=lambda x: (
+                              x[0], x[1] if x[1] is not None else -1))],
+                "source": self.sources.get(pkk, meta)})
         refs.sort(key=lambda x: x["date"], reverse=True)    # newer first on ties
         refs.sort(key=lambda x: -x["score"])
         note = None

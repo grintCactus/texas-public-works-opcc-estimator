@@ -23,6 +23,10 @@ const S = {
   bidders: { mode: 'auto', suggestion: null },
   seq: 0,
   stale: false,
+  // the OPCC worksheet: the estimator's own prices -- OUTPUT ONLY, never part
+  // of an estimate request
+  ws: { lines: {}, contingency: null, refs: null, refsReq: null, filter: false,
+        open: {}, name: '' },
 };
 
 const $ = (s, r) => (r || document).querySelector(s);
@@ -88,11 +92,13 @@ async function api(path, opts) {
   const ct = r.headers.get('content-type') || '';
   if (!r.ok) {
     let msg = r.status + ' ' + r.statusText;
+    let body = null;
     if (ct.includes('json')) {
-      try { const j = await r.json(); msg = j.detail || j.error || msg; } catch (e) { /* keep */ }
+      try { body = await r.json(); msg = body.detail || body.error || msg; } catch (e) { /* keep */ }
     }
     const err = new Error(msg);
     err.status = r.status;
+    err.body = body;
     throw err;
   }
   return ct.includes('json') ? r.json() : r.text();
@@ -231,9 +237,27 @@ function renderStatusBar() {
       + '; size buckets from ' + up.size_bucket_source
       : 'src/parse_bidtabs.py did not import: ' + up.parser_error));
   const ocr = st.ocr || {};
-  bar.appendChild(item(ocr.real ? 'ok' : (ocr.mock ? 'warn' : 'dim'), 'OCR',
-    ocr.real ? 'available' : (ocr.mock ? 'MOCK only' : 'not installed')));
-  bar.appendChild(el('span', { class: 'dim local', text: 'local only · nothing leaves this machine' }));
+  const pdfOcr = up.pdf_ocr_engines || [];
+  bar.appendChild(item(pdfOcr.length ? 'ok' : (ocr.mock ? 'warn' : 'dim'), 'OCR',
+    pdfOcr.length ? 'scanned PDFs (' + pdfOcr.join(', ') + ')' + (ocr.real ? ' · images' : '')
+      : (ocr.real ? 'images only' : (ocr.mock ? 'MOCK only' : 'not installed')),
+    pdfOcr.length ? 'Scanned PDFs are read offline with the pipeline\u2019s own OCR engines '
+      + '(src/ocr_scans.py): ' + pdfOcr.join(', ') + '. Images need src/ocr_extract.py'
+      + (ocr.real ? ' (available).' : ' (not installed).')
+      : (up.pdf_ocr_error || ocr.error || '')));
+  const cr = st.claude_reader || {};
+  bar.appendChild(item(cr.available ? 'ok' : 'dim', 'Claude reading',
+    cr.available ? (cr.backend === 'api' ? 'API' : 'Claude login') + ' · opt-in' : 'off',
+    cr.available ? cr.label + '. Optional: a PDF is sent to Anthropic only when you choose '
+      + '\u201cRead a PDF with Claude\u201d and agree for that document.' : (cr.reason || '')));
+  const co = st.corrections || {};
+  if (co.entries) bar.appendChild(item('dim', 'Remembered', co.entries + ' correction'
+    + (co.entries === 1 ? '' : 's'), 'Family corrections you made, applied again to the same '
+    + 'wording (' + co.file + ', local only).'));
+  bar.appendChild(el('span', { class: 'dim local', text: cr.available
+    ? 'local · nothing leaves this machine unless you choose Read with Claude'
+    : 'local only · nothing leaves this machine' }));
+  renderClaudeButton();
 }
 
 async function pollStatus() {
@@ -343,6 +367,147 @@ function initInput() {
   bi.addEventListener('change', () => { if (bi.files[0]) uploadBidtab(bi.files[0]); bi.value = ''; });
 }
 
+/* ----------------------------------------- optional: read a PDF with Claude */
+
+// Opt-in, per document: nothing is sent until the user presses a button in
+// the dialog for that file, and the server refuses without ?consent=yes.
+function claudeStatus() { return (S.status && S.status.claude_reader) || {}; }
+
+function renderClaudeButton() {
+  const cr = claudeStatus();
+  const btn = $('#btn-claude'), note = $('#claude-note');
+  if (!btn) return;
+  btn.classList.toggle('off', !cr.available);
+  note.textContent = cr.available
+    ? 'Optional, for scans and messy PDFs: ' + cr.label + '. Asks first; sends only that PDF.'
+    : 'Off \u2014 to turn it on see ui/README.md, \u201cSetting up Claude reading\u201d '
+      + '(brew install anthropics/tap/ant, then ant auth login; or ANTHROPIC_API_KEY from the '
+      + 'Console; or sign in to the claude CLI).';
+}
+
+function initClaude() {
+  const btn = $('#btn-claude'), fi = $('#claude-input');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const cr = claudeStatus();
+    if (!cr.available) {
+      const st = $('#file-status');
+      st.innerHTML = '';
+      st.appendChild(notice('info', 'Reading with Claude is not set up', (cr.reason || '')
+        + ' Two ways: an Anthropic API credential (brew install anthropics/tap/ant, then '
+        + 'ant auth login; or set ANTHROPIC_API_KEY from the Console), or the claude CLI signed '
+        + 'in with your Claude plan. Details: ui/README.md, \u201cSetting up Claude reading\u201d.'));
+      return;
+    }
+    fi.click();
+  });
+  fi.addEventListener('change', () => { if (fi.files[0]) claudePreview(fi.files[0]); fi.value = ''; });
+}
+
+async function claudeCall(path, file, consent) {
+  const fd = new FormData();
+  fd.append('file', file);
+  return api(path + (consent ? '?consent=yes' : ''), { method: 'POST', body: fd });
+}
+
+async function claudePreview(file) {
+  if (!/\.pdf$/i.test(file.name)) { toast('Only PDF files can be read with Claude.', 'err'); return; }
+  let pv;
+  try { pv = await claudeCall('/api/claude/preview', file, false); }
+  catch (e) { toast('Could not open ' + file.name + ': ' + e.message, 'err'); return; }
+  openClaudeDialog(file, pv);
+}
+
+function claudeEstimateText(pv, counted) {
+  const e = pv.estimate || {};
+  const k = v => (v < 10000 ? (v / 1000).toFixed(1) : Math.round(v / 1000)) + 'k';
+  const tok = r => k(r[0]) + '\u2013' + k(r[1]);
+  if (pv.backend === 'cli') {
+    return 'About ' + tok(e.input_tokens) + ' input and ' + tok(e.output_tokens)
+      + ' output tokens from the page count, counted against your Claude plan\u2019s usage limits '
+      + '(no per-token bill).';
+  }
+  if (counted) {
+    return counted.input_tokens.toLocaleString() + ' input tokens (counted by the API) + about '
+      + tok(counted.output_tokens) + ' output tokens \u2248 ' + money(counted.usd[0], 2) + '\u2013'
+      + money(counted.usd[1], 2) + ' at ' + pv.model + ' list prices (' + counted.price_date + ').';
+  }
+  return 'About ' + money(e.usd[0], 2) + '\u2013' + money(e.usd[1], 2) + ' (' + tok(e.input_tokens)
+    + ' input, ' + tok(e.output_tokens) + ' output tokens, from the page count; '
+    + 'press \u201cCount tokens\u201d for the exact input).';
+}
+
+function openClaudeDialog(file, pv) {
+  const host = $('#modal-host');
+  const est = el('dd', { text: claudeEstimateText(pv, null) });
+  const msg = el('div', {});
+  const readBtn = el('button', { class: 'btn primary', text: 'Read with Claude' });
+  const countBtn = pv.can_count ? el('button', { class: 'btn', text: 'Count tokens (sends the PDF; free)' }) : null;
+  const cancel = el('button', { class: 'btn ghost', text: 'Cancel' });
+  function close() { host.innerHTML = ''; document.removeEventListener('keydown', onKey); }
+  function onKey(e) { if (e.key === 'Escape') close(); }
+  document.addEventListener('keydown', onKey);
+  cancel.addEventListener('click', close);
+  if (countBtn) countBtn.addEventListener('click', () => withBusy(countBtn, async () => {
+    msg.innerHTML = '';
+    try {
+      const c = await claudeCall('/api/claude/count', file, true);
+      est.textContent = claudeEstimateText(pv, c);
+    } catch (e) { msg.appendChild(notice('caution', 'Token count failed', claudeErr(e))); }
+  }));
+  readBtn.addEventListener('click', () => withBusy(readBtn, async () => {
+    msg.innerHTML = '';
+    msg.appendChild(el('div', { class: 'dim', html: '<span class="spinner"></span> Claude is reading '
+      + pv.pages + ' page(s)' + (pv.requests > 1 ? ' in ' + pv.requests + ' parts' : '')
+      + '\u2026 this takes a minute or two.' }));
+    try {
+      const r = await claudeCall('/api/claude/read', file, true);
+      close();
+      $('#file-status').innerHTML = '';
+      await acceptParse(r.parse);
+    } catch (e) {
+      msg.innerHTML = '';
+      msg.appendChild(notice('severe', 'Claude could not read it', claudeErr(e)));
+    }
+  }));
+  host.appendChild(el('div', { class: 'modal-back', onclick: e => { if (e.target === host.firstChild) close(); } },
+    el('div', { class: 'modal' }, [
+      el('header', {}, [el('h3', { text: 'Read with Claude: ' + pv.file_name }),
+        el('button', { class: 'btn sm close', text: 'Close', onclick: close })]),
+      el('div', { class: 'mbody' }, [
+        el('dl', { class: 'kv' }, [
+          el('dt', { text: 'File' }), el('dd', { text: pv.file_name + ' \u00b7 '
+            + (pv.bytes / 1048576).toFixed(1) + ' MB' }),
+          el('dt', { text: 'Pages' }), el('dd', { text: pv.pages + (pv.requests > 1
+            ? ' (sent in ' + pv.requests + ' parts)' : '') }),
+          el('dt', { text: 'Reads with' }), el('dd', { text: pv.label + ' \u00b7 ' + pv.model }),
+          el('dt', { text: 'Cost' }), est,
+        ]),
+        notice('info', 'Privacy', pv.consent + ' ' + pv.privacy),
+        el('div', { class: 'muted-note', text: 'Claude only transcribes item numbers, descriptions, '
+          + 'units and quantities \u2014 no prices. Every line lands in the grid tagged '
+          + '\u201cread by Claude\u201d, with the checks it failed, for you to confirm.' }),
+        msg,
+        el('div', { class: 'row-actions', style: 'margin-top:10px' }, [readBtn, countBtn, cancel]),
+      ]),
+    ])));
+}
+
+function claudeErr(e) {
+  const d = (e && e.body) || {};
+  const hint = {
+    consent_required: 'The server needs your consent for this document.',
+    unavailable: 'Reading with Claude is not set up (ui/README.md, \u201cSetting up Claude reading\u201d).',
+    rate_limited: 'Anthropic is rate limiting this account; try again in a minute.',
+    refused: 'Claude declined this document; nothing was added.',
+    bad_output: 'The answer was not usable; nothing was added. Try again, or paste the rows.',
+    truncated: 'The answer was cut off; nothing was added.',
+    timeout: 'No answer in time; try again.',
+    auth: 'The credential was rejected.',
+  }[d.code] || '';
+  return String((e && e.message) || e) + (hint ? ' ' + hint : '');
+}
+
 function newLine(l) {
   return {
     row_id: l.row_id || ('r' + (++S.seq)),
@@ -360,6 +525,10 @@ function newLine(l) {
     cls: null,
     issues: l.issues || [],
     confidence: l.confidence || 'ok',
+    origin: l.origin || '',        // 'claude' when the Claude reader read it
+    page: l.page || null,
+    family_src: '',                // '' | 'user' | 'remembered' | 'parser'
+    remembered: null,
   };
 }
 
@@ -412,6 +581,11 @@ function renderParseNotes() {
       + (p.method || '?') + ')',
       el('ul', { class: 'tight' }, p.notes.map(n => el('li', { text: n })))));
   }
+  if (/^pdf/.test(p.method || '') && claudeStatus().available
+      && (!(p.lines || []).length || /ocr/.test(p.method || ''))) {
+    host.appendChild(notice('info', 'A scan or a hard PDF?', 'You can also read it with Claude '
+      + '(\u201cRead a PDF with Claude\u201d under Upload file) \u2014 it asks before anything is sent.'));
+  }
   const fold = $('#skipped-fold');
   fold.innerHTML = '';
   fold.hidden = !p.n_skipped;
@@ -432,7 +606,50 @@ function renderParseNotes() {
 
 function linePayload(l) {
   return { row_id: l.row_id, description: l.description, unit: l.unit, family: l.family || '',
-    quantity: l.quantity, file_amount: l.file_amount, file_unit_price: l.file_unit_price };
+    quantity: l.quantity, file_amount: l.file_amount, file_unit_price: l.file_unit_price,
+    confidence: l.confidence, issues: l.issues, keep_parser: l.family_src === 'parser' };
+}
+
+// A correction remembered for this wording (ui/.local/corrections.json):
+// the server classified the line with it; the grid adopts it as the line's
+// family override, so the estimate request carries it like any other choice.
+function adoptRemembered(l) {
+  const c = l.cls;
+  if (!c || !c.remembered || l.family || l.family_src === 'parser') return;
+  l.family = c.remembered.family;
+  l.family_src = 'remembered';
+  l.remembered = c.remembered;
+  if (!l.unit && c.remembered.unit) l.unit = c.remembered.unit;
+}
+
+async function rememberCorrection(l, family, unit, source) {
+  if (!family || !String(l.description || '').trim()) return;
+  try {
+    await postJSON('/api/corrections', { description: l.description, family,
+      unit: unit || '', source: source || 'picker' });
+  } catch (e) { toast('Could not remember the correction: ' + e.message, 'err'); }
+}
+
+async function forgetCorrection(l) {
+  try { await postJSON('/api/corrections/forget', { description: l.description }); }
+  catch (e) { /* nothing remembered */ }
+}
+
+// One click on a suggestion: its family (and its unit when the line has
+// none), remembered for this wording.
+function applySuggestion(l, sg) {
+  const c = l.cls || {};
+  const unitMissing = !c.unit || c.unit_known === false;
+  const fill = unitMissing && sg.unit ? sg.unit : '';
+  l.family = sg.family;
+  l.family_src = 'user';
+  l.remembered = null;
+  if (fill) l.unit = fill;
+  markStale();
+  classifyOne(l);
+  rememberCorrection(l, sg.family, fill, 'suggestion');
+  toast('Row ' + (l.item_no || '') + ': ' + sg.family_label + (fill ? ', unit ' + fill : '')
+    + ' — remembered for this wording.', 'ok');
 }
 
 // An uploaded takeoff's amount / unit-price column is used for owner-set
@@ -457,7 +674,13 @@ async function classifyAll() {
       market: S.market, lines: S.lines.map(linePayload) });
     const by = {};
     (r.lines || []).forEach(c => { by[c.row_id] = c; });
-    S.lines.forEach(l => { if (by[l.row_id]) { l.cls = by[l.row_id]; adoptImportAmount(l); } });
+    S.lines.forEach(l => { if (by[l.row_id]) { l.cls = by[l.row_id]; adoptRemembered(l); adoptImportAmount(l); } });
+    // the history search loads after the estimator; ask again for the
+    // suggestions once it is there
+    if (S.lines.some(l => l.cls && l.cls.intake && l.cls.intake.suggestions_pending)) {
+      clearTimeout(S.suggestTimer);
+      S.suggestTimer = setTimeout(() => classifyAll(), 2500);
+    }
   } catch (e) {
     toast('Classification failed: ' + e.message, 'err');
   }
@@ -471,7 +694,7 @@ const classifyOne = debounce(async (l) => {
   if (!S.options) return;
   try {
     const r = await postJSON('/api/classify', { market: S.market, lines: [linePayload(l)] });
-    if (r.lines && r.lines[0]) { l.cls = r.lines[0]; adoptImportAmount(l); }
+    if (r.lines && r.lines[0]) { l.cls = r.lines[0]; adoptRemembered(l); adoptImportAmount(l); }
   } catch (e) { toast('Classification failed: ' + e.message, 'err'); }
   renderGrid();
   renderQuotes();
@@ -515,9 +738,13 @@ function renderGrid() {
   const n = S.lines.filter(l => l.include).length;
   const noq = S.lines.filter(l => l.include && !(l.quantity > 0)).length;
   const unc = S.lines.filter(l => l.include && l.cls && l.cls.coverage_class).length;
+  const chk = S.lines.filter(l => l.include && l.cls && l.cls.intake && l.cls.intake.low).length;
+  const byc = S.lines.filter(l => l.origin === 'claude').length;
   $('#review-count').textContent = n + ' of ' + S.lines.length + ' lines included'
+    + (chk ? ' · ' + chk + ' to check' : '')
     + (noq ? ' · ' + noq + ' with no quantity' : '')
-    + (unc ? ' · ' + unc + ' not covered' : '');
+    + (unc ? ' · ' + unc + ' not covered' : '')
+    + (byc ? ' · ' + byc + ' read by Claude' : '');
   restoreGridFocus(focus);
   refreshEstimateButton();
 }
@@ -547,6 +774,37 @@ function clsCell(l) {
       + 'words only, if at all. Use Change to pick a family.', text: 'unclassified' }));
   (c.issues || []).filter(x => /unit/.test(x)).forEach(x =>
     badges.push(el('span', { class: 'badge no', text: x })));
+  if (l.origin === 'claude') badges.push(el('span', { class: 'badge claude',
+    title: 'Transcribed by Claude from the PDF' + (l.page ? ' (page ' + l.page + ')' : '')
+      + '. Check it against the document.' + ((l.issues || []).length ? '\n' + l.issues.join('\n') : ''),
+    text: 'read by Claude' + (l.page ? ' · p.' + l.page : '') }));
+  if (l.remembered) badges.push(el('span', { class: 'badge remembered',
+    title: 'You corrected this wording before (' + (l.remembered.last || '') + '): family '
+      + (l.remembered.family_label || l.remembered.family)
+      + (l.remembered.unit ? ', unit ' + l.remembered.unit : '') + '. To forget it: Change \u2192 '
+      + '\u201cNot sure \u2014 keep the parser\u2019s classification\u201d.',
+    text: 'remembered' }));
+  const ia = c.intake || {};
+  if (ia.low) badges.push(el('span', { class: 'badge check',
+    title: 'Low confidence \u2014 check this line: ' + (ia.reasons || []).map(x => x.text).join('; ')
+      + (ia.best_match !== null && ia.best_match !== undefined
+        ? '\nBest match in the public price history: ' + Math.round(100 * ia.best_match) + '%' : ''),
+    text: 'check: ' + (ia.reasons || []).map(x => x.code === 'weak_match' ? 'weak match'
+      : x.code === 'no_quantity' ? 'no quantity' : x.code === 'no_unit' ? 'no unit'
+      : x.code === 'unknown_unit' ? 'unit?' : x.code === 'unclassified' ? 'no family'
+      : x.code === 'reader_unsure' ? 'reader unsure' : x.code).join(', ') }));
+  const sugg = (ia.low && (ia.suggestions || []).length) ? el('div', { class: 'suggest' }, [
+    el('span', { class: 'dim', text: 'Did you mean' }),
+  ].concat(ia.suggestions.map(sg => el('button', { class: 'chip', type: 'button',
+    title: 'Use this family' + (sg.unit ? ' (' + sg.unit + ')' : '') + ': ' + sg.family_label
+      + '\nEarlier public line item (' + sg.source + ', ' + sg.n_projects + ' project'
+      + (sg.n_projects === 1 ? '' : 's') + '), match ' + Math.round(100 * sg.score) + '%\n' + sg.label
+      + '\nRemembered for this wording.',
+    onclick: () => applySuggestion(l, sg) }, [
+      el('span', { class: 't', text: sg.label }),
+      el('span', { class: 's', text: sg.family_label + (sg.unit ? ' · ' + sg.unit : '') }),
+    ])))) : (ia.low && ia.suggestions_pending ? el('div', { class: 'suggest dim',
+      text: 'suggestions: the history search is still loading…' }) : null);
   return el('div', { class: 'clscell' }, [
     el('div', {}, [
       el('span', { class: 'fam' + (c.family_overridden ? ' over' : ''),
@@ -560,11 +818,14 @@ function clsCell(l) {
       el('span', { class: 'unitn', text: c.unit || 'no unit' }),
     ]),
     badges.length ? el('div', { class: 'badges' }, badges) : null,
+    sugg,
   ]);
 }
 
 function gridRow(l, i) {
-  const tr = el('tr', { class: l.include ? '' : 'excluded', 'data-row': l.row_id });
+  const low = l.cls && l.cls.intake && l.cls.intake.low;
+  const tr = el('tr', { class: (l.include ? '' : 'excluded') + (low ? ' checkrow' : ''),
+    'data-row': l.row_id });
   tr.appendChild(el('td', { class: 'tight' }, el('input', {
     type: 'checkbox', checked: l.include, title: 'Include this line in the estimate',
     onchange: e => { l.include = e.target.checked; renderGrid(); renderQuotes();
@@ -577,7 +838,11 @@ function gridRow(l, i) {
   tr.appendChild(el('td', { class: 'tight' }, el('input', {
     class: 'cellinput', type: 'text', value: l.description,
     'data-col': 'description', 'data-i': i,
-    oninput: e => { l.description = e.target.value; markStale(); classifyOne(l); },
+    oninput: e => {
+      l.description = e.target.value;
+      if (l.family_src === 'remembered') { l.family = ''; l.family_src = ''; l.remembered = null; }
+      markStale(); classifyOne(l);
+    },
   })));
   tr.appendChild(el('td', { class: 'tight' }, el('input', {
     class: 'cellinput' + (l.unit ? '' : ' flag'), type: 'text', value: l.unit,
@@ -628,7 +893,7 @@ function openPicker(l) {
   const fams = (S.options && S.options.families) || [];
   const cur = l.cls ? l.cls.family : '';
   const famSel = el('select', {}, [el('option', { value: '', text:
-    '— the parser’s family' + (l.cls ? ' (' + l.cls.family_parser + ')' : '') + ' —' })]
+    'Not sure \u2014 keep the parser\u2019s classification' + (l.cls ? ' (' + l.cls.family_parser + ')' : '') })]
     .concat(fams.map(f => el('option', { value: f.id, text: f.label + '  ·  ' + f.id,
       selected: l.family && f.id === l.family }))));
   const list = el('div', {});
@@ -636,7 +901,17 @@ function openPicker(l) {
     placeholder: 'search earlier public line items…' });
 
   function apply(family, unit) {
+    const c0 = l.cls || {};
+    const unitMissing = !c0.unit || c0.unit_known === false;
     l.family = family || '';
+    l.remembered = null;
+    if (family) {
+      l.family_src = 'user';
+      rememberCorrection(l, family, unit && unitMissing ? unit : '', 'picker');
+    } else {
+      l.family_src = 'parser';       // keep the parser's, and forget any memory
+      forgetCorrection(l);
+    }
     if (unit) l.unit = unit;
     close();
     markStale();
@@ -736,8 +1011,10 @@ function initProject() {
     markStale();
     await classifyAll();
   }));
-  $('#in-owner').addEventListener('change', () => { markStale(); });
-  $('#in-worktype').addEventListener('change', () => { markStale(); suggestBidders(); });
+  $('#in-owner').addEventListener('input', onOwnerInput);
+  $('#in-owner').addEventListener('change', () => { onOwnerInput(); markStale(); });
+  $('#in-worktype').addEventListener('input', onWorkTypeInput);
+  $('#in-worktype').addEventListener('change', () => { onWorkTypeInput(); markStale(); suggestBidders(); });
   $('#in-biddate').addEventListener('change', () => { markStale(); suggestBidders(); });
   $('#in-bidders').addEventListener('input', () => {
     const v = parseInt($('#in-bidders').value, 10);
@@ -758,20 +1035,101 @@ function initProject() {
   $('#btn-reestimate').addEventListener('click', () => withBusy($('#btn-reestimate'), runEstimate));
 }
 
+
+/* ---------------------------------------- owner / work type: type-ahead */
+
+const OWNER_OTHER = 'Other — not in the list';
+const WT_OTHER = 'Other / not listed';
+
+function normName(x) { return String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
+
+// Dice similarity on letter pairs, for "Did you mean ...?"
+function similarity(a, b) {
+  a = normName(a); b = normName(b);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const pairs = s => { const out = []; for (let i = 0; i < s.length - 1; i++) out.push(s.slice(i, i + 2)); return out; };
+  const pa = pairs(a), pb = pairs(b);
+  if (!pa.length || !pb.length) return 0;
+  let hit = 0;
+  const pool = pb.slice();
+  pa.forEach(p => { const k = pool.indexOf(p); if (k >= 0) { hit++; pool.splice(k, 1); } });
+  return 2 * hit / (pa.length + pb.length);
+}
+
+// {id, text, known, suggestion} for a typed / picked value of a list
+function resolveChoice(value, list) {
+  const v = String(value || '').trim();
+  if (!v) return { id: '', text: '', known: false, suggestion: null };
+  const n = normName(v);
+  const hit = list.find(e => normName(e.label) === n || normName(e.id) === n
+    || (e.ids || []).some(i => normName(i) === n));
+  if (hit) return { id: hit.id, text: hit.label, known: true, suggestion: null };
+  let best = null, bs = 0;
+  list.forEach(e => {
+    const sc = Math.max(similarity(v, e.label), normName(e.label).startsWith(n) && n.length >= 3 ? 0.9 : 0);
+    if (sc > bs) { bs = sc; best = e; }
+  });
+  return { id: '', text: v, known: false, suggestion: bs >= 0.6 ? best : null };
+}
+
+function mkt() { return S.market === 'not_sure' ? 'municipal' : S.market; }
+function ownerList() { return ((S.options || {}).owners || {})[mkt()] || []; }
+function workTypeList() { return ((S.options || {}).work_types || {})[mkt()] || []; }
+
+function renderChoiceNote(input, note, list, other, defaultText, unknownText) {
+  const r = resolveChoice(input.value, list);
+  note.innerHTML = '';
+  if (!input.value.trim()) { note.textContent = defaultText; return r; }
+  if (r.known) {
+    const e = list.find(x => x.id === r.id);
+    note.textContent = e ? e.label + ': ' + e.lettings + ' letting' + (e.lettings === 1 ? '' : 's')
+      + ' in the price history' + ((e.ids || []).length > 1 ? ' (' + e.ids.length + ' sources merged)' : '') + '.'
+      : '';
+    return r;
+  }
+  note.appendChild(el('span', { class: 'warnnote', text: unknownText }));
+  if (r.suggestion) {
+    note.appendChild(document.createTextNode(' '));
+    note.appendChild(el('button', { class: 'btn ghost sm', type: 'button',
+      text: 'Did you mean ' + r.suggestion.label + '?',
+      onclick: () => { input.value = r.suggestion.label; input.dispatchEvent(new Event('change')); } }));
+  }
+  return r;
+}
+
+function onOwnerInput() {
+  const inp = $('#in-owner');
+  if (inp.value === OWNER_OTHER) { inp.value = ''; inp.placeholder = 'type the owner’s name'; inp.focus(); }
+  renderChoiceNote(inp, $('#owner-note'), ownerList(), OWNER_OTHER,
+    'Earlier jobs of the same owner count 1.5× when the comparables are chosen. Not listed? '
+    + 'Pick "' + OWNER_OTHER + '" or just type it.',
+    'Not in the price history — no owner-specific weighting.');
+}
+
+function onWorkTypeInput() {
+  const inp = $('#in-worktype');
+  if (inp.value === WT_OTHER) { inp.value = ''; inp.placeholder = 'type the work type'; inp.focus(); }
+  renderChoiceNote(inp, $('#worktype-note'), workTypeList(), WT_OTHER,
+    'Same work type counts 1.5× in the comparables, and picks the bidder-count history. '
+    + 'Not listed? Pick "' + WT_OTHER + '" or just type it.',
+    'Not a work type in the price history — the generic work type is used (no '
+    + 'same-work-type weighting; the bidder count uses market and size only).');
+}
+
 function fillMarketLists() {
   const o = S.options;
   if (!o) return;
-  const fill = (sel, rows, keep) => {
-    const cur = keep ? sel.value : '';
-    sel.innerHTML = '';
-    sel.appendChild(el('option', { value: '', text: '— not specified —' }));
-    rows.forEach(r => sel.appendChild(el('option', { value: r.id,
-      text: r.label + '  ·  ' + r.lettings + ' letting' + (r.lettings === 1 ? '' : 's')
-        + ' on record' })));
-    if (cur && rows.some(r => r.id === cur)) sel.value = cur;
+  const fill = (dl, rows, other) => {
+    dl.innerHTML = '';
+    rows.forEach(r => dl.appendChild(el('option', { value: r.label,
+      label: r.lettings + ' letting' + (r.lettings === 1 ? '' : 's') + ' on record' })));
+    dl.appendChild(el('option', { value: other }));
   };
-  fill($('#in-owner'), (o.owners || {})[S.market] || [], true);
-  fill($('#in-worktype'), (o.work_types || {})[S.market] || [], true);
+  fill($('#owner-list'), ownerList(), OWNER_OTHER);
+  fill($('#worktype-list'), workTypeList(), WT_OTHER);
+  onOwnerInput();
+  onWorkTypeInput();
 }
 
 function biddersValue() {
@@ -785,7 +1143,7 @@ function renderDiscountPreview() {
   const o = S.options;
   const n = biddersValue();
   if (!o || !n) return;
-  const d = (o.discount || {})[S.market];
+  const d = (o.discount || {})[mkt()];
   if (!d || !d.rows.length) return;
   let row = null, kind = 'ok', msg;
   if (n <= 1) {
@@ -916,10 +1274,12 @@ function renderOwnerSet() {
 }
 
 function estimateRequest(n) {
+  const ow = resolveChoice($('#in-owner').value, ownerList());
+  const wt = resolveChoice($('#in-worktype').value, workTypeList());
   return {
     market: S.market,
-    owner: $('#in-owner').value,
-    work_type: $('#in-worktype').value,
+    owner: ow.id, owner_text: ow.known ? '' : ow.text,
+    work_type: wt.id, work_type_text: wt.known ? '' : wt.text,
     bid_date: $('#in-biddate').value || null,
     n_bidders: n,
     items: S.lines.filter(l => l.include).map(l => ({
@@ -955,6 +1315,8 @@ async function runEstimate() {
   const r = await postJSON('/api/estimate', req);
   S.result = r;
   S.resultReq = req;
+  S.ws.refs = null;
+  S.ws.refsReq = null;
   S.stale = false;
   $('#stale-banner').hidden = true;
   if (S.bidders.mode === 'auto') {
@@ -985,7 +1347,8 @@ function renderResult() {
   const r = S.result;
   if (!r) return;
   const i = r.inputs;
-  $('#result-sub').textContent = i.market_label + (i.owner_label ? ' · ' + i.owner_label : '')
+  $('#result-sub').textContent = i.market_label + (i.market_note ? ' (market not given)' : '')
+    + (i.owner_label ? ' \u00b7 ' + i.owner_label : '')
     + (i.work_type_label ? ' · ' + i.work_type_label : '')
     + ' · bid ' + (i.bid_date || 'date not given') + ' · ' + i.n_bidders + ' bidders ('
     + (i.bidders_source === 'rule N1' ? 'suggested' : 'yours') + ')';
@@ -1162,62 +1525,400 @@ function accBadge(a) {
   return el('span', { class: cls, title: a.tooltip || '', text: prefix + a.text });
 }
 
-function renderLines(r) {
+/* ------------------------------------------------------ the OPCC worksheet */
+
+// Per line: the model's unit price, the reference range, the accuracy badge,
+// YOUR unit price (default: the model's; quick picks from the references and
+// the similar projects), your amount and a note. Your prices and the OPCC
+// they add up to are output only: estimateRequest() never sends them.
+function wsLine(l) {
+  let w = S.ws.lines[l.row_id];
+  if (!w) {
+    w = S.ws.lines[l.row_id] = { your_unit: null, src: '', src_label: '', note: '', your_amount: null };
+  }
+  if (l.status === 'owner_set') {
+    w.src = 'owner-set'; w.src_label = 'owner-set amount'; w.your_unit = null;
+    w.your_amount = l.fixed_amount;
+  } else if ((l.status === 'not_covered' || l.status === 'not_covered_whole') && l.quote > 0
+             && (!w.src || w.src === 'quote')) {
+    w.src = 'quote'; w.src_label = 'vendor quote'; w.your_amount = l.quote; w.your_unit = null;
+  } else if ((!w.src || w.src === 'model') && l.unit_price_p50) {
+    w.src = 'model'; w.src_label = 'model P50'; w.your_unit = l.unit_price_p50;
+  }
+  return w;
+}
+
+function wsAmount(l, w) {
+  if (l.status === 'owner_set') return isNum(l.fixed_amount) ? Number(l.fixed_amount) : null;
+  if (w.src === 'quote' && isNum(w.your_amount)) return Number(w.your_amount);
+  return isNum(w.your_unit) && isNum(l.quantity) ? w.your_unit * l.quantity : null;
+}
+
+function wsRefs(l) { return (S.ws.refs || {})[l.row_id] || null; }
+
+// "needs your judgment": where the model is weak
+function wsJudgment(l) {
+  const x = wsRefs(l);
+  const why = [];
+  if (l.status === 'not_covered' || l.status === 'not_covered_whole') why.push('not covered');
+  if (l.status === 'unpriced') why.push('not priced');
+  if (l.amount_missing) why.push('allowance without an amount');
+  if (l.status === 'priced') {
+    if (x && x.n_refs < 3) why.push(x.n_refs + ' reference' + (x.n_refs === 1 ? '' : 's'));
+    if ((x && x.generic) || ['other', 'needs_review', ''].includes(l.family || '')) why.push('generic match');
+    if (String(l.unit).toUpperCase() === 'LS') why.push('lump sum');
+    if (l.lowconf_class) why.push('low confidence');
+    else if (l.accuracy && ['poor', 'none'].includes(l.accuracy.tier)) why.push('weak item accuracy');
+  }
+  return why;
+}
+
+function similarPick(l) {
+  // the most recent similar project with a line matched to this one
+  let best = null;
+  (((S.result || {}).similar || {}).cards || []).forEach(c => (c.matched_lines || []).forEach(m => {
+    if (m.row_id === l.row_id && isNum(m.their_low_unit) && (!best || c.date > best.c.date)) best = { c, m };
+  }));
+  return best;
+}
+
+function wsPicks(l) {
+  const x = wsRefs(l);
+  const yr = x && x.to_year ? x.to_year + ' $' : 'bid-year $';
+  const out = [];
+  if (l.unit_price_p50) out.push({ v: 'model', price: l.unit_price_p50, label: 'Model P50 ' + rate(l.unit_price_p50) });
+  if (x && x.range) out.push({ v: 'ref_median', price: x.range.median, label: 'Reference median ('
+    + x.n_refs + ', ' + yr + ') ' + rate(x.range.median), note: 'reference median of ' + x.n_refs + ' projects' });
+  const sp = similarPick(l);
+  if (sp) out.push({ v: 'similar', price: sp.m.their_low_unit, label: 'Most recent similar: '
+    + sp.c.project.slice(0, 40) + ' (' + sp.c.date + ') low ' + rate(sp.m.their_low_unit),
+    note: 'used ' + sp.c.owner + ' ' + String(sp.c.date).slice(0, 4) + ' ' + sp.c.project.slice(0, 50) + ' low bid' });
+  ((x && x.picks) || []).forEach((pk, i) => {
+    const tag = pk.owner + ' ' + String(pk.date).slice(0, 4) + ' ' + pk.project.slice(0, 50);
+    if (isNum(pk.median_esc)) out.push({ v: 'ref' + i + 'm', price: pk.median_esc, label: pk.project.slice(0, 40)
+      + ' (' + pk.date + ') median ' + rate(pk.median_esc) + ' (' + yr + ')', note: 'used ' + tag + ' median bid' });
+    if (isNum(pk.low_esc)) out.push({ v: 'ref' + i + 'l', price: pk.low_esc, label: pk.project.slice(0, 40)
+      + ' (' + pk.date + ') low ' + rate(pk.low_esc) + ' (' + yr + ')', note: 'used ' + tag + ' low bid' });
+  });
+  return out;
+}
+
+function renderLines(r) { renderWorksheet(r); loadWsRefs(); }
+
+function renderWorksheet(r) {
+  r = r || S.result;
+  if (!r) return;
   const body = $('#result-body');
   body.innerHTML = '';
+  const flagged = (r.lines || []).filter(l => wsJudgment(l).length);
+  $('#ws-filter-n').textContent = '(' + flagged.length + ')';
   (r.lines || []).forEach(l => {
-    body.appendChild(resultRow(l));
-    body.appendChild(el('tr', { class: 'detail', 'data-detail': l.row_id, style: 'display:none' },
-      el('td', { colspan: 10 }, lineDetail(l))));
+    const judg = wsJudgment(l);
+    if (S.ws.filter && !judg.length) return;
+    body.appendChild(resultRow(l, judg));
+    const open = !!S.ws.open[l.row_id] || (S.ws.filter && judg.length && Object.keys(S.ws.open).length < 1000
+      && flagged.indexOf(l) < 12);
+    const d = el('tr', { class: 'detail', 'data-detail': l.row_id, style: open ? '' : 'display:none' },
+      el('td', { colspan: 10 }, lineDetail(l)));
+    body.appendChild(d);
+    if (open) {
+      const host = $('[data-refs="' + CSS.escape(l.row_id) + '"]', d);
+      if (host) loadReferences(l, host);
+    }
   });
+  renderWsTotals(r);
+}
+
+function wsTotals(r) {
+  let sub = 0, missing = 0, own = 0, quotes = 0;
+  (r.lines || []).forEach(l => {
+    const w = wsLine(l);
+    const a = wsAmount(l, w);
+    if (a === null) { missing += 1; return; }
+    sub += a;
+    if (l.status === 'owner_set') own += a;
+    else if (w.src === 'quote') quotes += a;
+  });
+  const c = isNum(S.ws.contingency) ? Number(S.ws.contingency) : 0;
+  const h = r.headline || {};
+  return { sub, missing, own, quotes, c, cont: sub * c / 100, yours: sub * (1 + c / 100),
+    p50: h.p50, p80: h.p80, suggest: h.p50 && h.p80 ? 100 * (h.p80 / h.p50 - 1) : null };
+}
+
+function renderWsTotals(r) {
+  const host = $('#ws-totals');
+  host.innerHTML = '';
+  const t = wsTotals(r);
+  const vs = (m) => {
+    if (!m) return '\u2014';
+    const d = t.yours - m;
+    if (Math.abs(d) < 0.5) return 'the same';
+    const sg = d > 0 ? '+' : '\u2212';
+    return sg + money(Math.abs(d)) + ' (' + sg + Math.abs(100 * (t.yours / m - 1)).toFixed(1) + '%)';
+  };
+  const cin = el('input', { type: 'text', class: 'cellinput num', value: isNum(S.ws.contingency) ? S.ws.contingency : '',
+    placeholder: '0', style: 'width:64px',
+    onchange: e => { const v = parseNum(e.target.value); S.ws.contingency = isNum(v) ? v : null; renderWsTotals(S.result); } });
+  host.appendChild(el('div', { class: 'wstot' }, [
+    el('div', { class: 'yours' }, [
+      el('div', { class: 'lab', text: 'Your OPCC' }),
+      el('div', { class: 'big', text: money(t.yours) }),
+      el('div', { class: 'dim', text: 'your line amounts ' + money(t.sub)
+        + (t.own ? ' (incl. owner-set ' + money(t.own) + ')' : '')
+        + (t.quotes ? ' (incl. vendor quotes ' + money(t.quotes) + ')' : '')
+        + (t.c ? ' + contingency ' + t.c + '% ' + money(t.cont) : '') }),
+      t.missing ? el('div', { class: 'warnnote', text: t.missing + ' line' + (t.missing === 1 ? ' has' : 's have')
+        + ' no price of yours and ' + (t.missing === 1 ? 'is' : 'are') + ' not in this total.' }) : null,
+    ]),
+    el('div', { class: 'cmp' }, [
+      el('div', {}, [el('span', { class: 'lab', text: 'Model P50 ' }), el('span', { class: 'v', text: money(t.p50) }),
+        el('span', { class: 'dim', text: '  you ' + vs(t.p50) })]),
+      el('div', {}, [el('span', { class: 'lab', text: 'Model P80 ' }), el('span', { class: 'v', text: money(t.p80) }),
+        el('span', { class: 'dim', text: '  you ' + vs(t.p80) })]),
+      el('div', { class: 'cont' }, [el('span', { class: 'lab', text: 'Your contingency % ' }), cin,
+        el('span', { class: 'dim', text: isNum(t.suggest) ? '  optional — the model’s P80/P50 is '
+          + '+' + t.suggest.toFixed(0) + '% (a suggestion only)' : '' })]),
+    ]),
+  ]));
   const foot = $('#result-foot');
   foot.innerHTML = '';
-  const sum = (r.lines || []).reduce((a, l) => a + (l.amount_p50 || 0), 0);
   foot.appendChild(el('tr', {}, [
-    el('td', { colspan: 6, class: 'num', text: 'Sum of lines at the P50 level (= P50)' }),
-    el('td', { class: 'num money p50', text: money(sum) }),
-    el('td', { colspan: 3, class: 'dim', text: r.totals.unpriced ? r.totals.unpriced
-      + ' line(s) not priced and not in the sum' : '' }),
+    el('td', { colspan: 8, class: 'num', text: 'Your line amounts' + (t.missing ? ' (' + t.missing + ' without a price)' : '') }),
+    el('td', { class: 'num money p50', text: money(t.sub) }),
+    el('td', { class: 'dim', text: 'model P50 ' + money(t.p50) }),
   ]));
 }
 
-function resultRow(l) {
-  const tr = el('tr', { 'data-line': l.row_id, class: 'clickable st-' + l.status
-    + (l.amount_missing ? ' st-amount-missing' : '') });
-  tr.addEventListener('click', () => {
+async function loadWsRefs(tries) {
+  const req = S.resultReq;
+  if (!req || S.ws.refsReq === req) return;
+  try {
+    const x = await postJSON('/api/worksheet/refs', { request: req });
+    if (S.resultReq !== req) return;
+    S.ws.refs = {};
+    (x.lines || []).forEach(v => { S.ws.refs[v.row_id] = v; });
+    S.ws.refsReq = req;
+    renderWorksheet(S.result);
+  } catch (e) {
+    if (e.status === 503 && (tries || 0) < 20) { setTimeout(() => loadWsRefs((tries || 0) + 1), 1500); return; }
+    toast('Reference ranges could not be loaded: ' + e.message, 'err');
+  }
+}
+
+function wsDoc() {
+  const r = S.result || {};
+  const t = wsTotals(r);
+  return {
+    version: 1, kind: 'opcc-worksheet',
+    request: S.resultReq,
+    worksheet: { contingency_pct: S.ws.contingency, project_name: S.ws.name || '',
+      lines: (r.lines || []).map(l => {
+        const w = wsLine(l);
+        return { row_id: l.row_id, your_unit: w.your_unit, your_amount: wsAmount(l, w), src: w.src,
+          src_label: w.src_label, note: w.note, judgment: wsJudgment(l) };
+      }) },
+    totals: { subtotal: t.sub, contingency_pct: t.c, your_opcc: t.yours, missing: t.missing },
+    model: { p50: t.p50, p80: t.p80 },
+  };
+}
+
+async function wsExport(kind) {
+  if (!S.result) return;
+  const d = wsDoc();
+  const r = await fetch('/api/worksheet/export/' + kind, { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ result: S.result, request: S.resultReq, worksheet: d.worksheet }) });
+  if (!r.ok) { toast('Export failed: ' + r.status, 'err'); return; }
+  const blob = await r.blob();
+  const cd = r.headers.get('content-disposition') || '';
+  const m = /filename="([^"]+)"/.exec(cd);
+  saveBlob(blob, m ? m[1] : 'opcc_worksheet.' + kind);
+}
+
+function saveBlob(blob, name) {
+  const a = el('a', { href: URL.createObjectURL(blob), download: name });
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+
+async function wsSave() {
+  if (!S.result) return;
+  const i = S.result.inputs || {};
+  const def = S.ws.name || [i.owner_label, i.work_type_label, i.bid_date].filter(Boolean).join(' ') || 'worksheet';
+  const name = window.prompt('Save this worksheet as (kept in ui/.local/worksheets on this machine):', def);
+  if (!name) return;
+  S.ws.name = name;
+  try {
+    const r = await postJSON('/api/worksheet/save', { name, worksheet: wsDoc() });
+    toast('Saved: ui/.local/worksheets/' + r.file, 'ok');
+  } catch (e) { toast('Save failed: ' + e.message, 'err'); }
+}
+
+async function wsOpen() {
+  const host = $('#modal-host');
+  let list = [];
+  try { list = (await api('/api/worksheet/list')).worksheets || []; } catch (e) { /* none */ }
+  function close() { host.innerHTML = ''; }
+  const up = el('button', { class: 'btn sm', text: 'Upload a worksheet JSON…', onclick: () => $('#ws-upload').click() });
+  host.appendChild(el('div', { class: 'modal-back', onclick: e => { if (e.target === host.firstChild) close(); } },
+    el('div', { class: 'modal' }, [
+      el('header', {}, [el('h3', { text: 'Open a worksheet' }), el('button', { class: 'btn sm close', text: 'Close', onclick: close })]),
+      el('div', { class: 'mbody' }, [
+        list.length ? el('table', { class: 'mini' }, [
+          el('thead', {}, el('tr', {}, ['Name', 'Saved', 'Lines', 'Your OPCC', ''].map(x => el('th', { text: x })))),
+          el('tbody', {}, list.map(w => el('tr', {}, [
+            el('td', { text: w.name }), el('td', { text: w.saved_at || '' }), el('td', { text: w.lines }),
+            el('td', { class: 'num', text: money(w.your_opcc) }),
+            el('td', {}, el('button', { class: 'btn sm primary', text: 'Open', onclick: async () => {
+              close();
+              try { await wsRestore(await api('/api/worksheet/load?file=' + encodeURIComponent(w.file))); }
+              catch (e) { toast('Could not open it: ' + e.message, 'err'); }
+            } })),
+          ]))),
+        ]) : el('div', { class: 'muted-note', text: 'No saved worksheets in ui/.local/worksheets yet.' }),
+        el('div', { class: 'row-actions', style: 'margin-top:10px' }, [up]),
+      ]),
+    ])));
+}
+
+// Reopen a worksheet: its takeoff and project details go back into the page,
+// the estimate is run again on today's data, and your prices and notes are
+// put back by line.
+async function wsRestore(doc) {
+  if (!doc || !doc.request || !Array.isArray(doc.request.items)) { toast('Not a worksheet file.', 'err'); return; }
+  const q = doc.request;
+  S.parse = null;
+  S.seq = 0;
+  S.lines = q.items.map(it => {
+    const l = newLine(it);
+    l.row_id = it.row_id || l.row_id;
+    l.family = it.family || '';
+    if (it.family) l.family_src = 'user';
+    l.amount = isNum(it.amount) && it.amount > 0 ? Number(it.amount) : null;
+    if (l.amount) l.amount_src = 'user';
+    l.quote = isNum(it.quote) && it.quote > 0 ? Number(it.quote) : null;
+    return l;
+  });
+  S.market = q.market || 'municipal';
+  $$('#in-market button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.market === S.market)));
+  fillMarketLists();
+  const ow = ownerList().find(o => o.id === q.owner);
+  $('#in-owner').value = ow ? ow.label : (q.owner_text || '');
+  const wt = workTypeList().find(o => o.id === q.work_type);
+  $('#in-worktype').value = wt ? wt.label : (q.work_type_text || '');
+  $('#in-biddate').value = q.bid_date || '';
+  if (isNum(q.n_bidders)) { S.bidders.mode = 'user'; $('#in-bidders').value = q.n_bidders; }
+  else { S.bidders.mode = 'auto'; }
+  const wl = (doc.worksheet || {}).lines || [];
+  S.ws = { lines: {}, contingency: (doc.worksheet || {}).contingency_pct ?? null, refs: null, refsReq: null,
+    filter: false, open: {}, name: doc.name || (doc.worksheet || {}).project_name || '' };
+  wl.forEach(w => { S.ws.lines[w.row_id] = { your_unit: w.your_unit, src: w.src, src_label: w.src_label,
+    note: w.note || '', your_amount: w.your_amount }; });
+  clearResult();
+  renderGrid();
+  renderQuotes();
+  renderOwnerSet();
+  await classifyAll();
+  await runEstimate();
+  toast('Worksheet reopened' + (doc.saved_at ? ' (saved ' + doc.saved_at + ')' : '')
+    + '; the model was re-run on today’s data, your prices are as saved.', 'ok', 7000);
+}
+
+function initWorksheet() {
+  $('#ws-filter').addEventListener('change', e => { S.ws.filter = e.target.checked; renderWorksheet(S.result); });
+  $('#ws-save').addEventListener('click', wsSave);
+  $('#ws-open').addEventListener('click', wsOpen);
+  $('#ws-xlsx').addEventListener('click', () => wsExport('xlsx'));
+  $('#ws-csv').addEventListener('click', () => wsExport('csv'));
+  $('#ws-json').addEventListener('click', () => {
+    if (!S.result) return;
+    const d = Object.assign(wsDoc(), { saved_at: new Date().toISOString().slice(0, 19), name: S.ws.name || '' });
+    saveBlob(new Blob([JSON.stringify(d, null, 1)], { type: 'application/json' }), 'opcc_worksheet.json');
+  });
+  $('#ws-upload').addEventListener('change', async e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    $('#modal-host').innerHTML = '';
+    if (!f) return;
+    try { await wsRestore(JSON.parse(await f.text())); }
+    catch (err) { toast('Not a worksheet file: ' + err.message, 'err'); }
+  });
+}
+
+function resultRow(l, judg) {
+  judg = judg || wsJudgment(l);
+  const w = wsLine(l);
+  const tr = el('tr', { 'data-line': l.row_id, class: 'st-' + l.status
+    + (l.amount_missing ? ' st-amount-missing' : '') + (judg.length ? ' judgrow' : '') });
+  const toggle = () => {
     const d = $('tr[data-detail="' + CSS.escape(l.row_id) + '"]');
     if (!d) return;
     const open = d.style.display === 'none';
     d.style.display = open ? 'table-row' : 'none';
+    S.ws.open[l.row_id] = open;
     const host = $('[data-refs="' + CSS.escape(l.row_id) + '"]', d);
     if (open && host && !host.dataset.loaded && !host.dataset.loading) {
       host.dataset.loading = '1';
       loadReferences(l, host).finally(() => { delete host.dataset.loading; });
     }
-  });
+  };
   const tags = [];
-  if (l.status === 'not_covered' || l.status === 'not_covered_whole') tags.push(el('span', { class: 'badge unc', text: 'not covered' }));
+  if (judg.length) tags.push(el('span', { class: 'badge judg', title: 'The model is weak here: ' + judg.join('; '),
+    text: 'needs your judgment: ' + judg.join(', ') }));
   if (l.status === 'owner_set') tags.push(el('span', { class: 'badge allow', text: 'owner-set' }));
-  if (l.amount_missing) tags.push(el('span', { class: 'badge missing', text: 'allowance amount missing' }));
-  if (l.lowconf_class && l.status === 'priced') tags.push(el('span', { class: 'badge lowc', text: 'low confidence' }));
-  if (l.status === 'unpriced') tags.push(el('span', { class: 'badge no', text: 'not priced' }));
   tr.appendChild(el('td', { class: 'dim', text: l.item_no }));
-  tr.appendChild(el('td', {}, [el('span', { text: l.description }), tags.length ? el('span', { class: 'tags' }, tags) : null]));
   tr.appendChild(el('td', {}, [
-    el('span', { class: 'fam' + (l.family_overridden ? ' over' : ''), text: l.family_label }),
-    l.size_bucket ? el('span', { class: 'size', text: l.size_bucket }) : null,
-  ]));
+    el('button', { class: 'btn ghost sm twisty', type: 'button', title: 'References behind this price',
+      text: S.ws.open[l.row_id] ? '▾' : '▸', onclick: e => { toggle();
+        e.target.textContent = S.ws.open[l.row_id] ? '▾' : '▸'; } }),
+    el('span', { text: l.description }),
+    el('div', { class: 'dim small', text: l.family_label + (l.size_bucket ? ' · ' + l.size_bucket : '')
+      + (l.basis ? ' · ' + l.basis : '') }),
+    tags.length ? el('span', { class: 'tags' }, tags) : null]));
   tr.appendChild(el('td', { class: 'num money', text: qtyFmt(l.quantity) }));
   tr.appendChild(el('td', { text: l.unit }));
-  tr.appendChild(el('td', { class: 'num money', text: l.unit_price_p50 ? rate(l.unit_price_p50) : '—' }));
-  tr.appendChild(el('td', { class: 'num money p50', text: l.amount_p50 ? money(l.amount_p50)
-    : (l.status === 'not_covered' && l.quote ? '(' + money(l.quote) + ')' : '—'),
-    title: l.status === 'not_covered' && l.quote ? 'vendor quote, not in P50' : '' }));
-  tr.appendChild(el('td', { class: 'basis', text: l.basis, title: (l.why || []).join('\n') }));
+  tr.appendChild(el('td', { class: 'num money', text: l.unit_price_p50 ? rate(l.unit_price_p50)
+    : l.status === 'owner_set' ? 'owner-set' : '—' }));
+  const x = wsRefs(l);
+  tr.appendChild(el('td', { class: 'num money', title: x && x.range ? 'Median-bidder unit prices of '
+      + x.n_refs + ' reference project(s), escalated to ' + x.to_year + ' dollars' : '' },
+    !S.ws.refs ? el('span', { class: 'dim', text: '…' }) : (x && x.range ? [
+      el('div', { text: rate(x.range.low) + ' – ' + rate(x.range.high) }),
+      el('div', { class: 'dim', text: 'median ' + rate(x.range.median) + ' · ' + x.n_refs + ' ref' + (x.n_refs === 1 ? '' : 's') }),
+    ] : el('span', { class: 'dim', text: x && x.special ? '—' : 'none' }))));
   tr.appendChild(el('td', {}, accBadge(l.accuracy)));
-  const w = l.warnings || [];
-  tr.appendChild(el('td', {}, w.length ? el('div', { class: 'flags' }, w.map(x =>
-    el('span', { class: 'flag ' + x.level, text: x.text }))) : null));
+  // your unit price
+  const locked = l.status === 'owner_set' || w.src === 'quote';
+  const inp = el('input', { class: 'cellinput num yourp' + (isNum(w.your_unit) || locked ? '' : ' flag'), type: 'text',
+    value: locked ? '' : (isNum(w.your_unit) ? Number(w.your_unit).toFixed(2) : ''),
+    placeholder: locked ? (l.status === 'owner_set' ? 'owner-set' : 'vendor quote') : 'your $/unit',
+    disabled: locked,
+    onchange: e => {
+      const v = parseNum(e.target.value);
+      w.your_unit = isNum(v) ? v : null;
+      w.src = isNum(v) ? 'you' : '';
+      w.src_label = isNum(v) ? 'your price' : '';
+      renderWorksheet(S.result);
+    } });
+  const picks = wsPicks(l);
+  const sel = locked || !picks.length ? null : el('select', { class: 'pick', title: 'Quick picks',
+    onchange: e => {
+      const pk = picks.find(p => p.v === e.target.value);
+      if (!pk) return;
+      w.your_unit = pk.price;
+      w.src = pk.v === 'model' ? 'model' : pk.v;
+      w.src_label = pk.label;
+      if (pk.note && !w.note) w.note = pk.note;
+      renderWorksheet(S.result);
+    } }, [el('option', { value: '', text: 'pick…' })].concat(picks.map(p => el('option', { value: p.v, text: p.label,
+      selected: w.src === p.v && Math.abs((w.your_unit || 0) - p.price) < 1e-9 }))));
+  tr.appendChild(el('td', {}, [el('div', { class: 'yourcell' }, [inp, sel]),
+    w.src_label && w.src !== 'model' ? el('div', { class: 'dim small', text: w.src_label }) : null]));
+  const amt = wsAmount(l, w);
+  tr.appendChild(el('td', { class: 'num money p50', text: amt === null ? '—' : money(amt) }));
+  tr.appendChild(el('td', {}, el('input', { class: 'cellinput note', type: 'text', value: w.note || '',
+    placeholder: 'note', onchange: e => { w.note = e.target.value; } })));
   return tr;
 }
 
@@ -1269,6 +1970,201 @@ async function loadReferences(l, host, tries) {
     host.innerHTML = '';
     host.appendChild(notice('caution', 'Could not load the references', String(e.message || e)));
   }
+}
+
+/* ------------------------------------------ project sources and full bids */
+
+// Under every project name: the public page it came from (http(s) only,
+// opens in a new tab, host in the label, full URL in the tooltip), else "no
+// public link recorded"; plus the local copy under data/external when the
+// server has it.
+function safeHttp(u) { return /^https?:\/\/[^\s]+$/i.test(String(u || '')) ? String(u) : ''; }
+
+function srcLinks(src) {
+  src = src || {};
+  const url = safeHttp(src.url);
+  const kids = [];
+  if (url) {
+    kids.push(el('a', { class: 'srclink', href: url, target: '_blank', rel: 'noopener noreferrer',
+      title: url, text: 'Source: ' + (src.host || 'public page') + (src.kind ? ' \u2014 ' + src.kind : '') }));
+  } else {
+    kids.push(el('span', { class: 'dim', text: 'no public link recorded' }));
+  }
+  if (src.local_path) {
+    kids.push(el('a', { class: 'srclink local', target: '_blank', rel: 'noopener',
+      href: '/api/source-file?path=' + encodeURIComponent(src.local_path),
+      title: 'The original file as harvested: data/' + src.local_path,
+      text: 'local copy' + (src.local_kind ? ' (' + src.local_kind + ')' : '') }));
+  }
+  return el('div', { class: 'srclinks' }, kids);
+}
+
+const qClose = (a, b) => isNum(a) && isNum(b)
+  && Math.abs(a - b) <= 0.005 * Math.max(Math.abs(a), Math.abs(b), 1e-9);
+
+// marks: [{test(line) -> bool, ours: {item_no, description}, nums: {low, median, p50, unit}}]
+function markLines(v, marks) {
+  const out = new Map();
+  (marks || []).forEach(m => {
+    let hits = v.lines.map((ln, i) => [ln, i]).filter(([ln]) => m.test(ln, true));
+    if (!hits.length) hits = v.lines.map((ln, i) => [ln, i]).filter(([ln]) => m.test(ln, false));
+    hits.forEach(([, i]) => { if (!out.has(i)) out.set(i, []); out.get(i).push(m); });
+  });
+  return out;
+}
+
+function bidTabView(v, marks, opts) {
+  opts = opts || {};
+  const marked = markLines(v, marks);
+  const bidders = v.bidders || [];
+  const ee = v.engineer_estimate;
+  const st = { only: false };
+  const box = el('div', { class: 'bidtab' });
+  const head = el('div', { class: 'bthead' }, [
+    el('div', { class: 'btname', text: v.project }),
+    v.title && v.title !== v.project ? el('div', { class: 'simtitle', title: v.title, text: v.title }) : null,
+    srcLinks(v.source),
+    el('div', { class: 'simsub', text: [v.owner, v.date, v.work_type || 'work type not given',
+      v.n_bidders + ' bidder' + (v.n_bidders === 1 ? '' : 's'), v.lines.length + ' line items'].join(' \u00b7 ') }),
+  ]);
+  box.appendChild(head);
+  box.appendChild(el('div', { class: 'bttotals' }, bidders.map((b, k) => el('span', {
+    class: 'bttot' + (b.low ? ' low' : ''), title: b.priced_lines + ' priced line(s)' }, [
+      el('span', { class: 'n', text: (k + 1) + '. ' + b.name }),
+      el('span', { class: 'v', text: money(b.total) + (b.low ? ' \u00b7 low bid' : '') }),
+    ])).concat(ee ? [el('span', { class: 'bttot ee', title: ee.label }, [
+      el('span', { class: 'n', text: 'Engineer\u2019s estimate (printed; never an input)' }),
+      el('span', { class: 'v', text: money(ee.total) }),
+    ])] : [])));
+  const tools = el('div', { class: 'row-actions bttools' }, [
+    el('a', { class: 'btn sm', href: '/api/letting/csv?key=' + encodeURIComponent(v.key), text: 'Download CSV' }),
+    marked.size ? el('label', { class: 'chk' }, [
+      el('input', { type: 'checkbox', onchange: e => { st.only = e.target.checked; paint(); } }),
+      document.createTextNode(' matched lines only (' + marked.size + ')'),
+    ]) : null,
+    el('span', { class: 'dim', text: v.note || '' }),
+  ]);
+  box.appendChild(tools);
+  const wrap = el('div', { class: 'btwrap' });
+  box.appendChild(wrap);
+  function paint() {
+    wrap.innerHTML = '';
+    const ths = [el('th', { text: '' }), el('th', { text: 'Item' }), el('th', { text: 'Description (as written)' }),
+      el('th', { text: 'Unit' }), el('th', { class: 'num', text: 'Qty' })]
+      .concat(bidders.map(b => el('th', { class: 'num' + (b.low ? ' lowcol' : ''), title: b.name }, [
+        el('div', { text: b.name.length > 22 ? b.name.slice(0, 21) + '\u2026' : b.name }),
+        el('div', { class: 'dim', text: money(b.total) }),
+      ])))
+      .concat([el('th', { class: 'num', text: 'Median $/unit' })])
+      .concat(ee ? [el('th', { class: 'num eecol', title: ee.label, text: 'Engineer\u2019s est. (printed)' })] : []);
+    const body = el('tbody', {});
+    v.lines.forEach((ln, i) => {
+      const ms = marked.get(i);
+      if (st.only && !ms) return;
+      const desc = el('td', { class: 'btdesc' }, [el('div', { text: ln.description })]);
+      (ms || []).forEach(m => desc.appendChild(el('div', { class: 'btmatch' }, [
+        el('span', { class: 'mk', text: '\u2194 your ' + (m.ours.item_no ? m.ours.item_no + ' ' : '')
+          + (m.ours.description || '') }),
+        el('span', { class: 'nums', text: ['their low ' + rate(m.nums.low), 'their median ' + rate(m.nums.median),
+          'our P50 ' + rate(m.nums.p50)].join(' \u00b7 ') + (m.nums.unit ? ' /' + m.nums.unit : '') }),
+      ])));
+      const tds = [
+        el('td', { class: 'btmk', text: ms ? '\u25b6' : '' }),
+        el('td', { text: ln.item_no }), desc, el('td', { text: ln.unit }),
+        el('td', { class: 'num', text: qtyFmt(ln.quantity) }),
+      ].concat(ln.prices.map((p, k) => el('td', { class: 'num' + (bidders[k] && bidders[k].low ? ' lowcol' : '') },
+        p ? [el('div', { text: rate(p.unit_price) }), el('div', { class: 'dim', text: money(p.amount) })] : '\u2014')))
+        .concat([el('td', { class: 'num', text: rate(ln.median_unit) })])
+        .concat(ee ? [el('td', { class: 'num eecol' }, ln.ee
+          ? [el('div', { text: rate(ln.ee.unit_price) }), el('div', { class: 'dim', text: money(ln.ee.amount) })]
+          : '\u2014')] : []);
+      body.appendChild(el('tr', { class: ms ? 'hl' : '' }, tds));
+    });
+    const foot = el('tr', { class: 'tot' }, [el('td', {}), el('td', {}), el('td', { text: 'Total' }),
+      el('td', {}), el('td', {})].concat(bidders.map(b => el('td', { class: 'num strong' + (b.low ? ' lowcol' : ''),
+        text: money(b.total) }))).concat([el('td', {})]).concat(ee ? [el('td', { class: 'num eecol', text: money(ee.total) })] : []));
+    wrap.appendChild(el('table', { class: 'mini btgrid' }, [el('thead', {}, el('tr', {}, ths)), body,
+      el('tfoot', {}, foot)]));
+    if (opts.onPaint) opts.onPaint();
+  }
+  paint();
+  return box;
+}
+
+const BT = { cache: {} };
+async function fetchBidTab(key, tries) {
+  if (BT.cache[key]) return BT.cache[key];
+  try {
+    const v = await api('/api/letting?key=' + encodeURIComponent(key));
+    BT.cache[key] = v;
+    return v;
+  } catch (e) {
+    if (e.status === 503 && (tries || 0) < 10) {
+      await new Promise(r => setTimeout(r, 1500));
+      return fetchBidTab(key, (tries || 0) + 1);
+    }
+    throw e;
+  }
+}
+
+async function showBidTab(host, key, marks, fallback) {
+  host.innerHTML = '';
+  host.appendChild(el('span', { class: 'dim', html: '<span class="spinner"></span> loading the full bid tabulation\u2026' }));
+  try {
+    const v = await fetchBidTab(key);
+    host.innerHTML = '';
+    host.appendChild(bidTabView(v, marks));
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(notice('caution', 'Could not load the full bid', String(e.message || e)));
+    if (fallback) host.appendChild(fallback());
+  }
+}
+
+function openBidTab(key, title, marks) {
+  const host = $('#modal-host');
+  const inner = el('div', {});
+  function close() { host.innerHTML = ''; document.removeEventListener('keydown', onKey); }
+  function onKey(e) { if (e.key === 'Escape') close(); }
+  document.addEventListener('keydown', onKey);
+  const back = el('div', { class: 'modal-back', onclick: e => { if (e.target === back) close(); } },
+    el('div', { class: 'modal wide' }, [
+      el('header', {}, [el('h3', { text: 'Full bid tabulation: ' + title }),
+        el('button', { class: 'btn sm close', text: 'Close', onclick: close })]),
+      el('div', { class: 'mbody' }, inner),
+    ]));
+  host.innerHTML = '';
+  host.appendChild(back);
+  showBidTab(inner, key, marks);
+}
+
+// the reference row's lines in that letting, as marks for the full bid
+function refMarks(r, x) {
+  const rep = r.reproduced || {};
+  const p50 = rep.trace_price && r.scale_to_p50 ? rep.trace_price * r.scale_to_p50 : null;
+  return (x.match || []).map(mt => ({
+    test: (ln, strict) => ln.dn === mt.dn
+      && (!strict || (String(ln.unit).toUpperCase() === String(mt.unit).toUpperCase()
+        && (mt.quantity === null || qClose(ln.quantity, mt.quantity)))),
+    ours: { item_no: r.item_no, description: r.description },
+    nums: { low: x.low_unit, median: x.median_unit, p50, unit: r.unit },
+  }));
+}
+
+// a similar card's matched lines, as marks for the full bid
+function cardMarks(c) {
+  return (c.matched_lines || []).map(m => ({
+    test: (ln, strict) => ln.dn === m.their_dn && (!strict || (ln.item_no === m.their_item_no
+      && String(ln.unit).toUpperCase() === String(m.their_unit).toUpperCase()
+      && qClose(ln.quantity, m.their_quantity))),
+    ours: { item_no: m.item_no, description: m.description },
+    nums: { low: m.their_low_unit, median: m.their_median_unit, p50: m.our_unit_p50, unit: m.unit },
+  }));
+}
+
+function projLink(text, onclick, title) {
+  return el('a', { class: 'projlink', href: '#', title: title || 'Open the full bid tabulation',
+    text, onclick: e => { e.preventDefault(); onclick(); } });
 }
 
 const REF_COLS = [
@@ -1337,9 +2233,10 @@ function referencesView(r) {
         el('td', { colspan: REF_COLS.length + 1 }, bidsTable(x)));
       body.appendChild(el('tr', {}, [
         el('td', { class: 'nowrap', text: x.date }),
-        el('td', { title: (x.title || '') + (x.source && x.source.url ? '\n' + x.source.url : '') }, [
-          el('div', { text: x.project }),
+        el('td', { title: x.title || '' }, [
+          el('div', {}, projLink(x.project, () => openBidTab(x.key, x.project, refMarks(r, x)))),
           el('div', { class: 'dim', text: x.owner + (x.same_owner ? ' (same owner)' : '') }),
+          srcLinks(x.source),
         ]),
         el('td', { class: 'num', text: x.bidders || '—' }),
         el('td', { class: 'num', text: money(x.low_total) }),
@@ -1379,6 +2276,7 @@ function bidsTable(x) {
   return el('div', { class: 'bidsbox' }, [
     el('div', { class: 'dim', text: x.project + ' · ' + x.date + ' · '
       + (x.source && x.source.document ? x.source.document : '') }),
+    srcLinks(x.source),
     el('table', { class: 'mini' }, [
       el('thead', {}, el('tr', {}, ['Bidder', 'Qty', '$/unit', ''].map((t, k) =>
         el('th', { class: k === 1 || k === 2 ? 'num' : '', text: t })))),
@@ -1433,14 +2331,17 @@ function simCard(c, r, detail, grid) {
     + pct(f.overlap) + ' × size ' + f.size.toFixed(2) + ' × same owner '
     + f.same_owner.toFixed(1) + ' × same work type ' + f.same_work_type.toFixed(1)
     + ' × age ' + f.age.toFixed(2) + ' (' + f.age_years.toFixed(1) + ' years before)' : '';
-  const btn = el('button', { class: 'btn sm', text: 'Matched lines (' + (c.matched_lines || []).length + ')' });
+  const nm = (c.matched_lines || []).length;
+  const btn = el('button', { class: 'btn sm', text: 'Full bid' + (nm ? ' \u00b7 ' + nm + ' matched' : ''),
+    title: 'Every line and every bidder of this letting, our matched lines highlighted' });
   const card = el('div', { class: 'simcard' }, [
     el('div', { class: 'simtop' }, [
       el('span', { class: 'rank', text: c.rank }),
       el('span', { class: 'own', text: c.owner }),
       el('span', { class: 'dim', text: c.date }),
     ]),
-    el('div', { class: 'simname', title: c.key, text: c.project }),
+    el('div', { class: 'simname', title: c.key },
+      projLink(c.project, () => openBidTab(c.key, c.project, cardMarks(c)))),
     showTitle ? el('div', { class: 'simtitle', title: c.title, text: c.title }) : null,
     el('div', { class: 'simsub', text: (c.work_type || 'work type not given') + ' · '
       + c.bidders + ' bidder' + (c.bidders === 1 ? '' : 's') }),
@@ -1461,9 +2362,8 @@ function simCard(c, r, detail, grid) {
           + 'their lines ' + pct(at.matched_share) + ')' : '—' }),
     ]),
     el('div', { class: 'simsrc' }, [
-      el('span', { class: 'dim', text: 'Source: ' }),
-      document.createTextNode(c.source.document || c.key),
-      c.source.url ? el('div', { class: 'url', text: c.source.url }) : null,
+      el('div', { class: 'dim', text: c.source.document || c.key }),
+      srcLinks(c.source),
     ]),
     el('div', { class: 'simfoot' }, [btn,
       el('span', { class: 'dim', title: simTip, text: 'score ' + (isNum(c.similarity) ? c.similarity.toFixed(2) : '—') })]),
@@ -1474,7 +2374,11 @@ function simCard(c, r, detail, grid) {
     detail.innerHTML = '';
     if (open) return;
     card.classList.add('sel');
-    detail.appendChild(matchedTable(c));
+    detail.appendChild(el('h5', { text: '#' + c.rank + ' ' + c.project + ' \u2014 the whole bid, '
+      + 'our matched lines highlighted' }));
+    const inner = el('div', {});
+    detail.appendChild(inner);
+    showBidTab(inner, c.key, cardMarks(c), () => matchedTable(c));
   });
   return card;
 }
@@ -1593,6 +2497,8 @@ async function uploadBidtab(file) {
 function boot() {
   initTheme();
   initInput();
+  initClaude();
+  initWorksheet();
   initProject();
   initExport();
   renderStatusBar();

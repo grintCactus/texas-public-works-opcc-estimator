@@ -167,6 +167,38 @@ class _Index:
             [upstream.extract_size_in(upstream.norm_desc(t)) or np.nan
              for t in txdot_text], dtype=float)
 
+        # Postings (token -> rows that contain it). A row that shares no
+        # token with the query scores 0 and is skipped anyway, so scoring
+        # only the rows in the query's postings gives exactly the same
+        # candidates -- about 10x faster, which lets every takeoff line be
+        # checked for a weak match when it is classified.
+        self.vocab_post = self._postings(self.vocab_tokens)
+        self.txdot_post = self._postings(self.txdot_tokens)
+        # evidence depth per row as plain floats (the same `float(x or 0)`
+        # the scorer applied to each row before)
+        self.vocab_nproj = [float(x or 0) for x in
+                            self.vocab["n_projects"].tolist()] \
+            if "n_projects" in self.vocab.columns else [0.0] * len(self.vocab)
+        self.txdot_nlet = [float(x or 0) for x in
+                           self.txdot["n_lettings"].tolist()] \
+            if "n_lettings" in self.txdot.columns else [0.0] * len(self.txdot)
+
+    @staticmethod
+    def _postings(token_sets) -> Dict[str, List[int]]:
+        post: Dict[str, List[int]] = {}
+        for i, ts in enumerate(token_sets):
+            for t in ts:
+                post.setdefault(t, []).append(i)
+        return post
+
+    @staticmethod
+    def rows_for(post: Dict[str, List[int]], q_tokens: set) -> List[int]:
+        """Rows sharing at least one token with the query, in row order."""
+        rows = set()
+        for t in q_tokens:
+            rows.update(post.get(t, ()))
+        return sorted(rows)
+
     def weight(self, t: str) -> float:
         return self.idf.get(t, self._default_idf)
 
@@ -290,11 +322,14 @@ def _score(desc: str, unit: str, limit: int) -> List[Candidate]:
     q_unit = upstream.norm_unit(unit).upper() if unit else ""
     q_fam = upstream.item_family(dn)
 
-    out: List[Candidate] = []
+    # Every row is scored first and only the rows that make the cut become
+    # Candidate objects. The sort key (-score, source, row) is the order the
+    # old stable sort over [vocabulary rows..., TxDOT rows...] produced.
+    scored: List[tuple] = []
 
     # --- vocabulary (city bid tabs: the DFW-local evidence) ----------------
     v = idx.vocab
-    for i in range(len(v)):
+    for i in idx.rows_for(idx.vocab_post, q_tokens):
         s = _overlap(q_tokens, idx.vocab_tokens[i], idx)
         if s < 0.12:
             continue
@@ -308,26 +343,14 @@ def _score(desc: str, unit: str, limit: int) -> List[Candidate]:
                 # A different unit usually means a different pay item, but the
                 # user's unit may also just be the typo. Penalise, don't drop.
                 s *= 0.62
-        row = v.iloc[i]
-        n_proj = float(row.get("n_projects") or 0)
         # Thin evidence must not outrank a well-supported near-equal match.
-        s *= _evidence_multiplier(n_proj)
-        out.append(Candidate(
-            key="vocab::%d" % i,
-            kind="vocabulary",
-            label=str(row.get("example_description") or row.get("desc_norm") or ""),
-            unit=cu,
-            item_family=str(row.get("item_family") or ""),
-            score=min(1.0, s),
-            method="desc_overlap",
-            n_projects=n_proj,
-            median_price=_f(row.get("pooled_median_price")),
-            detail="%d projects, %s" % (int(n_proj), cu),
-        ))
+        s *= _evidence_multiplier(idx.vocab_nproj[i])
+        sc = min(1.0, s)
+        scored.append((-sc, 0, i, sc))
 
     # --- TxDOT price book --------------------------------------------------
     t = idx.txdot
-    for i in range(len(t)):
+    for i in idx.rows_for(idx.txdot_post, q_tokens):
         s = _overlap(q_tokens, idx.txdot_tokens[i], idx)
         if s < 0.12:
             continue
@@ -336,27 +359,48 @@ def _score(desc: str, unit: str, limit: int) -> List[Candidate]:
         cu = idx.txdot_units[i]
         if q_unit:
             s = min(1.0, s + 0.10) if cu == q_unit else s * 0.62
-        row = t.iloc[i]
         # TxDOT is statewide highway work; for a DFW municipal channel job it
         # is weaker evidence than the city tabs, so it starts slightly behind.
         s *= 0.92
-        n_let = float(row.get("n_lettings") or 0)
-        s *= _evidence_multiplier(n_let)
-        out.append(Candidate(
-            key="txdot::%d" % i,
-            kind="txdot",
-            label=str(row.get("description") or row.get("item_no") or ""),
-            unit=cu,
-            item_family="",
-            score=min(1.0, s),
-            method="desc_overlap",
-            n_projects=n_let,
-            median_price=_f(row.get("price_median")),
-            detail="%d TxDOT lettings, %s" % (int(n_let), cu),
-        ))
+        s *= _evidence_multiplier(idx.txdot_nlet[i])
+        sc = min(1.0, s)
+        scored.append((-sc, 1, i, sc))
 
-    out.sort(key=lambda c: -c.score)
-    out = out[:limit]
+    scored.sort(key=lambda x: x[:3])
+    out: List[Candidate] = []
+    for _, src, i, sc in scored[:limit]:
+        if src == 0:
+            row = v.iloc[i]
+            cu = idx.vocab_units[i]
+            n_proj = float(row.get("n_projects") or 0)
+            out.append(Candidate(
+                key="vocab::%d" % i,
+                kind="vocabulary",
+                label=str(row.get("example_description") or row.get("desc_norm") or ""),
+                unit=cu,
+                item_family=str(row.get("item_family") or ""),
+                score=sc,
+                method="desc_overlap",
+                n_projects=n_proj,
+                median_price=_f(row.get("pooled_median_price")),
+                detail="%d projects, %s" % (int(n_proj), cu),
+            ))
+        else:
+            row = t.iloc[i]
+            cu = idx.txdot_units[i]
+            n_let = float(row.get("n_lettings") or 0)
+            out.append(Candidate(
+                key="txdot::%d" % i,
+                kind="txdot",
+                label=str(row.get("description") or row.get("item_no") or ""),
+                unit=cu,
+                item_family="",
+                score=sc,
+                method="desc_overlap",
+                n_projects=n_let,
+                median_price=_f(row.get("price_median")),
+                detail="%d TxDOT lettings, %s" % (int(n_let), cu),
+            ))
 
     # --- family fallback ---------------------------------------------------
     # Always offered, even when a description match scored well: it is the

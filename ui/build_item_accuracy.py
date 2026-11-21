@@ -33,12 +33,20 @@ main session has re-run the line-accuracy pass (fwd_rec.py, join_mob.py):
     .venv/bin/python ui/build_item_accuracy.py
     .venv/bin/python ui/build_item_accuracy.py LINES_CSV FWD_REC_JSON
 
+The group labels are read from gen_readme_items.py itself (its LAB and
+TX_LAB dicts, parsed, not executed), so a new family gets the README's name
+without an edit here. After writing, every published group is checked
+against the README's own item tables (label, lines, lettings and every
+percentage as the README prints them); a mismatch is reported and the exit
+code is 1.
+
 Reads only; writes ui/item_accuracy.json and nothing else. The inputs hold
 public (external) lettings only.
 """
 
 from __future__ import annotations
 
+import ast
 import collections
 import csv
 import datetime as _dt
@@ -46,14 +54,17 @@ import hashlib
 import json
 import math
 import os
+import re
 import statistics as st
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 ACC_DIR = os.path.join(ROOT, "handoff", "scratchpad", "line_accuracy", "out")
-DEFAULT_LINES = os.path.join(ACC_DIR, "mob_lines_28.csv")
-DEFAULT_FWD = os.path.join(ACC_DIR, "fwd_rec_28.json")
+DEFAULT_LINES = os.path.join(ACC_DIR, "mob_lines_29.csv")
+DEFAULT_FWD = os.path.join(ACC_DIR, "fwd_rec_29.json")
+GEN_README = os.path.join(os.path.dirname(ACC_DIR), "gen_readme_items.py")
+README = os.path.join(ROOT, "README.md")
 OUT = os.path.join(HERE, "item_accuracy.json")
 
 MIN_LINES, MIN_LETTINGS = 40, 15
@@ -111,8 +122,52 @@ LABELS = {
     "cleaning_desilting": "Cleaning / desilting",
     "site_prep_clearing": "Site preparation / clearing",
 }
+LABELS.update({
+    "geotextile": "Geotextile / filter fabric",
+    "landscape_planting": "Landscape planting",
+    "landscape_material": "Landscape materials (mulch, compost, stone)",
+    "bypass_pumping": "Bypass pumping", "adjust_to_grade": "Adjust to grade",
+    "concrete_repair": "Concrete repair", "bridge_concrete": "Bridge concrete",
+    "fire_hydrant": "Fire hydrants", "valve_assembly": "Valve assemblies",
+    "trm": "Turf reinforcement mat", "gabion_wall": "Gabion walls",
+    "gabion_mattress": "Gabion mattresses",
+    "rock_anchor": "Soil nails / rock anchors", "pipe_bursting": "Pipe bursting",
+    "sawcut": "Saw cutting", "painting": "Painting", "pavers": "Pavers",
+    "manhole_extra_depth": "Manhole extra depth",
+    "flowable_fill": "Flowable fill", "grading": "Grading",
+    "cleaning": "Cleaning", "railing_misc": "Railing", "mowing": "Mowing",
+    "shoring_misc": "Shoring",
+})
 TX_LABELS = {"traffic_control": "Traffic control (per month)",
              "site_prep_clearing": "Preparing right of way / clearing"}
+
+
+def readme_labels(path=GEN_README):
+    """(LAB, TX_LAB) from the README generator, parsed with ast -- never
+    executed (it reads sys.argv at import). None when it is not there."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            tree = ast.parse(fh.read(), path)
+    except (OSError, SyntaxError):
+        return None
+    found = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and \
+                isinstance(node.targets[0], ast.Name) and \
+                node.targets[0].id in ("LAB", "TX_LAB"):
+            try:
+                found[node.targets[0].id] = ast.literal_eval(node.value)
+            except ValueError:
+                return None
+    if "LAB" not in found:
+        return None
+    return found["LAB"], found.get("TX_LAB", {})
+
+
+_GEN = readme_labels()
+if _GEN:
+    LABELS = dict(LABELS, **_GEN[0])
+    TX_LABELS = dict(TX_LABELS, **_GEN[1])
 
 
 def _f(x):
@@ -237,6 +292,53 @@ def build(lines_csv, fwd_json):
     }
 
 
+def _pct(v):
+    """The README's percentage format (gen_readme_items.pct)."""
+    return ">1000%" if v > 10 else "%.0f%%" % (100 * v)
+
+
+def check_readme(doc, readme=README):
+    """Every published group against the README's item tables: the same
+    groups, and per group the label, lines, lettings and every figure as the
+    README prints it. Returns a list of differences (empty: they match)."""
+    try:
+        text = open(readme, encoding="utf-8").read()
+    except OSError as e:
+        return ["README not readable: %s" % e]
+    diffs = []
+    for m, head in (("municipal", "City / municipal (DFW)"),
+                    ("txdot", "TxDOT (DFW counties)")):
+        mm = re.search(r"^#+ %s, [^\n]*\n(.*?)(?=^#|\Z)" % re.escape(head),
+                       text, re.S | re.M)
+        if not mm:
+            diffs.append("%s: no table in the README" % m)
+            continue
+        rows = {}
+        for ln in mm.group(1).splitlines():
+            cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+            if len(cells) == 9 and cells[1].isdigit():
+                rows[cells[0]] = cells[1:]
+        d = (doc["markets"].get(m) or {}).get("groups", {})
+        mine = {}
+        for g in d.values():
+            if g["published"]:
+                mine[g["label"]] = [
+                    str(g["lines"]), str(g["lettings"]),
+                    "%.1f%%" % (100 * g["share_of_dollars"]),
+                    _pct(g["half_within"]), _pct(g["dollar_weighted"]),
+                    "%.2f" % g["ratio"], _pct(g["within_20"]),
+                    _pct(g["low_vs_median"]) if g["low_vs_median"] is not None
+                    else ""]
+        for lab in sorted(set(rows) | set(mine)):
+            if lab not in rows:
+                diffs.append("%s: %r is published here, not in the README" % (m, lab))
+            elif lab not in mine:
+                diffs.append("%s: %r is in the README, not published here" % (m, lab))
+            elif rows[lab] != mine[lab]:
+                diffs.append("%s: %r README %s vs here %s" % (m, lab, rows[lab], mine[lab]))
+    return diffs
+
+
 def main(argv):
     lines_csv = argv[1] if len(argv) > 2 else DEFAULT_LINES
     fwd_json = argv[2] if len(argv) > 2 else DEFAULT_FWD
@@ -257,6 +359,16 @@ def main(argv):
                                  len(d["groups"]), pub,
                                  100 * d["all"]["half_within"]))
     print("-> %s" % _rel(OUT))
+    diffs = check_readme(doc)
+    if diffs:
+        print("README item tables differ in %d place(s):" % len(diffs))
+        for x in diffs[:40]:
+            print("  " + x)
+        return 1
+    n = sum(1 for d in doc["markets"].values() for g in d["groups"].values()
+            if g["published"])
+    print("README check: all %d published groups match the README's item "
+          "tables" % n)
     return 0
 
 
