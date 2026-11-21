@@ -804,6 +804,15 @@ html[data-public="1"] .local-only { display: none !important; }
 /* a bidder's whole name in a bid table header, wrapped */
 table.btgrid th .bname { white-space: normal; overflow-wrap: anywhere; min-width: 90px; max-width: 160px;
   margin-left: auto; }
+/* subtotal, then the contingency below it, then the total (headline cards
+   and the worksheet's foot) */
+.csplit { display: grid; grid-template-columns: max-content max-content; gap: 1px 14px;
+  margin: 2px 0 6px; font-size: 12.5px; color: var(--ink-dim); }
+.csplit .cv { font-family: var(--mono); text-align: right; color: var(--ink); }
+.bigcard .big.sum { border-top: 1px solid var(--line); padding-top: 3px; display: inline-block; }
+table.grid tfoot tr.wssub td { border-top: 1px solid var(--line); }
+table.grid tfoot tr.controw td, table.grid tfoot tr.wscont td { border-top: 0; font-weight: 400; }
+table.grid tfoot tr.wstotal td { border-top: 2px solid var(--ink-faint); font-size: 13.5px; }
 /* the blank takeoff template, at the top of the takeoff step */
 .tplbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 10px; }
 a.btn { display: inline-block; text-decoration: none; }

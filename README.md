@@ -34,7 +34,7 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
    - Market (city/county or TxDOT), owner, work type and bid date. If the owner or work type is not in the list, type it in.
    - Expected number of bidders: it is prefilled from similar past lettings, and you can change it.
    - The amounts of owner-set allowances; these are added at face value.
-   - A contingency line (a lump sum worded as a contingency) has no item type and is not priced from history. Pick its size from a list: 5–25% of the other lines (10% by default), or the owner's fixed amount when the bid form prints one.
+   - A contingency line (a lump sum worded as a contingency) has no item type and is not priced from history. Pick its size from a list: 5–25% of the subtotal (10% by default), or the owner's fixed amount when the bid form prints one.
    - Vendor quotes for specialty items the tool does not price (pumps, generators, prefabricated bridges, …).
 3. **Read the estimate.**
    - P50 (expected low bid) and P80 (a not-under OPCC), with their ranges, the market's track record and a plain explanation of what each means.
@@ -45,10 +45,10 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
    - The four most similar past projects are shown with their full bids.
 5. **Build your OPCC.**
    - In the worksheet, keep the model's unit price or pick one from the references, line by line. Add notes.
-   - A contingency line in the schedule is its share of your own other line amounts.
-   - Pick your own contingency from a list (0–25%): 10% by default, 0% when the schedule already carries a contingency line. It applies to your prices, not to owner-set allowances. The page shows how often an OPCC that high came in under the low bid on past jobs: in cities, P50 + 10% did on about 30% of jobs, and P80 on about 14%.
+   - The estimate is laid out as an OPCC: the items, then the **subtotal**, then the **contingency** below it, then the **total**. This holds for P50, for P80 and for your own OPCC. A contingency given as a percentage stays that percentage of the subtotal at P50 and at P80.
+   - Pick your own contingency from a list (0–25% of the subtotal): 10% by default, 0% when the schedule already carries a contingency line (then any extra shows as an additional contingency row). The page shows how often an OPCC that high came in under the low bid on past jobs: in cities, P50 + 10% did on about 30% of jobs, and P80 on about 14%.
    - "Your OPCC" is shown next to the model's P50 and P80.
-6. **Export** the worksheet to Excel or CSV, with your prices, notes and a references appendix.
+6. **Export** the worksheet to Excel or CSV, laid out the same way (items, subtotal, contingency, total), with your prices, notes and a references appendix.
 
 ![The estimate for a public creek-bank schedule: expected low bid (P50) and recommended OPCC (P80) with their ranges, and one line opened to the earlier public bids behind its price](assets/screenshot-estimate.png)
 

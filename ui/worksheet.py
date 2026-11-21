@@ -50,7 +50,7 @@ NOT_COVERED = ("not_covered", "not_covered_whole")
 
 
 def share_pct(line: dict) -> Optional[float]:
-    """The share of an owner-set line given as a share of the other lines
+    """The share of an owner-set line given as a share of the subtotal
     ("Contingency, 10%"), else None."""
     if line.get("status") != "owner_set":
         return None
@@ -58,17 +58,39 @@ def share_pct(line: dict) -> Optional[float]:
     return _f(sh.get("pct")) if isinstance(sh, dict) else None
 
 
+#: The server's rule for a contingency (engine_production.contingency_worded),
+#: for a result saved before it marked its lines `below_subtotal`.
+_CONTINGENCY = re.compile(r"contingenc", re.I)
+_LUMP = re.compile(r"^(?:|LS|L\.?\s*S\.?|L/S|LUMP(?:\s*SUM)?|ALLOW(?:ANCE)?"
+                   r"|ALW|ALLW|DOL|\$)$", re.I)
+
+
+def below_subtotal(line: dict) -> bool:
+    """A contingency: shown below the subtotal, not among the items (user,
+    2026-11-21: "first the subtotal, then the contingency, then the total")."""
+    if "below_subtotal" in line:
+        return bool(line.get("below_subtotal"))
+    if line.get("status") != "owner_set":
+        return False
+    if share_pct(line) is not None:
+        return True
+    u = str(line.get("unit") or "").strip()
+    lump = bool(_LUMP.match(u)) or (u.upper() in ("EA", "EACH")
+                                    and not ((_f(line.get("quantity")) or 0) > 1))
+    return lump and bool(_CONTINGENCY.search(line.get("description") or ""))
+
+
 def line_amount(line: dict, w: dict,
-                others: Optional[float] = None) -> Optional[float]:
+                subtotal: Optional[float] = None) -> Optional[float]:
     """The estimator's amount for one result line: owner-set money at face
     value, a vendor quote as given, else their unit price x the quantity. A
-    line given as a share of the other lines is that share of `others`, the
-    estimator's own other line amounts (owner-set money left out) -- in the
-    model's P50 it is the same share of the model's amounts."""
+    line given as a share is that share of `subtotal`, the estimator's own
+    amounts for every line that is not a contingency -- in the model's P50 it
+    is the same share of the model's subtotal."""
     if line.get("status") == "owner_set":
         pct = share_pct(line)
-        if pct is not None and others is not None:
-            return pct / 100.0 * others
+        if pct is not None and subtotal is not None:
+            return pct / 100.0 * subtotal
         return _f(line.get("fixed_amount"))
     if w.get("src") == "quote" and _f(w.get("your_amount")) is not None:
         return _f(w.get("your_amount"))
@@ -80,41 +102,45 @@ def line_amount(line: dict, w: dict,
 
 def totals(result: dict, ws: dict) -> dict:
     """Your OPCC from the worksheet lines, recomputed here (the browser's
-    arithmetic is never trusted), and its distance to the model's P50/P80."""
+    arithmetic is never trusted), laid out as the page lays it out: the
+    items' SUBTOTAL, then the contingency below it (the schedule's
+    contingency lines, and your own percentage, both on the subtotal), then
+    the TOTAL; and its distance to the model's P50/P80."""
     by = {str(w.get("row_id")): w for w in (ws.get("lines") or [])
           if isinstance(w, dict)}
-    # your amounts for every line that is not owner-set money: what a line
-    # given as a share of the other lines is a share of (as on the page)
-    others = 0.0
-    for l in result.get("lines") or []:
-        if l.get("status") != "owner_set":
-            a = line_amount(l, by.get(str(l.get("row_id"))) or {})
-            if a is not None:
-                others += a
+    lines = result.get("lines") or []
     sub, missing, owner_set, quotes, not_covered = 0.0, [], 0.0, 0.0, 0.0
-    rows = []
-    for l in result.get("lines") or []:
+    for l in lines:
+        if below_subtotal(l):
+            continue
         w = by.get(str(l.get("row_id"))) or {}
-        a = line_amount(l, w, others)
+        a = line_amount(l, w)
         if a is None:
             missing.append(l.get("row_id"))
+            continue
+        sub += a
+        if l.get("status") == "owner_set":
+            owner_set += a
+        elif w.get("src") == "quote":
+            quotes += a
+        if l.get("status") in NOT_COVERED:
+            not_covered += a
+    rows, below = [], []
+    sched = 0.0
+    for l in lines:
+        w = by.get(str(l.get("row_id"))) or {}
+        if below_subtotal(l):
+            a = line_amount(l, w, sub)
+            sched += a or 0.0
+            below.append((l, w, a))
         else:
-            sub += a
-            if l.get("status") == "owner_set":
-                owner_set += a
-            elif w.get("src") == "quote":
-                quotes += a
-            if l.get("status") in NOT_COVERED:
-                not_covered += a
-        rows.append((l, w, a))
+            rows.append((l, w, line_amount(l, w)))
     c = _f(ws.get("contingency_pct"))
-    # contingency on your own pricing, not on owner-set allowances (an
-    # "Owner's Contingency Allowance" is already contingency) -- as the page
-    base = sub - owner_set
-    cont = base * c / 100.0 if c else 0.0
-    yours = sub + cont
+    cont = sub * c / 100.0 if c else 0.0
+    yours = sub + sched + cont
     h = result.get("headline") or {}
     p50, p80 = _f(h.get("p50")), _f(h.get("p80"))
+    hc = h.get("contingency") or {}
     # P50 / P80 leave the not-covered lines out, your OPCC has your amounts
     # for them (vendor quotes): the comparison adds those amounts to the
     # model's side too, so it compares like with like
@@ -124,15 +150,21 @@ def totals(result: dict, ws: dict) -> dict:
     def diff(m):
         return None if not m else {"amount": yours - m, "ratio": yours / m - 1}
 
-    return {"subtotal": sub, "contingency_pct": c, "contingency": cont,
+    def split(k):
+        v = hc.get(k) or {}
+        return (_f(v.get("subtotal")), _f(v.get("contingency"))) if v else (None, None)
+
+    return {"subtotal": sub, "schedule_contingency": sched,
+            "contingency_pct": c, "contingency": cont,
             "your_opcc": yours, "owner_set": owner_set, "quotes": quotes,
             "not_covered": not_covered,
             "missing": missing, "p50": p50, "p80": p80,
+            "p50_split": split("p50"), "p80_split": split("p80"),
             "model_p50": m50, "model_p80": m80,
             "vs_p50": diff(m50), "vs_p80": diff(m80),
             "suggested_contingency_pct": (100.0 * (p80 / p50 - 1))
             if (p50 and p80) else None,
-            "rows": rows}
+            "rows": rows, "below": below}
 
 
 # ---------------------------------------------------------------------------
@@ -241,16 +273,33 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
         ["Bid date", inp.get("bid_date") or ""],
         ["Prepared", _dt.date.today().isoformat()],
         [],
-        ["Your line amounts", _m(t["subtotal"])],
+        # subtotal, then the contingency below it, then the total
+        ["Subtotal (your line amounts)", _m(t["subtotal"])],
         ["  of which owner-set allowances", _m(t["owner_set"])],
         ["  of which vendor quotes", _m(t["quotes"])],
-        ["Contingency %", "" if t["contingency_pct"] is None else t["contingency_pct"]],
-        ["Contingency (on your line amounts, owner-set allowances excluded)", _m(t["contingency"])],
-        ["YOUR OPCC", _m(t["your_opcc"])],
+    ]
+    for l, w, a in t["below"]:
+        pct = share_pct(l)
+        head_rows.append([
+            "Contingency: %s%s" % (l.get("description") or "",
+                                   " (%g%% of the subtotal)" % pct
+                                   if pct is not None else
+                                   " (the owner's fixed amount)"), _m(a)])
+    extra = "Additional contingency" if t["below"] else "Contingency"
+    head_rows += [
+        [extra + " %", "" if t["contingency_pct"] is None else t["contingency_pct"]],
+        [extra + " (on the subtotal)", _m(t["contingency"])],
+        ["YOUR OPCC (total)", _m(t["your_opcc"])],
         [],
         ["Model P50 (expected low bid)", _m(t["p50"])],
-        ["Model P80", _m(t["p80"])],
     ]
+    s50, c50 = t["p50_split"]
+    if s50 is not None:
+        head_rows += [["  P50 subtotal", _m(s50)], ["  P50 contingency", _m(c50)]]
+    head_rows.append(["Model P80", _m(t["p80"])])
+    s80, c80 = t["p80_split"]
+    if s80 is not None:
+        head_rows += [["  P80 subtotal", _m(s80)], ["  P80 contingency", _m(c80)]]
     nc = t["not_covered"]
     if nc:
         head_rows += [
@@ -285,6 +334,29 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
                      _m(w.get("your_unit")) if l.get("status") != "owner_set"
                      else "", _m(a), w.get("src_label") or w.get("src") or "",
                      w.get("note") or "", "; ".join(w.get("judgment") or [])])
+    # below the items: SUBTOTAL, the contingency, TOTAL (your amounts and
+    # the model's P50 side by side)
+    blank = [""] * 16
+
+    def foot(label, model, yours, src=""):
+        r = list(blank)
+        r[1], r[5], r[12], r[13] = label, _m(model), _m(yours), src
+        return r
+    s50 = t["p50_split"][0] if t["p50_split"][0] is not None else t["p50"]
+    rows.append(list(blank))
+    rows.append(foot("SUBTOTAL", s50, t["subtotal"]))
+    for l, w, a in t["below"]:
+        pct = share_pct(l)
+        r = foot(l.get("description") or "Contingency", l.get("amount_p50"), a,
+                 "%g%% of the subtotal" % pct if pct is not None
+                 else "owner's fixed amount")
+        r[0], r[4], r[14] = l.get("item_no") or "", ("%g%%" % pct) if pct is not None else "", w.get("note") or ""
+        rows.append(r)
+    if t["contingency"]:
+        rows.append(foot("%s %g%% of the subtotal" % (
+            "Additional contingency" if t["below"] else "Contingency",
+            t["contingency_pct"]), None, t["contingency"], "yours only: not in P50 / P80"))
+    rows.append(foot("TOTAL", t["p50"], t["your_opcc"]))
     out.append(("OPCC lines",
                 ["Item", "Description", "Qty", "Unit", "Model $/unit (P50)",
                  "Model amount (P50)", "Reference low $/unit",

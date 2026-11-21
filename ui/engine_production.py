@@ -392,6 +392,43 @@ def owner_set_like(family, unit, description):
         OWNER_SET_RE.search(description or ""))
 
 
+#: A contingency sits BELOW the subtotal (user, 2026-11-21: "first the
+#: subtotal, then the contingency below it, then the total"): owner-set money
+#: worded as a contingency on a lump sum (LS, an allowance unit, no unit, one
+#: EA), or any owner-set line given as a share of the other lines. A
+#: "contingency item" measured in SY, CY, TON ... is a bid item bidders price
+#: and stays in the subtotal. The page uses the same rule (app.js
+#: isContingencyResult / shareOrContingency, via `below_subtotal`).
+CONTINGENCY_WORD = re.compile(r"contingenc", re.I)
+LUMP_UNIT = re.compile(r"^(?:|LS|L\.?\s*S\.?|L/S|LUMP(?:\s*SUM)?|ALLOW(?:ANCE)?"
+                       r"|ALW|ALLW|DOL|\$)$", re.I)
+
+
+def lump_like(unit, quantity) -> bool:
+    u = str(unit or "").strip()
+    return bool(LUMP_UNIT.match(u)) or (
+        u.upper() in ("EA", "EACH") and not ((quantity or 0) > 1))
+
+
+def contingency_worded(description, unit, quantity) -> bool:
+    return bool(CONTINGENCY_WORD.search(description or "")) and \
+        lump_like(unit, quantity)
+
+
+def split_contingency(value, fixed, share):
+    """(subtotal, contingency) of a headline figure that carries contingency
+    lines below its subtotal: `fixed` dollars at face value plus `share` (a
+    fraction) of the subtotal, so value = subtotal x (1 + share) + fixed.
+    Exact for P50 by construction (_run prices a share on the subtotal). P80
+    and the ranges are multiples of P50 in the estimator, so a share stays
+    that share of their subtotal; a fixed amount stays at face value and the
+    subtotal is the rest."""
+    if value is None:
+        return None, None
+    sub = (value - fixed) / (1.0 + share)
+    return sub, value - sub
+
+
 class ItemAccuracy:
     """Per (market, item group) forward line accuracy, for the badge."""
 
@@ -1602,10 +1639,13 @@ class ProductionEngine:
                   "work_type": q["work_type"]}
         bidders = {"source": "user", "n": q["n"], "suggestion": None}
         # Owner-set lines given as a share of the other lines are priced on
-        # the schedule without them first: amount = share x (that schedule's
-        # expected low bid less its own owner-set money). The amount then goes
-        # in at face value like any entered owner-set amount, so the estimator
-        # (and run_schedule, given the same amount) prices the rest unchanged.
+        # the schedule without them first: amount = share x the SUBTOTAL,
+        # that schedule's expected low bid with its owner-set allowances but
+        # without another contingency line, which sits below the subtotal
+        # too (user, 2026-11-21: subtotal, then contingency, then total).
+        # The amount then goes in at face value like any entered owner-set
+        # amount, so the estimator (and run_schedule, given the same amount)
+        # prices the rest unchanged.
         pct_items = [it for it in items if it.get("amount_pct")]
         base_items = [it for it in items if not it.get("amount_pct")] \
             if pct_items else items
@@ -1624,8 +1664,11 @@ class ProductionEngine:
             ra = E.estimate(self.tab, base_items, bidders["n"], q["market"],
                             to_year, target)
             el = ra.get("expected_low")
-            base = (el - (ra.get("fixed_total") or 0.0)) \
-                if el is not None else None
+            below = sum(it["amount"] for it in base_items
+                        if it.get("owner_fixed") and it.get("amount")
+                        and contingency_worded(it["description"], it["unit"],
+                                               it["quantity"]))
+            base = (el - below) if el is not None else None
             for it in pct_items:
                 if base and base > 0:
                     it["amount"] = round(it["amount_pct"] / 100.0 * base, 2)
@@ -1695,6 +1738,24 @@ class ProductionEngine:
             "covered_only": bool(unc),
             "fixed_total": fx,
         }
+        # contingency lines sit below the subtotal: each figure as subtotal
+        # + contingency (split_contingency), for the page and the export
+        below = [ln for ln in lines if ln["below_subtotal"]]
+        if below:
+            fixed = sum(ln["amount_p50"] or 0.0 for ln in below
+                        if not ln["amount_from_pct"])
+            share = sum(ln["amount_from_pct"]["pct"] for ln in below
+                        if ln["amount_from_pct"]) / 100.0
+            cont = {"row_ids": [ln["row_id"] for ln in below],
+                    "pct": round(100.0 * share, 6) if share else None,
+                    "fixed": fixed}
+            for k, v in (("p50", el), ("p80", r.get("expected_low_p80"))):
+                s, cv = split_contingency(v, fixed, share)
+                cont[k] = None if s is None else {"subtotal": s,
+                                                   "contingency": cv}
+            headline["contingency"] = cont
+        else:
+            headline["contingency"] = None
         lc = r.get("low_confidence") or {}
         low_conf = {
             "history": english(lc.get("history") or ""),
@@ -1931,6 +1992,10 @@ class ProductionEngine:
             "unit_price_p50": unit_p50, "amount_p50": amount_p50,
             "fixed_amount": t.get("fixed_amount"),
             "amount_from_pct": it.get("amount_from_pct"),
+            # a contingency: shown below the subtotal, not among the items
+            "below_subtotal": bool(status == "owner_set" and (
+                it.get("amount_from_pct") or contingency_worded(
+                    it["description"], it["unit"], it["quantity"]))),
             "quote": t.get("quote") if status == "not_covered" else None,
             "basis": basis, "why": why,
             "price_key": t.get("price_key"),
@@ -1972,8 +2037,8 @@ class ProductionEngine:
             basis = "Not priced: the schedule as a whole is not covered"
         elif status == "owner_set":
             ap = it.get("amount_from_pct")
-            basis = ("Owner-set: %g%% of the other lines' expected low bid "
-                     "(%s), taken at face value" % (ap["pct"], "${:,.0f}".format(ap["base"]))
+            basis = ("Contingency: %g%% of the subtotal (%s), below it at "
+                     "face value" % (ap["pct"], "${:,.0f}".format(ap["base"]))
                      if ap else
                      "Owner-set amount, taken at face value (no discount)")
         elif pk == "token_jaccard":

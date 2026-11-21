@@ -215,13 +215,23 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(page.locator(row).get_by_role("button", name="Change", exact=True).count(), 0)
                 self.assertEqual(page.inner_text(row + " .clscell").strip(), "Contingency")
                 self.assertEqual(page.input_value(row + " select.cpct"), "10")
-                # the worksheet: that share of your other line amounts, nothing to open
+                # the worksheet: the items, then SUBTOTAL, the contingency
+                # below it (that share of your subtotal, nothing to open),
+                # then TOTAL (user, 2026-11-21)
                 wrow = 'tr[data-line="%s"]' % k
+                self.assertEqual(page.locator("#result-body " + wrow).count(), 0)
+                foot = page.eval_on_selector_all("#result-foot tr", "t => t.map(r => r.className)")
+                self.assertEqual([c.split()[0] for c in foot], ["wssub", "controw", "wstotal"])
                 self.assertEqual(page.locator(wrow + " .chev").count(), 0)
                 self.assertEqual(page.locator(wrow + " select.pick").count(), 0)
                 share = page.evaluate("k => { const l = S.result.lines.find(x => x.row_id === k);"
-                                      " return wsAmount(l, wsLine(l)) / wsShareBase(); }", k)
+                                      " return wsAmount(l, wsLine(l)) / wsSubtotal(); }", k)
                 self.assertAlmostEqual(share, 0.10, places=6)
+                t = page.evaluate("() => { const t = wsTotals(S.result); return [t.sub, t.below, t.yours]; }")
+                self.assertAlmostEqual(t[2], t[0] * 1.10, places=4)
+                # the headline: subtotal + contingency under P50 and P80
+                self.assertEqual(page.locator("#r-headline .bigcard .csplit").count(), 2)
+                self.assertIn("Contingency 10%", page.inner_text("#r-headline .bigcard .csplit >> nth=0"))
                 # the schedule carries a contingency: the worksheet's own one
                 # starts at 0%, picked from a list
                 sel = '#ws-totals select[data-fk="ws:contingency"]'
