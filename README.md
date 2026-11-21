@@ -296,8 +296,9 @@ forward calibration ── centring and the P80 divisor from earlier lettings on
 
 Not included:
 
-- **The data corpus:** several GB of downloaded bid tabs and derived tables.
+- **The derived tables:** several GB built from the bid tabs. The original documents themselves are in the companion data repository below.
 - **Experiment reports and setup notes:** kept in the working copy; the results that matter are summarized in this README.
+- **The original bid documents** are published separately: https://github.com/grintCactus/texas-public-works-bid-tabs (2,150 public bid tabulations and award documents, with each file's source page).
 - **Local tools:** poppler, Tesseract and the Python environment.
 - **Some pipeline modules:** they still carry client-specific configuration, which is being moved out into a local file. They will be added in a following commit.
 
