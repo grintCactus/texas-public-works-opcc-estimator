@@ -905,10 +905,34 @@ function adoptImportAmount(l) {
   if (c.owner_set_like && c.import_amount > 0) {
     l.amount = c.import_amount;
     l.amount_src = 'file';
+    l.amount_pct = null;
   } else if (l.amount_src === 'file') {
     l.amount = null;
     l.amount_src = null;
   }
+  // a contingency allowance is a share of the other lines (user, 2026-11-21:
+  // "a contingency should be a percentage"): 10% unless the user or the file gave $
+  if (isContingencyLine(l) && !(l.amount > 0) && !isNum(l.amount_pct)) l.amount_pct = DEFAULT_CONTINGENCY;
+  if (!isContingencyLine(l) && l.amount_src !== 'user') l.amount_pct = null;
+}
+
+function isContingencyLine(l) {
+  return !!(l && l.cls && l.cls.owner_set_like && /contingenc/i.test(l.description || ''));
+}
+
+// "10%" or "10 %" -> {pct: 10}; "50,000" -> {amount: 50000}; anything else -> {}
+function parseAmountOrPct(text) {
+  const t = String(text || '').trim();
+  const m = t.match(/^(\d+(?:\.\d+)?)\s*%$/);
+  if (m) { const p = Number(m[1]); return p > 0 && p <= 100 ? { pct: p } : {}; }
+  const v = parseNum(t);
+  return v > 0 ? { amount: v } : {};
+}
+
+function amountCellText(l) {
+  if (l.amount > 0) return qtyFmt(l.amount);
+  if (isNum(l.amount_pct) && l.amount_pct > 0) return l.amount_pct + '%';
+  return '';
 }
 
 async function classifyAll() {
@@ -1005,7 +1029,7 @@ function clsCell(l) {
   if (c.lowconf_class) badges.push(el('span', { class: 'badge lowc',
     title: 'Low confidence: lump sums like this vary widely between bidders; see the '
       + 'low-confidence panel in the results.', text: c.lowconf_label }));
-  if (c.owner_set_like && !(l.amount > 0)) badges.push(el('span', { class: 'badge missing',
+  if (c.owner_set_like && !(l.amount > 0) && !(l.amount_pct > 0)) badges.push(el('span', { class: 'badge missing',
     title: 'Owner-set money (allowance / contingency / force account): enter the amount from '
       + 'the bid form under Project details \u2192 Owner-set amounts (or in "Owner-set $"). '
       + 'Until then it is priced from history, which is not meaningful for an allowance.',
@@ -1167,17 +1191,19 @@ function gridRow(l, i) {
   tr.appendChild(el('td', {}, clsCell(l)));
   const allow = l.cls && l.cls.owner_set_like;
   tr.appendChild(el('td', { class: 'tight' }, el('input', {
-    class: 'cellinput num' + (allow && !(l.amount > 0) ? ' hintfill' : ''), type: 'text',
-    value: l.amount > 0 ? qtyFmt(l.amount) : '', 'data-col': 'amount', 'data-i': i,
+    class: 'cellinput num' + (allow && !(l.amount > 0) && !(l.amount_pct > 0) ? ' hintfill' : ''), type: 'text',
+    value: amountCellText(l), 'data-col': 'amount', 'data-i': i,
     'data-fk': focusKey('g', l.row_id, 'amount'),
-    placeholder: allow ? 'owner’s $' : '',
+    placeholder: allow ? 'owner’s $ or %' : '',
     title: 'Owner-set money only: the owner’s amount, taken at face value and kept out '
-      + 'of the competition discount. Leave blank for a line bidders price.',
+      + 'of the competition discount, or a share of the other lines such as "10%". Leave '
+      + 'blank for a line bidders price.',
     onchange: e => {
-      const v = parseNum(e.target.value);
-      l.amount = v > 0 ? v : null;
+      const r = parseAmountOrPct(e.target.value);
+      l.amount = r.amount || null;
+      l.amount_pct = r.pct || null;
       l.amount_src = 'user';
-      e.target.value = l.amount ? qtyFmt(l.amount) : '';
+      e.target.value = amountCellText(l);
       markStale(); afterInput(renderGrid); afterInput(renderOwnerSet); suggestBidders();
     },
   })));
@@ -1876,24 +1902,32 @@ function renderOwnerSetInto(box) {
   box.appendChild(el('div', { class: 'muted-note', style: 'margin-bottom:6px', text:
     'The owner writes these amounts into the bid form and every bidder copies them. Enter '
     + 'each from the bid form: it goes in at face value, outside the competition discount. '
-    + 'A historical price is not meaningful for an allowance.' }));
-  al.forEach(l => box.appendChild(el('div', { class: 'qrow owner' + (l.amount > 0 ? '' : ' missing') }, [
-    el('div', { class: 'qdesc' }, [
-      el('div', { text: (l.item_no ? l.item_no + '  ' : '') + l.description }),
-      el('div', { class: 'dim', text: qtyFmt(l.quantity) + ' ' + (l.cls.unit || '')
-        + (l.amount > 0 ? (l.amount_src === 'file' ? ' \u00b7 from the uploaded file' : '')
-          : ' \u00b7 amount missing') }),
-    ]),
-    el('input', { type: 'text', class: 'num', placeholder: 'amount $',
-      value: l.amount > 0 ? qtyFmt(l.amount) : '', 'data-fk': focusKey('o', l.row_id),
-      onchange: e => {
-        const v = parseNum(e.target.value);
-        l.amount = v > 0 ? v : null;
-        l.amount_src = 'user';
-        e.target.value = l.amount ? qtyFmt(l.amount) : '';
-        markStale(); afterInput(renderGrid); afterInput(renderOwnerSet); suggestBidders();
-      } }),
-  ])));
+    + 'A historical price is not meaningful for an allowance. A contingency can be a share '
+    + 'of the other lines instead: type "10%" (the default for a contingency line).' }));
+  al.forEach(l => {
+    const given = l.amount > 0 || l.amount_pct > 0;
+    const note = l.amount > 0 ? (l.amount_src === 'file' ? ' \u00b7 from the uploaded file' : '')
+      : l.amount_pct > 0 ? ' \u00b7 ' + l.amount_pct + '% of the other lines\u2019 expected low bid'
+        + ' (worked out when you estimate)'
+      : ' \u00b7 amount missing';
+    box.appendChild(el('div', { class: 'qrow owner' + (given ? '' : ' missing') }, [
+      el('div', { class: 'qdesc' }, [
+        el('div', { text: (l.item_no ? l.item_no + '  ' : '') + l.description }),
+        el('div', { class: 'dim', text: qtyFmt(l.quantity) + ' ' + (l.cls.unit || '') + note }),
+      ]),
+      el('input', { type: 'text', class: 'num', placeholder: isContingencyLine(l) ? '10% or $' : 'amount $',
+        title: 'The owner\u2019s amount from the bid form, or a share of the other lines such as "10%"',
+        value: amountCellText(l), 'data-fk': focusKey('o', l.row_id),
+        onchange: e => {
+          const r = parseAmountOrPct(e.target.value);
+          l.amount = r.amount || null;
+          l.amount_pct = r.pct || null;
+          l.amount_src = 'user';
+          e.target.value = amountCellText(l);
+          markStale(); afterInput(renderGrid); afterInput(renderOwnerSet); suggestBidders();
+        } }),
+    ]));
+  });
 }
 
 function estimateRequest(n) {
@@ -1908,6 +1942,7 @@ function estimateRequest(n) {
     items: S.lines.filter(l => l.include && !missingQuantity(l)).map(l => ({
       row_id: l.row_id, item_no: l.item_no, description: l.description, unit: l.unit,
       quantity: l.quantity, family: l.family || '', amount: l.amount, quote: l.quote,
+      amount_pct: l.amount > 0 ? null : (l.amount_pct > 0 ? l.amount_pct : null),
     })),
   };
 }
@@ -2307,6 +2342,10 @@ function renderLines(r) { renderWorksheet(r); loadWsRefs(); }
 function renderWorksheet(r) {
   r = r || S.result;
   if (!r) return;
+  // the worksheet's own contingency starts at 10%, or at 0% when the schedule
+  // already carries a contingency allowance (so it is not counted twice),
+  // until the user sets it
+  if (!S.ws.contTouched) S.ws.contingency = contingencyLines(r).length ? 0 : DEFAULT_CONTINGENCY;
   const focus = focusState();
   renderWorksheetRows(r);
   restoreFocus(focus);
@@ -2373,7 +2412,7 @@ function renderWsTotals(r) {
   };
   const cin = el('input', { type: 'text', class: 'cellinput num', value: isNum(S.ws.contingency) ? S.ws.contingency : '',
     placeholder: '0', style: 'width:64px', 'data-fk': 'ws:contingency',
-    onchange: e => { const v = parseNum(e.target.value); S.ws.contingency = isNum(v) ? v : null; afterInput(renderWsTotalsNow); } });
+    onchange: e => { const v = parseNum(e.target.value); S.ws.contingency = isNum(v) ? v : null; S.ws.contTouched = true; afterInput(renderWsTotalsNow); } });
   const plusNc = t.nc ? ' + not-covered ' : ' ';
   host.appendChild(el('div', { class: 'wstot' }, [
     el('div', { class: 'yours' }, [
@@ -2399,7 +2438,7 @@ function renderWsTotals(r) {
           type: 'button', class: 'chip cpick' + (t.c === p ? ' sel' : ''), text: p + '%',
           title: p ? 'Add ' + p + '% contingency to your line amounts (owner-set allowances excluded)'
             : 'No contingency',
-          onclick: () => { S.ws.contingency = p; renderWsTotalsNow(); } })))]),
+          onclick: () => { S.ws.contingency = p; S.ws.contTouched = true; renderWsTotalsNow(); } })))]),
       contingencyGuide(r, t),
     ]),
   ]));
@@ -2417,6 +2456,11 @@ function renderWsTotalsNow() { renderWsTotals(S.result); }
 // How often an OPCC this high came in under the low bid on past jobs of the
 // same market: the share of forward-scored lettings with m x P50 < low bid,
 // read off the market's curve (context.under_curve, [[m, share], ...]).
+function contingencyLines(r) {
+  return ((r && r.lines) || []).filter(l => l.status === 'owner_set'
+    && /contingenc/i.test(l.description || ''));
+}
+
 function underAt(curve, m) {
   if (!curve || !curve.length || !isNum(m)) return null;
   if (m <= curve[0][0]) return curve[0][1];
@@ -2432,7 +2476,14 @@ function contingencyGuide(r, t) {
   const mk = ctx.market === 'txdot' ? 'TxDOT' : 'city / county';
   const mY = t.m50 ? t.yours / t.m50 : null;
   const m80 = t.p50 && t.p80 ? t.p80 / t.p50 : null;
-  const kids = [el('div', { text: 'Contingency covers what this estimate cannot see yet: scope that may still '
+  const cl = contingencyLines(r);
+  const already = cl.length ? el('div', { class: 'cnow', text: 'Your schedule already carries '
+    + (cl.length === 1 ? 'a contingency allowance' : cl.length + ' contingency allowances') + ' ('
+    + cl.map(l => (l.item_no ? 'item ' + l.item_no + ': ' : '') + (l.amount_from_pct
+      ? l.amount_from_pct.pct + '% of the other lines, ' + money(l.amount_p50) : money(l.amount_p50))).join('; ')
+    + '), so this contingency starts at 0% to avoid counting it twice. Add one only for '
+    + 'something that allowance does not cover, such as design still in progress.' }) : null;
+  const kids = [already, el('div', { text: 'Contingency covers what this estimate cannot see yet: scope that may still '
     + 'change, unknown site conditions, items left out. It is added to your line amounts, not to '
     + 'owner-set allowances. P80 already carries a margin for pricing uncertainty, so on a final design '
     + 'a contingency on top of P80 mostly adds overshoot; while the design is still changing, it covers '
@@ -2593,6 +2644,8 @@ async function wsRestore(doc) {
     if (it.family) l.family_src = 'user';
     l.amount = isNum(it.amount) && it.amount > 0 ? Number(it.amount) : null;
     if (l.amount) l.amount_src = 'user';
+    l.amount_pct = isNum(it.amount_pct) && it.amount_pct > 0 ? Number(it.amount_pct) : null;
+    if (l.amount_pct) l.amount_src = 'user';
     l.quote = isNum(it.quote) && it.quote > 0 ? Number(it.quote) : null;
     return l;
   });
@@ -2609,7 +2662,7 @@ async function wsRestore(doc) {
   if (isNum(q.n_bidders)) { S.bidders.mode = 'user'; $('#in-bidders').value = q.n_bidders; }
   else { S.bidders.mode = 'auto'; }
   const wl = (doc.worksheet || {}).lines || [];
-  S.ws = { lines: {}, contingency: (doc.worksheet || {}).contingency_pct ?? null, refs: null, refsReq: null,
+  S.ws = { lines: {}, contingency: (doc.worksheet || {}).contingency_pct ?? null, contTouched: true, refs: null, refsReq: null,
     filter: false, open: {}, name: doc.name || (doc.worksheet || {}).project_name || '' };
   wl.forEach(w => { S.ws.lines[w.row_id] = { your_unit: w.your_unit, src: w.src, src_label: w.src_label,
     note: w.note || '', your_amount: w.your_amount }; });

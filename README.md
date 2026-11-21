@@ -32,7 +32,7 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
 2. **Describe the project.**
    - Market (city/county or TxDOT), owner, work type and bid date. If the owner or work type is not in the list, type it in.
    - Expected number of bidders: it is prefilled from similar past lettings, and you can change it.
-   - The amounts of owner-set allowances; these are added at face value.
+   - The amounts of owner-set allowances; these are added at face value. A contingency allowance can be given as a share of the other lines instead ("10%", the default for a line worded as a contingency).
    - Vendor quotes for specialty items the tool does not price (pumps, generators, prefabricated bridges, …).
 3. **Read the estimate.**
    - P50 (expected low bid) and P80 (a not-under OPCC), with their ranges, the market's track record and a plain explanation of what each means.
@@ -43,7 +43,7 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
    - The four most similar past projects are shown with their full bids.
 5. **Build your OPCC.**
    - In the worksheet, keep the model's unit price or pick one from the references, line by line. Add notes.
-   - Set a contingency: 10% by default, with 0 / 10 / 15 / 20% picks. It applies to your prices, not to owner-set allowances. The page shows how often an OPCC that high came in under the low bid on past jobs: in cities, P50 + 10% did on about 30% of jobs, and P80 on about 14%.
+   - Set a contingency: 10% by default (0% when the schedule already carries a contingency allowance), with 0 / 10 / 15 / 20% picks. It applies to your prices, not to owner-set allowances. The page shows how often an OPCC that high came in under the low bid on past jobs: in cities, P50 + 10% did on about 30% of jobs, and P80 on about 14%.
    - "Your OPCC" is shown next to the model's P50 and P80.
 6. **Export** the worksheet to Excel or CSV, with your prices, notes and a references appendix.
 

@@ -1564,6 +1564,12 @@ class ProductionEngine:
             c["row_id"] = str(it.get("row_id") or "r%d" % (i + 1))
             amount = _f(it.get("amount"))
             quote = _f(it.get("quote"))
+            # an owner-set line given as a share of the other lines ("Owner's
+            # Contingency Allowance" = 10% of the rest), resolved in _run();
+            # an entered amount wins over a share
+            pct = _f(it.get("amount_pct"))
+            pct = pct if (pct is not None and 0 < pct <= 100
+                          and not (amount and amount > 0)) else None
             items.append({
                 "item_no": str(it.get("item_no") or "").strip(),
                 "description": desc,
@@ -1579,6 +1585,7 @@ class ProductionEngine:
                 # an entered owner-set amount is passed as run_schedule passes
                 # it: amount + owner_fixed=yes -> face value, no discount
                 "owner_fixed": bool(amount and amount > 0),
+                "amount_pct": pct,
             })
             cls.append(c)
         return items, cls
@@ -1594,10 +1601,18 @@ class ProductionEngine:
         target = {"date": q["bid_date"], "owner": q["owner"] or None,
                   "work_type": q["work_type"]}
         bidders = {"source": "user", "n": q["n"], "suggestion": None}
+        # Owner-set lines given as a share of the other lines are priced on
+        # the schedule without them first: amount = share x (that schedule's
+        # expected low bid less its own owner-set money). The amount then goes
+        # in at face value like any entered owner-set amount, so the estimator
+        # (and run_schedule, given the same amount) prices the rest unchanged.
+        pct_items = [it for it in items if it.get("amount_pct")]
+        base_items = [it for it in items if not it.get("amount_pct")] \
+            if pct_items else items
         if q["auto"]:
             # T + owner-set money does not depend on n: price once at a
             # placeholder n to read it, then take N1's n-hat.
-            r0 = E.estimate(self.tab, items, N1_DEFAULT, q["market"],
+            r0 = E.estimate(self.tab, base_items, N1_DEFAULT, q["market"],
                             to_year, target)
             tot = (r0.get("market_total") or 0.0) + \
                 (r0.get("fixed_total") or 0.0)
@@ -1605,6 +1620,18 @@ class ProductionEngine:
                                        q["bid_date"])
             bidders = {"source": "rule N1", "n": sug["n"],
                        "suggestion": sug}
+        if pct_items:
+            ra = E.estimate(self.tab, base_items, bidders["n"], q["market"],
+                            to_year, target)
+            el = ra.get("expected_low")
+            base = (el - (ra.get("fixed_total") or 0.0)) \
+                if el is not None else None
+            for it in pct_items:
+                if base and base > 0:
+                    it["amount"] = round(it["amount_pct"] / 100.0 * base, 2)
+                    it["owner_fixed"] = True
+                    it["amount_from_pct"] = {"pct": it["amount_pct"],
+                                             "base": round(base, 2)}
         r = E.estimate(self.tab, items, bidders["n"], q["market"], to_year,
                        target)
         if not q["auto"]:
@@ -1903,6 +1930,7 @@ class ProductionEngine:
             "market_amount": mkt_amount,
             "unit_price_p50": unit_p50, "amount_p50": amount_p50,
             "fixed_amount": t.get("fixed_amount"),
+            "amount_from_pct": it.get("amount_from_pct"),
             "quote": t.get("quote") if status == "not_covered" else None,
             "basis": basis, "why": why,
             "price_key": t.get("price_key"),
@@ -1943,7 +1971,11 @@ class ProductionEngine:
         elif status == "not_covered_whole":
             basis = "Not priced: the schedule as a whole is not covered"
         elif status == "owner_set":
-            basis = "Owner-set amount, taken at face value (no discount)"
+            ap = it.get("amount_from_pct")
+            basis = ("Owner-set: %g%% of the other lines' expected low bid "
+                     "(%s), taken at face value" % (ap["pct"], "${:,.0f}".format(ap["base"]))
+                     if ap else
+                     "Owner-set amount, taken at face value (no discount)")
         elif pk == "token_jaccard":
             basis = "Priced from similarly worded items%s" % ev
             if t.get("token_exact_rule"):
