@@ -49,10 +49,26 @@ def _f(v) -> Optional[float]:
 NOT_COVERED = ("not_covered", "not_covered_whole")
 
 
-def line_amount(line: dict, w: dict) -> Optional[float]:
+def share_pct(line: dict) -> Optional[float]:
+    """The share of an owner-set line given as a share of the other lines
+    ("Contingency, 10%"), else None."""
+    if line.get("status") != "owner_set":
+        return None
+    sh = line.get("amount_from_pct")
+    return _f(sh.get("pct")) if isinstance(sh, dict) else None
+
+
+def line_amount(line: dict, w: dict,
+                others: Optional[float] = None) -> Optional[float]:
     """The estimator's amount for one result line: owner-set money at face
-    value, a vendor quote as given, else their unit price x the quantity."""
+    value, a vendor quote as given, else their unit price x the quantity. A
+    line given as a share of the other lines is that share of `others`, the
+    estimator's own other line amounts (owner-set money left out) -- in the
+    model's P50 it is the same share of the model's amounts."""
     if line.get("status") == "owner_set":
+        pct = share_pct(line)
+        if pct is not None and others is not None:
+            return pct / 100.0 * others
         return _f(line.get("fixed_amount"))
     if w.get("src") == "quote" and _f(w.get("your_amount")) is not None:
         return _f(w.get("your_amount"))
@@ -67,11 +83,19 @@ def totals(result: dict, ws: dict) -> dict:
     arithmetic is never trusted), and its distance to the model's P50/P80."""
     by = {str(w.get("row_id")): w for w in (ws.get("lines") or [])
           if isinstance(w, dict)}
+    # your amounts for every line that is not owner-set money: what a line
+    # given as a share of the other lines is a share of (as on the page)
+    others = 0.0
+    for l in result.get("lines") or []:
+        if l.get("status") != "owner_set":
+            a = line_amount(l, by.get(str(l.get("row_id"))) or {})
+            if a is not None:
+                others += a
     sub, missing, owner_set, quotes, not_covered = 0.0, [], 0.0, 0.0, 0.0
     rows = []
     for l in result.get("lines") or []:
         w = by.get(str(l.get("row_id"))) or {}
-        a = line_amount(l, w)
+        a = line_amount(l, w, others)
         if a is None:
             missing.append(l.get("row_id"))
         else:

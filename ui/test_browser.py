@@ -180,6 +180,49 @@ class PageInteractions(unittest.TestCase):
                 page.click("#modal-host .modal button.close")
                 self.assertEqual(errors, [])
 
+    def test_a_contingency_line_is_a_share_picked_from_a_list(self):
+        """2026-11-21 (user): a contingency is a percentage picked from a
+        list. The line has no item type and no Change button; in the
+        worksheet it is that share of your other line amounts, with no
+        references; the worksheet's own contingency is a list too."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                k = page.evaluate("() => S.lines.find(l => /contingency/i.test(l.description)).row_id")
+                row = 'tr[data-row="%s"]' % k
+                self.assertEqual(page.locator(row).get_by_role("button", name="Change", exact=True).count(), 0)
+                self.assertEqual(page.inner_text(row + " .clscell").strip(), "Contingency")
+                self.assertEqual(page.input_value(row + " select.cpct"), "10")
+                # the worksheet: that share of your other line amounts, nothing to open
+                wrow = 'tr[data-line="%s"]' % k
+                self.assertEqual(page.locator(wrow + " .chev").count(), 0)
+                self.assertEqual(page.locator(wrow + " select.pick").count(), 0)
+                share = page.evaluate("k => { const l = S.result.lines.find(x => x.row_id === k);"
+                                      " return wsAmount(l, wsLine(l)) / wsShareBase(); }", k)
+                self.assertAlmostEqual(share, 0.10, places=6)
+                # the schedule carries a contingency: the worksheet's own one
+                # starts at 0%, picked from a list
+                sel = '#ws-totals select[data-fk="ws:contingency"]'
+                self.assertEqual(page.input_value(sel), "0")
+                page.select_option(sel, "15")
+                page.wait_for_timeout(300)
+                self.assertEqual(page.evaluate("() => S.ws.contingency"), 15)
+                # 15% on the line goes into the next estimate as a share
+                page.select_option(row + " select.cpct", "15")
+                page.wait_for_timeout(300)
+                self.assertEqual(page.evaluate(
+                    "() => estimateRequest(5).items.find(i => /contingency/i.test(i.description)).amount_pct"), 15)
+                # or the owner's fixed amount, typed in the box that appears
+                page.select_option(row + " select.cpct", "fixed")
+                page.wait_for_selector(row + " .cpctcell input")
+                page.fill(row + " .cpctcell input", "50,000")
+                page.press(row + " .cpctcell input", "Tab")
+                page.wait_for_timeout(300)
+                it = page.evaluate("() => estimateRequest(5).items.find(i => /contingency/i.test(i.description))")
+                self.assertEqual(it["amount"], 50000)
+                self.assertIsNone(it["amount_pct"])
+                self.assertEqual(errors, [])
+
     def test_the_keyboard_toggles_a_focused_line(self):
         for engine in self.engines:
             with self.subTest(engine=engine):

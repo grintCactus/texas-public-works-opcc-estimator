@@ -1,6 +1,17 @@
 // An OPCC usually carries a contingency; 10% is the common default (user,
 // 2026-11-21). Applied to your line amounts except owner-set allowances.
 const DEFAULT_CONTINGENCY = 10;
+// Contingency percentages are picked from a list, not typed (user,
+// 2026-11-21): a contingency line's share of the other lines, and the
+// worksheet's own contingency.
+const LINE_CONTINGENCY_PCTS = [5, 10, 15, 20, 25];
+const WS_CONTINGENCY_PCTS = [0, 5, 10, 15, 20, 25];
+// A contingency allowance is a lump sum: LS, an allowance unit, no unit, or
+// one EA. A "contingency item" measured in SY, CY, TON... is a bid item that
+// bidders price. (Public bid history, 316 contingency lines: about 230 are
+// lump sums or allowances that every bidder copies; a dozen in SY, CY, TON,
+// LF are priced by each bidder.)
+const LUMP_UNIT_RE = /^(?:|LS|L\.?\s*S\.?|L\/S|LUMP(?:\s*SUM)?|ALLOW(?:ANCE)?|ALW|ALLW|DOL|\$)$/i;
 /* Bid Estimator front end.
  *
  * Plain DOM, no framework and no build step: a local tool started with
@@ -686,7 +697,10 @@ function confirmAssumed(l, field) {
 // or vendor quote that stands in for one). It is left out of the request,
 // and the page says so, until the quantity is filled in.
 function missingQuantity(l) {
-  return !(l.quantity > 0) && !(l.amount > 0) && !(l.quote > 0)
+  // a contingency line is a share of the rest or a fixed sum: no quantity
+  // needed (estimateRequest sends 1 LS when it has none)
+  if (isContingencyLine(l)) return false;
+  return !(l.quantity > 0) && !(l.amount > 0) && !(l.amount_pct > 0) && !(l.quote > 0)
     && !(l.cls && l.cls.coverage_class);
 }
 
@@ -916,8 +930,72 @@ function adoptImportAmount(l) {
   if (!isContingencyLine(l) && l.amount_src !== 'user') l.amount_pct = null;
 }
 
+// A contingency allowance in the takeoff: owner-set money worded as a
+// contingency, on a lump sum (LUMP_UNIT_RE). It has no item type and is not
+// priced from history: its amount is a share of the other lines, picked from
+// a list, or the owner's fixed amount.
 function isContingencyLine(l) {
-  return !!(l && l.cls && l.cls.owner_set_like && /contingenc/i.test(l.description || ''));
+  if (!(l && l.cls && l.cls.owner_set_like && /contingenc/i.test(l.description || ''))) return false;
+  return lumpLike(l.cls.unit || l.unit, l.quantity);
+}
+
+function lumpLike(unit, quantity) {
+  const u = String(unit || '').trim();
+  return LUMP_UNIT_RE.test(u) || (/^(?:EA|EACH)$/i.test(u) && !(quantity > 1));
+}
+
+// The same line in an estimate: owner-set money worded as a contingency, on a
+// lump sum or given as a share of the other lines.
+function isContingencyResult(l) {
+  return !!(l && l.status === 'owner_set' && /contingenc/i.test(l.description || '')
+    && (l.amount_from_pct || lumpLike(l.unit, l.quantity)));
+}
+
+// A worksheet line with nothing to look up: a contingency, or any owner-set
+// line given as a share of the other lines. No item type, references,
+// accuracy or price picks -- what it is and its amount.
+function shareOrContingency(l) {
+  return isContingencyResult(l) || !!(l && l.status === 'owner_set' && l.amount_from_pct);
+}
+
+// A contingency line's amount, from a list: a share of the other lines, or
+// the owner's fixed amount when the bid form prints one (then a $ box).
+// ns: 'g' the takeoff grid, 'o' the owner-set box.
+function contingencyControl(l, ns) {
+  const fixed = l.amount > 0 || !!l.cont_fixed;
+  const cur = Number(l.amount_pct);
+  const pcts = LINE_CONTINGENCY_PCTS.slice();
+  if (cur > 0 && !pcts.includes(cur)) { pcts.push(cur); pcts.sort((a, b) => a - b); }
+  const none = !fixed && !(cur > 0);
+  const done = () => { markStale(); afterInput(renderGrid); afterInput(renderOwnerSet); suggestBidders(); };
+  const sel = el('select', { class: 'cpct', 'data-fk': focusKey(ns, l.row_id, 'cpct'),
+    'aria-label': 'Contingency' + (l.item_no ? ', item ' + l.item_no : ''),
+    title: 'Contingency: a share of the other lines’ expected low bid, or the owner’s '
+      + 'fixed amount from the bid form. Taken at face value, outside the competition discount.',
+    onchange: e => {
+      const v = e.target.value;
+      if (!v) return;
+      l.cont_fixed = v === 'fixed';
+      l.amount_pct = l.cont_fixed ? null : Number(v);
+      if (!l.cont_fixed) l.amount = null;
+      l.amount_src = 'user';
+      done();
+    } }, (none ? [el('option', { value: '', text: 'pick…', selected: true })] : [])
+      .concat(pcts.map(p => el('option', { value: String(p), selected: !fixed && cur === p, text: p + '%' })))
+      .concat([el('option', { value: 'fixed', text: 'fixed $', selected: fixed })]));
+  if (!fixed) return el('div', { class: 'cpctcell' }, [sel,
+    el('span', { class: 'dim', text: 'of the other lines' })]);
+  return el('div', { class: 'cpctcell' }, [sel, el('input', { type: 'text',
+    class: 'cellinput num' + (l.amount > 0 ? '' : ' hintfill'), placeholder: 'owner’s $',
+    value: l.amount > 0 ? qtyFmt(l.amount) : '', 'data-fk': focusKey(ns, l.row_id, 'amount'),
+    title: 'The owner’s fixed contingency amount, from the bid form',
+    onchange: e => {
+      const v = parseNum(e.target.value);
+      l.amount = v > 0 ? v : null;
+      l.amount_src = 'user';
+      e.target.value = l.amount > 0 ? qtyFmt(l.amount) : '';
+      done();
+    } })]);
 }
 
 // "10%" or "10 %" -> {pct: 10}; "50,000" -> {amount: 50000}; anything else -> {}
@@ -1007,7 +1085,8 @@ function renderGrid() {
   const n = S.lines.filter(l => l.include).length;
   const noq = S.lines.filter(l => l.include && missingQuantity(l)).length;
   const unc = S.lines.filter(l => l.include && l.cls && l.cls.coverage_class).length;
-  const chk = S.lines.filter(l => l.include && l.cls && l.cls.intake && l.cls.intake.low).length;
+  const chk = S.lines.filter(l => l.include && l.cls && l.cls.intake && l.cls.intake.low
+    && !isContingencyLine(l)).length;
   const byc = S.lines.filter(l => l.origin === 'claude').length;
   $('#review-count').textContent = n + ' of ' + S.lines.length + ' lines included'
     + (chk ? ' · ' + chk + ' to check' : '')
@@ -1018,9 +1097,24 @@ function renderGrid() {
   refreshEstimateButton();
 }
 
+function claudeBadge(l) {
+  return el('span', { class: 'badge claude',
+    title: 'Transcribed by Claude from the PDF' + (l.page ? ' (page ' + l.page + ')' : '')
+      + '. Check it against the document.' + ((l.issues || []).length ? '\n' + l.issues.join('\n') : ''),
+    text: 'read by Claude' + (l.page ? ' · p.' + l.page : '') });
+}
+
 function clsCell(l) {
   const c = l.cls;
   if (!c) return el('span', { class: 'dim', text: l.description ? 'classifying…' : '—' });
+  // a contingency has no item type: no type, unit, size, checks or
+  // suggestions, only what it is (user, 2026-11-21)
+  if (isContingencyLine(l)) return el('div', { class: 'clscell' }, [
+    el('div', {}, el('span', { class: 'fam', text: 'Contingency',
+      title: 'A contingency has no item type and is not priced from history. Its amount is a '
+        + 'share of the other lines, or the owner’s fixed amount, chosen in the next column.' })),
+    l.origin === 'claude' ? el('div', { class: 'badges' }, claudeBadge(l)) : null,
+  ]);
   const badges = [];
   if (c.coverage_class) badges.push(el('span', { class: 'badge unc',
     title: 'Not covered: specialty item with almost no comparable bid history. It is not '
@@ -1045,10 +1139,7 @@ function clsCell(l) {
   const unitChecked = (ia0.reasons || []).some(x => x.code === 'no_unit' || x.code === 'unknown_unit');
   if (!unitChecked) (c.issues || []).filter(x => /unit/.test(x)).forEach(x =>
     badges.push(el('span', { class: 'badge no', text: x })));
-  if (l.origin === 'claude') badges.push(el('span', { class: 'badge claude',
-    title: 'Transcribed by Claude from the PDF' + (l.page ? ' (page ' + l.page + ')' : '')
-      + '. Check it against the document.' + ((l.issues || []).length ? '\n' + l.issues.join('\n') : ''),
-    text: 'read by Claude' + (l.page ? ' · p.' + l.page : '') }));
+  if (l.origin === 'claude') badges.push(claudeBadge(l));
   if (l.remembered) badges.push(el('span', { class: 'badge remembered',
     title: 'You corrected this wording before (' + (l.remembered.last || '') + '): item type '
       + (l.remembered.family_label || l.remembered.family)
@@ -1138,7 +1229,8 @@ function printedCapAmount(l) {
 }
 
 function gridRow(l, i) {
-  const low = l.cls && l.cls.intake && l.cls.intake.low;
+  const cont = isContingencyLine(l);
+  const low = l.cls && l.cls.intake && l.cls.intake.low && !cont;
   const tr = el('tr', { class: (l.include ? '' : 'excluded') + (low ? ' checkrow' : ''),
     'data-row': l.row_id });
   tr.appendChild(el('td', { class: 'tight' }, el('input', {
@@ -1162,26 +1254,28 @@ function gridRow(l, i) {
     },
   })));
   const assumedU = (l.assumed || []).includes('unit'), assumedQ = (l.assumed || []).includes('quantity');
+  // a contingency line needs no unit or quantity: no "needs input" flags
+  const needU = !l.unit && !cont, needQ = !(l.quantity > 0) && !cont;
   tr.appendChild(el('td', { class: 'tight' }, el('input', {
-    class: 'cellinput' + (l.unit ? (assumedU ? ' assumed' : '') : ' flag'), type: 'text', value: l.unit,
-    'data-col': 'unit', 'data-i': i, placeholder: 'needs input', 'data-fk': focusKey('g', l.row_id, 'unit'),
-    title: assumedU ? 'Assumed (a lump-sum wording with no unit) \u2014 check it' : l.unit ? '' : 'Needs a unit',
-    'aria-invalid': l.unit ? null : 'true',
+    class: 'cellinput' + (needU ? ' flag' : (l.unit && assumedU ? ' assumed' : '')), type: 'text', value: l.unit,
+    'data-col': 'unit', 'data-i': i, placeholder: cont ? '' : 'needs input', 'data-fk': focusKey('g', l.row_id, 'unit'),
+    title: l.unit && assumedU ? 'Assumed (a lump-sum wording with no unit) \u2014 check it' : needU ? 'Needs a unit' : '',
+    'aria-invalid': needU ? 'true' : null,
     oninput: e => { l.unit = e.target.value; confirmAssumed(l, 'unit'); e.target.classList.remove('assumed');
       markStale(); classifyOne(l); },
   })));
   tr.appendChild(el('td', { class: 'tight' }, el('input', {
-    class: 'cellinput num' + (l.quantity > 0 ? (assumedQ ? ' assumed' : '') : ' flag'), type: 'text',
-    value: qtyFmt(l.quantity), 'data-col': 'quantity', 'data-i': i, placeholder: 'needs input',
+    class: 'cellinput num' + (needQ ? ' flag' : (l.quantity > 0 && assumedQ ? ' assumed' : '')), type: 'text',
+    value: qtyFmt(l.quantity), 'data-col': 'quantity', 'data-i': i, placeholder: cont ? '' : 'needs input',
     'data-fk': focusKey('g', l.row_id, 'quantity'),
-    title: assumedQ ? 'Assumed 1 (a lump sum) \u2014 check it' : l.quantity > 0 ? ''
-      : 'Needs a quantity: the line is left out of the estimate until it has one',
-    'aria-invalid': l.quantity > 0 ? null : 'true',
+    title: l.quantity > 0 && assumedQ ? 'Assumed 1 (a lump sum) \u2014 check it' : needQ
+      ? 'Needs a quantity: the line is left out of the estimate until it has one' : '',
+    'aria-invalid': needQ ? 'true' : null,
     onchange: e => {
       l.quantity = parseNum(e.target.value);
       confirmAssumed(l, 'quantity');
       e.target.value = qtyFmt(l.quantity);
-      e.target.classList.toggle('flag', !(l.quantity > 0));
+      e.target.classList.toggle('flag', !(l.quantity > 0) && !isContingencyLine(l));
       // the quantity is part of the line's checks (no quantity, a lump sum
       // with a quantity other than 1): classify it again; the grid is rebuilt
       // after the click that ended the edit, not during it
@@ -1190,7 +1284,7 @@ function gridRow(l, i) {
   })));
   tr.appendChild(el('td', {}, clsCell(l)));
   const allow = l.cls && l.cls.owner_set_like;
-  tr.appendChild(el('td', { class: 'tight' }, el('input', {
+  tr.appendChild(el('td', { class: 'tight' }, cont ? contingencyControl(l, 'g') : el('input', {
     class: 'cellinput num' + (allow && !(l.amount > 0) && !(l.amount_pct > 0) ? ' hintfill' : ''), type: 'text',
     value: amountCellText(l), 'data-col': 'amount', 'data-i': i,
     'data-fk': focusKey('g', l.row_id, 'amount'),
@@ -1208,7 +1302,8 @@ function gridRow(l, i) {
     },
   })));
   tr.appendChild(el('td', {}, el('div', { class: 'row-actions nowrap' }, [
-    el('button', { class: 'btn ghost sm', text: 'Change',
+    // a contingency has no item type to change
+    cont ? null : el('button', { class: 'btn ghost sm', text: 'Change',
       title: 'Correct the item type, or look at earlier public line items like this one',
       onclick: () => openPicker(l) }),
     el('button', { class: 'btn ghost sm danger', text: '✕', title: 'Delete row',
@@ -1902,9 +1997,11 @@ function renderOwnerSetInto(box) {
   box.appendChild(el('div', { class: 'muted-note', style: 'margin-bottom:6px', text:
     'The owner writes these amounts into the bid form and every bidder copies them. Enter '
     + 'each from the bid form: it goes in at face value, outside the competition discount. '
-    + 'A historical price is not meaningful for an allowance. A contingency can be a share '
-    + 'of the other lines instead: type "10%" (the default for a contingency line).' }));
+    + 'A historical price is not meaningful for an allowance. A contingency is picked from '
+    + 'the list: a share of the other lines (10% unless you change it), or the owner\u2019s '
+    + 'fixed amount when the bid form prints one.' }));
   al.forEach(l => {
+    const cont = isContingencyLine(l);
     const given = l.amount > 0 || l.amount_pct > 0;
     const note = l.amount > 0 ? (l.amount_src === 'file' ? ' \u00b7 from the uploaded file' : '')
       : l.amount_pct > 0 ? ' \u00b7 ' + l.amount_pct + '% of the other lines\u2019 expected low bid'
@@ -1913,9 +2010,13 @@ function renderOwnerSetInto(box) {
     box.appendChild(el('div', { class: 'qrow owner' + (given ? '' : ' missing') }, [
       el('div', { class: 'qdesc' }, [
         el('div', { text: (l.item_no ? l.item_no + '  ' : '') + l.description }),
-        el('div', { class: 'dim', text: qtyFmt(l.quantity) + ' ' + (l.cls.unit || '') + note }),
+        // a contingency: what it is, without a unit or quantity (the list
+        // next to it says the share)
+        el('div', { class: 'dim', text: cont ? 'Contingency' + (l.amount > 0 ? note
+          : l.amount_pct > 0 ? ' · worked out when you estimate' : note)
+          : qtyFmt(l.quantity) + ' ' + (l.cls.unit || '') + note }),
       ]),
-      el('input', { type: 'text', class: 'num', placeholder: isContingencyLine(l) ? '10% or $' : 'amount $',
+      cont ? contingencyControl(l, 'o') : el('input', { type: 'text', class: 'num', placeholder: 'amount $',
         title: 'The owner\u2019s amount from the bid form, or a share of the other lines such as "10%"',
         value: amountCellText(l), 'data-fk': focusKey('o', l.row_id),
         onchange: e => {
@@ -1939,11 +2040,18 @@ function estimateRequest(n) {
     work_type: wt.id, work_type_text: wt.known ? '' : wt.text,
     bid_date: $('#in-biddate').value || null,
     n_bidders: n,
-    items: S.lines.filter(l => l.include && !missingQuantity(l)).map(l => ({
-      row_id: l.row_id, item_no: l.item_no, description: l.description, unit: l.unit,
-      quantity: l.quantity, family: l.family || '', amount: l.amount, quote: l.quote,
-      amount_pct: l.amount > 0 ? null : (l.amount_pct > 0 ? l.amount_pct : null),
-    })),
+    // a line given as a share of the rest (isContingencyLine) with no unit
+    // or quantity goes as the bid form writes one: 1 LS
+    items: S.lines.filter(l => l.include && !missingQuantity(l)).map(l => {
+      const share = isContingencyLine(l);
+      return {
+        row_id: l.row_id, item_no: l.item_no, description: l.description,
+        unit: share && !String(l.unit || '').trim() ? 'LS' : l.unit,
+        quantity: share && !(l.quantity > 0) ? 1 : l.quantity,
+        family: l.family || '', amount: l.amount, quote: l.quote,
+        amount_pct: l.amount > 0 ? null : (l.amount_pct > 0 ? l.amount_pct : null),
+      };
+    }),
   };
 }
 
@@ -2261,8 +2369,10 @@ function wsLine(l) {
     w.src = ''; w.src_label = ''; w.your_amount = null; w.your_unit = null;
   }
   if (l.status === 'owner_set') {
-    w.src = 'owner-set'; w.src_label = 'owner-set amount'; w.your_unit = null;
-    w.your_amount = l.fixed_amount;
+    const sh = l.amount_from_pct;
+    w.src = 'owner-set'; w.your_unit = null;
+    w.src_label = sh ? sh.pct + '% of your other line amounts' : 'owner-set amount';
+    w.your_amount = sh ? null : l.fixed_amount;
   } else if ((l.status === 'not_covered' || l.status === 'not_covered_whole') && l.quote > 0
              && (!w.src || w.src === 'quote')) {
     w.src = 'quote'; w.src_label = 'vendor quote'; w.your_amount = l.quote; w.your_unit = null;
@@ -2272,8 +2382,26 @@ function wsLine(l) {
   return w;
 }
 
+// Your other line amounts, owner-set money left out: what a line given as a
+// share of the other lines ("Contingency, 10%") is a share of in YOUR OPCC.
+// (The model's amount for it, amount_p50, is the same share of the model's
+// expected low bid for those lines.) worksheet.totals() does the same.
+function wsShareBase() {
+  let s = 0;
+  ((S.result || {}).lines || []).forEach(o => {
+    if (o.status === 'owner_set') return;
+    const a = wsAmount(o, wsLine(o));
+    if (a !== null) s += a;
+  });
+  return s;
+}
+
 function wsAmount(l, w) {
-  if (l.status === 'owner_set') return isNum(l.fixed_amount) ? Number(l.fixed_amount) : null;
+  if (l.status === 'owner_set') {
+    const sh = l.amount_from_pct;
+    if (sh && isNum(sh.pct)) return Number(sh.pct) / 100 * wsShareBase();
+    return isNum(l.fixed_amount) ? Number(l.fixed_amount) : null;
+  }
   if (w.src === 'quote' && isNum(w.your_amount)) return Number(w.your_amount);
   return isNum(w.your_unit) && isNum(l.quantity) ? w.your_unit * l.quantity : null;
 }
@@ -2359,12 +2487,15 @@ function renderWorksheetRows(r) {
   (r.lines || []).forEach(l => {
     const judg = wsJudgment(l);
     if (S.ws.filter && !judg.length) return;
-    const open = !!S.ws.open[l.row_id] || (S.ws.filter && judg.length && Object.keys(S.ws.open).length < 1000
-      && flagged.indexOf(l) < 12);
-    body.appendChild(resultRow(l, judg, open));
+    // a contingency has no references to open; its (empty, hidden) detail
+    // row stays so a drag moves the pair like any other line
+    const plain = shareOrContingency(l);
+    const open = !plain && (!!S.ws.open[l.row_id] || (S.ws.filter && judg.length
+      && Object.keys(S.ws.open).length < 1000 && flagged.indexOf(l) < 12));
+    body.appendChild(plain ? contingencyRow(l) : resultRow(l, judg, open));
     const d = el('tr', { class: 'detail', 'data-detail': l.row_id, id: 'detail-' + l.row_id,
       style: open ? '' : 'display:none' },
-      el('td', { colspan: 10 }, lineDetail(l)));
+      el('td', { colspan: 10 }, plain ? null : lineDetail(l)));
     body.appendChild(d);
     if (open) {
       const host = $('[data-refs="' + CSS.escape(l.row_id) + '"]', d);
@@ -2410,9 +2541,14 @@ function renderWsTotals(r) {
     const sg = d > 0 ? '+' : '\u2212';
     return sg + money(Math.abs(d)) + ' (' + sg + Math.abs(100 * (t.yours / m - 1)).toFixed(1) + '%)';
   };
-  const cin = el('input', { type: 'text', class: 'cellinput num', value: isNum(S.ws.contingency) ? S.ws.contingency : '',
-    placeholder: '0', style: 'width:64px', 'data-fk': 'ws:contingency',
-    onchange: e => { const v = parseNum(e.target.value); S.ws.contingency = isNum(v) ? v : null; S.ws.contTouched = true; afterInput(renderWsTotalsNow); } });
+  // picked from a list (a saved worksheet's other value is kept in it)
+  const curC = isNum(S.ws.contingency) ? Number(S.ws.contingency) : 0;
+  const cpcts = WS_CONTINGENCY_PCTS.slice();
+  if (!cpcts.includes(curC)) { cpcts.push(curC); cpcts.sort((a, b) => a - b); }
+  const cin = el('select', { class: 'cpct', 'data-fk': 'ws:contingency', 'aria-label': 'Your contingency',
+    title: 'Added to your line amounts; owner-set allowances are left out',
+    onchange: e => { S.ws.contingency = Number(e.target.value); S.ws.contTouched = true; afterInput(renderWsTotalsNow); } },
+    cpcts.map(p => el('option', { value: String(p), text: p ? p + '%' : 'none (0%)', selected: p === curC })));
   const plusNc = t.nc ? ' + not-covered ' : ' ';
   host.appendChild(el('div', { class: 'wstot' }, [
     el('div', { class: 'yours' }, [
@@ -2433,12 +2569,7 @@ function renderWsTotals(r) {
         el('span', { class: 'dim', text: '  you ' + vs(t.m80) })]),
       t.nc ? el('div', { class: 'dim small', text: 'P50 ' + money(t.p50) + ' and P80 ' + money(t.p80)
         + ' leave the not-covered lines out; your ' + money(t.nc) + ' for them is added to both here.' }) : null,
-      el('div', { class: 'cont' }, [el('span', { class: 'lab', text: 'Your contingency % ' }), cin,
-        el('span', { class: 'cpicks' }, [0, 10, 15, 20].map(p => el('button', {
-          type: 'button', class: 'chip cpick' + (t.c === p ? ' sel' : ''), text: p + '%',
-          title: p ? 'Add ' + p + '% contingency to your line amounts (owner-set allowances excluded)'
-            : 'No contingency',
-          onclick: () => { S.ws.contingency = p; S.ws.contTouched = true; renderWsTotalsNow(); } })))]),
+      el('div', { class: 'cont' }, [el('span', { class: 'lab', text: 'Your contingency ' }), cin]),
       contingencyGuide(r, t),
     ]),
   ]));
@@ -2457,8 +2588,7 @@ function renderWsTotalsNow() { renderWsTotals(S.result); }
 // same market: the share of forward-scored lettings with m x P50 < low bid,
 // read off the market's curve (context.under_curve, [[m, share], ...]).
 function contingencyLines(r) {
-  return ((r && r.lines) || []).filter(l => l.status === 'owner_set'
-    && /contingenc/i.test(l.description || ''));
+  return ((r && r.lines) || []).filter(isContingencyResult);
 }
 
 function underAt(curve, m) {
@@ -2480,7 +2610,7 @@ function contingencyGuide(r, t) {
   const already = cl.length ? el('div', { class: 'cnow', text: 'Your schedule already carries '
     + (cl.length === 1 ? 'a contingency allowance' : cl.length + ' contingency allowances') + ' ('
     + cl.map(l => (l.item_no ? 'item ' + l.item_no + ': ' : '') + (l.amount_from_pct
-      ? l.amount_from_pct.pct + '% of the other lines, ' + money(l.amount_p50) : money(l.amount_p50))).join('; ')
+      ? l.amount_from_pct.pct + '% of your other lines, ' : '') + money(wsAmount(l, wsLine(l)))).join('; ')
     + '), so this contingency starts at 0% to avoid counting it twice. Add one only for '
     + 'something that allowance does not cover, such as design still in progress.' }) : null;
   const kids = [already, el('div', { text: 'Contingency covers what this estimate cannot see yet: scope that may still '
@@ -2734,6 +2864,39 @@ const ROW_CONTROLS = 'input, select, textarea, button, a, label';
 
 function rowToggles(e) {
   return !(e.target && e.target.closest && e.target.closest(ROW_CONTROLS));
+}
+
+// A contingency in the worksheet (user, 2026-11-21: "it is just contingency"):
+// what it is and its amount. A share line is that share of your other line
+// amounts; the model's P50 carries the same share of its own expected low
+// bid. No item type, references, accuracy badge or price picks.
+function contingencyRow(l) {
+  const w = wsLine(l);
+  const sh = l.amount_from_pct;
+  const amt = wsAmount(l, w);
+  const what = isContingencyResult(l) ? 'Contingency' : 'Owner-set allowance';
+  const tr = el('tr', { 'data-line': l.row_id, class: 'controw st-' + l.status, tabindex: '0',
+    'data-fk': focusKey('ws', l.row_id, 'row'), title: what + (sh ? ': ' + sh.pct + '% of your other '
+      + 'line amounts, owner-set lines left out. In P50 it is ' + sh.pct + '% of the model’s '
+      + 'expected low bid for those lines, ' + money(l.amount_p50) + '.' : ': the owner’s fixed '
+      + 'amount, at face value.') + ' Drag to move the line.' });
+  tr.appendChild(el('td', { class: 'dim nowrap', text: l.item_no || '' }));
+  tr.appendChild(el('td', {}, [
+    el('span', { class: 'ldesc', text: l.description }),
+    el('div', { class: 'dim small', text: what + ' · ' + (sh ? sh.pct + '% of your other line amounts'
+      : 'the owner’s fixed amount') }),
+  ]));
+  tr.appendChild(el('td', {}));
+  tr.appendChild(el('td', {}));
+  tr.appendChild(el('td', { class: 'num money', text: sh ? sh.pct + '%' : 'fixed' }));
+  tr.appendChild(el('td', {}));
+  tr.appendChild(el('td', {}));
+  tr.appendChild(el('td', { class: 'num money dim', text: sh ? sh.pct + '%' : 'fixed' }));
+  tr.appendChild(el('td', { class: 'num money p50', text: amt === null ? '—' : money(amt) }));
+  tr.appendChild(el('td', {}, el('input', { class: 'cellinput note', type: 'text', value: w.note || '',
+    placeholder: 'note', 'data-fk': focusKey('ws', l.row_id, 'note'),
+    onchange: e => { w.note = e.target.value; } })));
+  return tr;
 }
 
 function resultRow(l, judg, isOpen) {
