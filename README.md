@@ -64,7 +64,7 @@ Municipal figures use the "covered" scope (see below). The main rows give the co
   - Mobilization, traffic control, site preparation and SWPPP / erosion-control lump sums are priced at about the same dollar amount on every job. Bidders price them as a share of the job (mobilization is typically about 5%).
   - Small city jobs (low bid under $0.5M, 54 lettings) come out about 26% high (P50 error 32%).
   - Jobs over $2M come out about 7% low, and P80 is under the low bid on 24% of them.
-  - A fix (lump sums as a share of the job, together with a size correction) is being tested.
+  - Pricing them as a share of the job fixes the lump-sum lines themselves, but it did not make job totals more accurate (round 12, under "Tried and not adopted").
 - **Creek erosion and drainage** (39 lettings) is now close to the city average: P50 error 20%, P80 under the low bid 10% of the time, median overshoot 41%.
 - **Recent lettings run higher than history.** In 2026, P80 was under the low bid on 19% of municipal and 21% of TxDOT lettings; TxDOT is above the 20% floor. The guard adapts, but with a lag.
 - **About a third of the worst municipal misses cannot be fixed this way.** They are ordinary market variation between bidders that bid history alone cannot predict. Another sixth are one-off specialty items, which are now marked not covered.
@@ -76,6 +76,17 @@ Municipal figures use the "covered" scope (see below). The main rows give the co
 - **Forward tests:** passed the registered test. Municipal overshoot fell 49% → 42% and P50 error 24% → 20%.
 - **Locked test set:** failed. Its tighter P80 margin let P80 fall under the low bid on 29% of lettings, against 19% for the current rule.
 - **Status:** kept in the code, switched off. It will be re-checked on new lettings.
+
+**Lump sums as a share of the job (round 12, registered before scoring).** Mobilization, traffic control, site preparation, SWPPP and bonds were priced as a share of the rest of the job. The shares were learned from earlier bids, by job size. A size-dependent centring of P50 was tested alone and together with it.
+- **The lump-sum lines themselves became much more accurate.**
+  - Against the median bidder, the typical miss fell from about 2.3× to 1.7×.
+  - On small jobs our lump sums went from 2.8× the bidders' amounts to 0.9×; on large jobs from 0.56× to 0.97×.
+- **Size-dependent centring removed the size bias of P50.** The median P50 ÷ low bid on small / medium / large jobs went from 1.26 / 1.07 / 0.94 to 1.10 / 1.05 / 1.00.
+- **The spread of job-total errors did not shrink** (mean |ln| 0.331 either way). So the P80 margin needed to stay at or above the low bid 80% of the time stayed as wide.
+  - No variant lowered the median overshoot by the registered margin.
+  - The lump-sum variants pushed the 2026 under-rate just over its limit, by one letting.
+  - On small jobs, lowering the lump sums exposed unit-priced lines that run low. On large jobs, most of the misses were too large for a few percent to rescue.
+- **Status:** not adopted; production is unchanged. The code is kept in a development copy, switched off.
 
 ## Item-level accuracy
 
@@ -94,7 +105,7 @@ How close the price of each kind of line item is, before the lines are added up.
 **What it shows**
 - **Standard concrete, drainage and paving items are already close to the bidders' own spread.** Examples: curb ramps, driveways, inlets, sidewalk, concrete pavement, storm pipe and box culverts in cities; riprap, headwalls, box culverts, storm pipe and concrete pavement on TxDOT.
 - **Lump sums and other general-condition items are the weakest in both markets.**
-  - In cities, mobilization, traffic control, site preparation and SWPPP lump sums are priced at about the same dollar amount on every job, while bidders price them as a share of the job. A fix is being tested.
+  - In cities, mobilization, traffic control, site preparation and SWPPP lump sums are priced at about the same dollar amount on every job, while bidders price them as a share of the job. A share-of-job rule makes these lines much closer to the bids (round 12) but did not improve job totals, so it is not in use yet.
   - On TxDOT, mobilization is already priced as a share of the job.
 - **Many items are 7–11 points more accurate on TxDOT than in cities:** sidewalk, concrete pavement, storm pipe and box culverts.
   - TxDOT's standard item codes keep descriptions uniform and history deep. City wording varies, and city data is thinner.
