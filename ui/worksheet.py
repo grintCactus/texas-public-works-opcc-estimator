@@ -250,12 +250,13 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
                          pk.get("project"), pk.get("owner"), pk.get("date"),
                          _m(pk.get("median_unit")), _m(pk.get("low_unit")),
                          _m(pk.get("median_esc")), src.get("document") or "",
-                         src.get("url") or ""])
+                         src.get("url") or "", src.get("mirror_url") or ""])
     out.append(("References appendix",
                 ["Item", "Description", "Rank", "Project", "Owner",
                  "Letting date", "Median bid $/unit", "Low bid $/unit",
                  "Median bid in %s $" % ((refs or {}).get("to_year") or "bid-year"),
-                 "Source document", "source_url"], rows or [["(none)"]]))
+                 "Source document", "source_url", "mirror_url"],
+                rows or [["(none)"]]))
     return out
 
 

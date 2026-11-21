@@ -1979,22 +1979,33 @@ async function loadReferences(l, host, tries) {
 // public link recorded"; plus the local copy under data/external when the
 // server has it.
 function safeHttp(u) { return /^https?:\/\/[^\s]+$/i.test(String(u || '')) ? String(u) : ''; }
+function safeGithub(u) { return /^https:\/\/github\.com\/[^\s]+$/.test(String(u || '')) ? String(u) : ''; }
 
+// Links under a project name, in this order: (a) the original we hold,
+// served from data/external; (b) the public page it came from, with its
+// host; (c) its copy in the public GitHub data repository, when
+// ui/public_mirror.json maps it.
 function srcLinks(src) {
   src = src || {};
-  const url = safeHttp(src.url);
   const kids = [];
-  if (url) {
-    kids.push(el('a', { class: 'srclink', href: url, target: '_blank', rel: 'noopener noreferrer',
-      title: url, text: 'Source: ' + (src.host || 'public page') + (src.kind ? ' \u2014 ' + src.kind : '') }));
-  } else {
-    kids.push(el('span', { class: 'dim', text: 'no public link recorded' }));
-  }
   if (src.local_path) {
     kids.push(el('a', { class: 'srclink local', target: '_blank', rel: 'noopener',
       href: '/api/source-file?path=' + encodeURIComponent(src.local_path),
-      title: 'The original file as harvested: data/' + src.local_path,
-      text: 'local copy' + (src.local_kind ? ' (' + src.local_kind + ')' : '') }));
+      title: 'The original file' + (src.local_kind ? ' (' + src.local_kind + ')' : '')
+        + ', as harvested: data/' + src.local_path,
+      text: 'Open original (local copy)' }));
+  }
+  const url = safeHttp(src.url);
+  if (url) {
+    kids.push(el('a', { class: 'srclink', href: url, target: '_blank', rel: 'noopener noreferrer',
+      title: url, text: 'Source page: ' + (src.host || 'public page') + (src.kind ? ' — ' + src.kind : '') }));
+  } else {
+    kids.push(el('span', { class: 'dim', text: 'no public link recorded' }));
+  }
+  const mirror = safeGithub(src.mirror_url);
+  if (mirror) {
+    kids.push(el('a', { class: 'srclink mirror', href: mirror, target: '_blank', rel: 'noopener noreferrer',
+      title: mirror, text: 'Public mirror (GitHub)' }));
   }
   return el('div', { class: 'srclinks' }, kids);
 }

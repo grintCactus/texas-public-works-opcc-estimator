@@ -231,14 +231,27 @@ an option. CSV export per tab. Built on demand from `master_panel.csv`,
 `source_set == "external"` rows only (one background pass records each
 letting's byte ranges in the file), cached in memory.
 
-Under every project name: its **public source page** — from the harvest
-manifests (`data/external/**/_manifest*.csv`), else `project_metadata.csv` —
-labelled with the host and kind ("Source: legistar1.granicus.com — council
-agenda attachment"), http(s) only, opening in a new tab; or "no public link
-recorded". Next to it the **local copy** of the original file, served only when
-the path resolves inside `data/external/` to the source file of a public
-letting (no `..`, no symlink out, never top-level `data/` files, `.inbox` or
-`.cache`).
+Under every project name, in this order:
+
+1. **Open original (local copy)** — the file we hold, served only when the path
+   resolves inside `data/external/` to the source file of a public letting (no
+   `..`, no symlink out, never top-level `data/` files, `.inbox` or `.cache`);
+2. **Source page** — the public page it came from, from the harvest manifests
+   (`data/external/**/_manifest*.csv`), else `project_metadata.csv`, labelled
+   with the host and kind ("Source page: legistar1.granicus.com — council
+   agenda attachment"), http(s) only, opening in a new tab; or "no public link
+   recorded";
+3. **Public mirror (GitHub)** — the copy in the public GitHub data repository,
+   only when the optional `ui/public_mirror.json` maps the file:
+   `{"external/<owner>/<file>": "https://github.com/.../blob/main/<owner>/<file>"}`,
+   keyed by the same data-relative path as the local copy (a `data/` prefix is
+   tolerated). Only `https://github.com/` links are accepted; the file is
+   re-read when it changes. The main session generates it once the data
+   repository is published; without it there is no mirror link.
+
+The exports carry `source_url` and `mirror_url` (blank when unmapped) for the
+similar projects, the line references and the worksheet's references
+appendix.
 
 ## OPCC worksheet
 
@@ -445,8 +458,8 @@ price. They must be identical.
 
 ## Tests
 
-159 tests (stdlib `unittest`, about 40 s including the loads):
-`test_intake.py` (37, offline: no `data/clean`, no network, fake Claude
+164 tests (stdlib `unittest`, about 40 s including the loads):
+`test_intake.py` (42, offline: no `data/clean`, no network, fake Claude
 backends) and `test_ui.py` (122). They pin, among others:
 
 - **Safety:** the OPCC is refused; unclassified, unpriced and quantity-less lines
@@ -478,7 +491,8 @@ backends) and `test_ui.py` (122). They pin, among others:
 - **FullBidTab / SourcePaths / SourceLinksShown:** no internal row in a tab;
   bidder totals equal the panel's; the file endpoint stays inside
   `data/external` (`..`, absolute paths, symlinks); manifest URLs shown; only
-  http(s) links.
+  http(s) links; link order local copy → source page → GitHub mirror; no
+  mirror link without a mapping; only https://github.com/ mirror links.
 - **Worksheet:** reference ranges, totals, export, save / reopen, and the hard
   rule that your prices are output only.
 - **ExpectedBidders, ItemAccuracy, Contract, Export, Http, Matching,
