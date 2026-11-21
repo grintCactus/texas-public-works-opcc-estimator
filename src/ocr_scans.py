@@ -43,6 +43,13 @@ chosen one by one, from the PDF itself (page_survey / pages_to_ocr):
   * an OVERPRINTED page -- over 15% of its glyphs drawn on a spot another,
     different glyph already holds (two text layers on top of each other) --
     is OCR'd too: what the eye sees there is not what the text layer says;
+  * a VECTOR-GLYPH page -- under 200 text characters, no scan image over 30%
+    of the page, and 200+ filled curve paths -- is OCR'd too: its words are
+    drawn as outlines ("Microsoft: Print To PDF" of a spreadsheet, CAD
+    exports), so it has neither a text layer nor an image (added 2026-11-21:
+    NRH RFP 25-022's tab carried only its digital signature as text, 69
+    characters, so the audit called the file readable and the image rule
+    never fired; no sidecar, 0 rows);
   * every other page keeps its text layer.
 In a file whose other pages have text, only target pages that look like a
 bid tabulation are transcribed (table_pages: TABLE_MONEY amounts on the fast
@@ -453,6 +460,21 @@ def text_layer_page(page) -> str:
 IMAGE_MAX_CHARS = 30      # a page with fewer text characters than this ...
 IMAGE_MIN_COVER = 0.30    # ... and an image over this share of it is a scan
 OVERPRINT_SHARE = 0.15    # glyphs drawn where a different glyph already is
+OUTLINE_MAX_CHARS = 200   # a page with fewer text characters than this ...
+OUTLINE_MIN_PATHS = 200   # ... and this many filled curve paths draws its words
+
+
+def _glyph_paths(page) -> int:
+    """Filled paths with a curve segment: letters and digits drawn as vector
+    outlines.  Table rules and cell boxes are straight; chart lines are
+    stroked, not filled.  Measured 2026-11-21 on data/external: outlined tabs
+    281-3,194 per page (NRH, Carrollton, Frisco, Richardson), a CAD motor drawing 168,
+    the TxDOT index binder's charts 102."""
+    n = 0
+    for d in page.get_drawings():
+        if d.get("fill") is not None and any(it[0] == "c" for it in d.get("items", ())):
+            n += 1
+    return n
 
 
 def _overprint(page) -> float:
@@ -476,8 +498,9 @@ def _overprint(page) -> float:
 
 
 def page_survey(pdf: Path, max_pages: int = 400):
-    """Per page: text characters, image cover (share of the page), and the
-    overprinted-glyph share."""
+    """Per page: text characters, image cover (share of the page), the
+    overprinted-glyph share, and (near-empty pages only) the filled curve
+    paths that draw outlined words."""
     import fitz
     out = []
     doc = fitz.open(str(pdf))
@@ -493,8 +516,16 @@ def page_survey(pdf: Path, max_pages: int = 400):
                     cover += abs(fitz.Rect(im["bbox"]) & page.rect)
             except Exception:                                     # noqa: BLE001
                 pass
-            out.append({"page": i + 1, "chars": n_chars, "img_cover": min(1.0, cover / area),
-                        "overprint": _overprint(page) if n_chars >= 80 else 0.0})
+            cover = min(1.0, cover / area)
+            glyphs = 0
+            if n_chars < OUTLINE_MAX_CHARS and cover <= IMAGE_MIN_COVER:
+                try:   # only near-empty pages pay for get_drawings()
+                    glyphs = _glyph_paths(page)
+                except Exception:                                 # noqa: BLE001
+                    glyphs = 0
+            out.append({"page": i + 1, "chars": n_chars, "img_cover": cover,
+                        "overprint": _overprint(page) if n_chars >= 80 else 0.0,
+                        "glyphs": glyphs})
     finally:
         doc.close()
     return out
@@ -508,6 +539,9 @@ def pages_to_ocr(survey) -> dict:
             out[s["page"]] = "image"
         elif s["overprint"] > OVERPRINT_SHARE:
             out[s["page"]] = "overprinted text layer"
+        elif (s["chars"] < OUTLINE_MAX_CHARS and s["img_cover"] <= IMAGE_MIN_COVER
+              and s.get("glyphs", 0) >= OUTLINE_MIN_PATHS):
+            out[s["page"]] = "vector glyphs"
     return out
 
 
@@ -679,9 +713,28 @@ def _selftest() -> bool:
               {"page": 2, "chars": 900, "img_cover": 0.0, "overprint": 0.4},
               {"page": 3, "chars": 900, "img_cover": 0.0, "overprint": 0.0},
               {"page": 4, "chars": 1200, "img_cover": 0.98, "overprint": 0.0},
-              {"page": 5, "chars": 0, "img_cover": 0.1, "overprint": 0.0}]
-    check("pages_to_ocr", pages_to_ocr(survey) == {1: "image", 2: "overprinted text layer"},
+              {"page": 5, "chars": 0, "img_cover": 0.1, "overprint": 0.0},
+              {"page": 6, "chars": 69, "img_cover": 0.01, "overprint": 0.0, "glyphs": 1346},
+              {"page": 7, "chars": 20, "img_cover": 0.0, "overprint": 0.0, "glyphs": 168},
+              {"page": 8, "chars": 900, "img_cover": 0.0, "overprint": 0.0, "glyphs": 5000}]
+    check("pages_to_ocr", pages_to_ocr(survey) == {1: "image", 2: "overprinted text layer",
+                                                   6: "vector glyphs"},
           repr(pages_to_ocr(survey)))
+    # outlined words (filled curves) are counted; straight table rules and
+    # stroked curves are not
+    doc = fitz.open()
+    pg = doc.new_page(width=612, height=792)
+    for k in range(40):
+        x, y = 40 + (k % 10) * 50, 60 + (k // 10) * 30
+        sh = pg.new_shape()
+        sh.draw_bezier((x, y), (x + 5, y - 8), (x + 10, y - 8), (x + 12, y))
+        sh.finish(fill=(0, 0, 0), color=None, closePath=True)
+        sh.commit()
+    for y in (300, 320, 340):
+        pg.draw_line((40, y), (560, y), width=1.0)
+    pg.draw_bezier((40, 500), (100, 450), (200, 550), (300, 500), color=(0, 0, 0))
+    check("glyph paths", _glyph_paths(pg) == 40, repr(_glyph_paths(pg)))
+    doc.close()
     # triage: a tabulation page, its continuation, an invoice, a letter
     tab = "BID TABULATION\n1 Sod 100 SY 5.00 500.00 6.00 600.00 7.00 700.00\n" \
           "2 Seed 10 SY 1.00 10.00 2.00 20.00 3.00 30.00"
