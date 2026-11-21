@@ -158,8 +158,98 @@ class PageInteractions(unittest.TestCase):
                     "return s.options[s.selectedIndex].text; }", row), "pick…")
                 self.assertIn("Reference median", page.inner_text(row + " td:has(.yourcell) .dim.small"))
                 got = float(page.input_value(row + " input.yourp").replace(",", ""))
-                self.assertAlmostEqual(got, round(want, 2), places=2)
+                # the picked price, rounded up to a round number (the default)
+                self.assertAlmostEqual(got, page.evaluate("p => nicePrice(p, 'up')", want), places=2)
                 self.assertEqual(self.expanded(page, "r3"), "false")
+                self.assertEqual(errors, [])
+
+    def test_opcc_conventions_on_the_worksheet(self):
+        """2026-11-21 (user and their team): prices are round numbers;
+        mobilization and temporary erosion control are the engineer's to
+        fill in; the references show the average bid; the P50/P80
+        explanation is folded until asked for and carries a picture."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                # round numbers: the model's price, rounded up by default
+                for k in ("r3", "r4", "r7"):
+                    got = float(page.input_value('tr[data-line="%s"] input.yourp' % k))
+                    want = page.evaluate("k => nicePrice(S.result.lines.find(l => l.row_id === k)"
+                                         ".unit_price_p50, 'up')", k)
+                    self.assertAlmostEqual(got, want, places=2)
+                    self.assertEqual(got, page.evaluate("v => nicePrice(v, 'up')", got))
+                self.assertEqual(page.evaluate("() => [nicePrice(48, 'up'), nicePrice(137.2, 'up'), "
+                                               "nicePrice(2022, 'nearest'), nicePrice(37585, 'up'), "
+                                               "nicePrice(6.07, 'up'), nicePrice(41.3, 'off')]"),
+                                 [50, 140, 2000, 38000, 6.5, 41.3])
+                page.select_option("#ws-round", "off")
+                page.wait_for_timeout(300)
+                exact = float(page.input_value('tr[data-line="r3"] input.yourp'))
+                self.assertAlmostEqual(exact, page.evaluate(
+                    "() => S.result.lines.find(l => l.row_id === 'r3').unit_price_p50"), places=2)
+                # mobilization (r1) and temporary erosion control (r2): blank
+                for k in ("r1", "r2"):
+                    self.assertEqual(page.input_value('tr[data-line="%s"] input.yourp' % k), "")
+                    self.assertEqual(page.get_attribute('tr[data-line="%s"] input.yourp' % k,
+                                                        "placeholder"), "engineer input")
+                    self.assertIn("engineer input", page.inner_text('tr[data-line="%s"]' % k))
+                # the references show the average bid
+                page.click('tr[data-line="r3"] td:nth-child(2)')
+                page.wait_for_selector('[data-refs="r3"][data-loaded="1"]', timeout=30000)
+                self.assertIn("average bid $/unit", page.inner_text('[data-refs="r3"] thead').lower())
+                # P50 / P80: folded, a picture once opened
+                self.assertFalse(page.evaluate("() => document.querySelector('#r-headline details.meaning').open"))
+                page.click("#r-headline details.meaning > summary")
+                self.assertEqual(page.locator("#r-headline details.meaning svg.pp").count(), 2)
+                self.assertTrue(page.is_visible("#r-headline details.meaning svg.pp"))
+                self.assertEqual(errors, [])
+
+    def test_a_not_covered_line_with_your_number_stops_reminding(self):
+        """2026-11-21 (user): once a not-covered line has your number (a
+        worksheet price, or a vendor quote), the reminders about it go."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                k = page.evaluate("() => S.result.lines.find(l => l.status === 'not_covered').row_id")
+                self.assertGreater(page.locator("#r-headline .covnote").count(), 0)
+                self.assertIn("no bid history", page.inner_text("#r-warnings"))
+                self.assertEqual(page.evaluate("k => wsJudgment(S.result.lines.find(l => l.row_id === k))", k),
+                                 ["not covered"])
+                inp = 'tr[data-line="%s"] input.yourp' % k
+                page.fill(inp, "45000")
+                page.press(inp, "Tab")
+                page.wait_for_timeout(400)
+                self.assertEqual(page.locator("#r-headline .covnote").count(), 0)
+                self.assertNotIn("no bid history", page.inner_text("#r-warnings"))
+                self.assertIn("yours $90,000", page.inner_text("#r-notcovered"))
+                self.assertEqual(page.evaluate("k => wsJudgment(S.result.lines.find(l => l.row_id === k))", k), [])
+                self.assertEqual(errors, [])
+
+    def test_warnings_are_short_and_tick_to_gray(self):
+        """2026-11-21 (user): each warning is short (what, what to do, which
+        lines) and has a box to tick once read; ticked, it turns gray.
+        Nothing is blocked by it."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                cards = page.locator("#r-warnings .notice.ack")
+                n = cards.count()
+                self.assertGreater(n, 0)
+                for k in range(n):
+                    self.assertLess(len(cards.nth(k).locator("b").inner_text()), 110)
+                first = cards.nth(0)
+                self.assertNotIn("acked", first.get_attribute("class"))
+                first.locator("input[type=checkbox]").check()
+                self.assertIn("acked", first.get_attribute("class"))
+                self.assertEqual(page.eval_on_selector("#r-warnings .notice.ack.acked",
+                                                       "e => getComputedStyle(e).backgroundColor"),
+                                 page.evaluate("() => getComputedStyle(document.querySelector('.notice.acked'))"
+                                               ".backgroundColor"))
+                # the tick holds when the warnings are drawn again
+                page.evaluate("() => renderWarnings(S.result)")
+                self.assertIn("acked", page.locator("#r-warnings .notice.ack").nth(0).get_attribute("class"))
+                # nothing blocked: the export still works
+                self.assertTrue(page.is_enabled("#ws-xlsx"))
                 self.assertEqual(errors, [])
 
     def test_change_opens_on_our_reading(self):

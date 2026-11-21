@@ -37,18 +37,22 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
    - A contingency line (a lump sum worded as a contingency) has no item type and is not priced from history. Pick its size from a list: 5–25% of the subtotal (10% by default), or the owner's fixed amount when the bid form prints one.
    - Vendor quotes for specialty items the tool does not price (pumps, generators, prefabricated bridges, …).
 3. **Read the estimate.**
-   - P50 (expected low bid) and P80 (a not-under OPCC), with their ranges, the market's track record and a plain explanation of what each means.
+   - P50 (expected low bid) and P80 (a not-under OPCC), with their ranges and the market's track record.
+   - "What P50 and P80 mean" opens on a click: plain words with this job's numbers, a picture of the idea (where the low bid may land, and which line is P50 and which is P80), and how the spread is measured.
    - The items left out for a vendor quote, and the lump sums whose prices are uncertain.
+   - Warnings are one short sentence each, with what to do and the lines involved. Tick a warning once you have checked it and it turns gray. A not-covered line stops being flagged once it has your number: a vendor quote, or your own price in the worksheet.
 4. **Check the evidence.**
-   - Click any line to see the earlier public bids behind its price: project, date, quantity, low and median bidders' unit prices.
+   - Click any line to see the earlier public bids behind its price: project, date, quantity, and the average, median and low bidders' unit prices.
    - Open a project to see its whole bid tabulation, the original document, its public source page, and its copy in the data repository.
    - The four most similar past projects are shown with their full bids.
 5. **Build your OPCC.**
-   - In the worksheet, keep the model's unit price or pick one from the references, line by line. Add notes.
+   - In the worksheet, keep the model's unit price or pick one from the references, line by line: the newest item worded exactly like yours comes first, then averages, medians and lows. Add notes.
+   - Picked prices are rounded to a round number, in a step that grows with the price ($0.50 under $10, then $5, $10, $100, $500, $1,000). Up by default; to the nearest, or off, from the list. A price you type is never rounded.
+   - Mobilization and temporary erosion control are left for you to fill in. Whether a job has mobilization, and what erosion control a site needs, are the engineer's call. The model's price stays in the quick picks.
    - The estimate is laid out as an OPCC: the items, then the **subtotal**, then the **contingency** below it, then the **total**. This holds for P50, for P80 and for your own OPCC. A contingency given as a percentage stays that percentage of the subtotal at P50 and at P80.
    - Pick your own construction contingency from a list (0–25% of the subtotal): 10% by default, 0% when the schedule already carries a contingency line (then any extra shows as an additional construction contingency row). The page shows how often an OPCC that high came in under the low bid on past jobs: in cities, P50 + 10% did on about 30% of jobs, and P80 on about 14%.
    - "Your OPCC" is shown next to the model's P50 and P80.
-6. **Export** the worksheet to Excel or CSV. The first sheet is the OPCC itself, in the usual layout: item no., description, unit, quantity, unit cost and total cost, then Sub-Total, Construction Contingency and Project Total. After it come a summary next to the model's P50 / P80, every line with the model's prices and your notes, and a references appendix.
+6. **Export** the worksheet to Excel or CSV. The first sheet is the OPCC itself, in the usual layout: a title, the project, date, prepared by and project no.; then item no., description, units, quantity, unit cost, total cost, the date and the source of each unit cost; then Sub-Total, Construction Contingency and Project Total as live formulas, and a blank interim-review block for the engineer. After it come a summary next to the model's P50 / P80, every line with the model's prices and your notes, and a references appendix.
 
 ![The estimate for a public creek-bank schedule: expected low bid (P50) and recommended OPCC (P80) with their ranges, and one line opened to the earlier public bids behind its price](assets/screenshot-estimate.png)
 

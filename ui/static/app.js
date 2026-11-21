@@ -40,7 +40,7 @@ const S = {
   // the OPCC worksheet: the estimator's own prices -- OUTPUT ONLY, never part
   // of an estimate request
   ws: { lines: {}, contingency: DEFAULT_CONTINGENCY, refs: null, refsReq: null, filter: false,
-        open: {}, name: '' },
+        open: {}, name: '', round: 'up', prepared_by: '', project_no: '' },
 };
 
 const $ = (s, r) => (r || document).querySelector(s);
@@ -175,6 +175,32 @@ function notice(kind, title, body) {
       body ? (typeof body === 'object' ? body : el('div', { text: body })) : null,
     ]),
   ]);
+}
+
+// A warning you tick once read (user, 2026-11-21): a short title, what to
+// do, and the lines it is about. Ticked, it turns gray and steps back;
+// nothing is blocked either way. The tick holds while the warning says the
+// same thing (S.acks, keyed on its code and title).
+function ackKey(a) { return (a.code || '') + '|' + (a.title || a.text || ''); }
+
+function ackNotice(a) {
+  const key = ackKey(a);
+  const done = !!(S.acks && S.acks[key]);
+  const items = (a.items || []).map(t => el('li', { text: t }));
+  if (a.more) items.push(el('li', { class: 'dim', text: 'and ' + a.more + ' more' }));
+  const box = el('div', { class: 'notice ack ' + (done ? 'acked' : a.level), 'data-ack': a.code || '' }, [
+    el('label', { class: 'ackchk', title: 'Tick once you have read and checked this' },
+      el('input', { type: 'checkbox', checked: done, 'aria-label': 'Checked: ' + (a.title || a.text || ''),
+        onchange: e => { S.acks = S.acks || {}; S.acks[key] = e.target.checked;
+          box.className = 'notice ack ' + (e.target.checked ? 'acked' : a.level); } })),
+    el('span', { class: 'ic', text: a.level === 'severe' ? '\u2715' : '!' }),
+    el('div', { class: 'body-txt' }, [
+      el('div', {}, [el('b', { text: a.title || a.text || '' }),
+        a.action ? document.createTextNode(' ' + a.action) : null]),
+      items.length ? el('ul', { class: 'ackitems' }, items) : null,
+    ]),
+  ]);
+  return box;
 }
 
 async function withBusy(btn, fn) {
@@ -1087,7 +1113,7 @@ function renderGrid() {
   S.lines.forEach((l, i) => body.appendChild(gridRow(l, i)));
   const n = S.lines.filter(l => l.include).length;
   const noq = S.lines.filter(l => l.include && missingQuantity(l)).length;
-  const unc = S.lines.filter(l => l.include && l.cls && l.cls.coverage_class).length;
+  const unc = S.lines.filter(l => l.include && l.cls && l.cls.coverage_class && !(l.quote > 0)).length;
   const chk = S.lines.filter(l => l.include && l.cls && l.cls.intake && l.cls.intake.low
     && !isContingencyLine(l)).length;
   const byc = S.lines.filter(l => l.origin === 'claude').length;
@@ -1119,10 +1145,14 @@ function clsCell(l) {
     l.origin === 'claude' ? el('div', { class: 'badges' }, claudeBadge(l)) : null,
   ]);
   const badges = [];
-  if (c.coverage_class) badges.push(el('span', { class: 'badge unc',
-    title: 'Not covered: specialty item with almost no comparable bid history. It is not '
-      + 'priced and not in P50/P80 — enter a vendor quote under Project details.',
-    text: 'not covered: ' + c.coverage_label }));
+  // not covered: a reminder until you give a vendor quote, then just what it is
+  if (c.coverage_class) badges.push(l.quote > 0
+    ? el('span', { class: 'badge info', title: 'Not covered: your vendor quote is used for this line, '
+      + 'outside P50/P80.', text: 'not covered: ' + c.coverage_label + ' \u00b7 your quote ' + money(l.quote) })
+    : el('span', { class: 'badge unc',
+      title: 'Not covered: specialty item with almost no comparable bid history. It is not '
+        + 'priced and not in P50/P80 — enter a vendor quote under Project details.',
+      text: 'not covered: ' + c.coverage_label }));
   if (c.lowconf_class) badges.push(el('span', { class: 'badge lowc',
     title: 'Low confidence: lump sums like this vary widely between bidders; see the '
       + 'low-confidence panel in the results.', text: c.lowconf_label }));
@@ -2125,6 +2155,33 @@ function clearResult() {
   $('#jump-export').classList.add('off');
 }
 
+// A not-covered line has your number once you gave one: a vendor quote
+// (Project details) or a price of yours on the worksheet. The reminders --
+// the headline note, the alert, the P50/P80 "not included" line, the panel's
+// "needs a quote", the worksheet's "not covered" -- are for the lines still
+// without one (user, 2026-11-21: "if I filled in a number, it should go").
+function ncNumber(l) {
+  if (!l) return null;
+  if (l.quote > 0) return Number(l.quote);
+  const w = S.ws && S.ws.lines ? S.ws.lines[l.row_id] : null;
+  return w ? wsAmount(l, wsLine(l)) : null;
+}
+
+function ncOpen(r) {
+  return ((r && r.lines) || []).filter(l => (l.status === 'not_covered' || l.status === 'not_covered_whole')
+    && ncNumber(l) === null);
+}
+
+// the parts of the result that speak of the not-covered lines, again (a
+// worksheet price of yours can settle one)
+function renderNcReminders() {
+  const r = S.result;
+  if (!r) return;
+  renderHeadline(r);
+  renderWarnings(r);
+  renderNotCovered(r);
+}
+
 function renderResult() {
   const r = S.result;
   if (!r) return;
@@ -2148,7 +2205,7 @@ function renderHeadline(r) {
   const host = $('#r-headline');
   host.innerHTML = '';
   (r.alerts || []).filter(a => a.placement === 'above_headline')
-    .forEach(a => host.appendChild(notice(a.level, null, a.text)));
+    .forEach(a => host.appendChild(a.level === 'info' ? notice('info', null, a.text) : ackNotice(a)));
   const h = r.headline;
   const nc = r.not_covered;
   if (h.p50 === null || h.p50 === undefined) {
@@ -2158,8 +2215,9 @@ function renderHeadline(r) {
       : 'The estimator could not price this schedule; see the warnings below.'));
     return;
   }
-  const cov = h.covered_only ? el('div', { class: 'covnote', text: 'Covered lines only — '
-    + nc.n + ' not-covered line' + (nc.n === 1 ? ' is' : 's are') + ' not in this figure.' }) : null;
+  const open = ncOpen(r).length;
+  const cov = h.covered_only && open ? el('div', { class: 'covnote', text: 'Covered lines only — '
+    + open + ' not-covered line' + (open === 1 ? ' is' : 's are') + ' not in this figure.' }) : null;
   const band = (b, lab) => b ? el('div', { class: 'band' }, [
     el('span', { class: 'bl', text: lab }),
     el('span', { class: 'bv', text: short$(b[0]) + ' – ' + short$(b[1]) })]) : null;
@@ -2237,13 +2295,107 @@ function meaningBox(r) {
         + 'them, the less certain this kind of job is: small, unusual or thinly referenced jobs have '
         + 'wider gaps.')]),
   ];
-  if (h.covered_only && nc.n) items.push(el('li', {}, [el('b', { text: 'Not included.' }),
-    document.createTextNode(' Neither figure contains the ' + nc.n + ' not-covered line'
-      + (nc.n === 1 ? '' : 's') + '; add vendor quotes for ' + (nc.n === 1 ? 'it' : 'them') + '.')]));
-  return el('div', { class: 'meaning' }, [
-    el('div', { class: 'mtitle', text: 'What P50 and P80 mean' }),
-    el('ul', {}, items),
+  const open = ncOpen(r).length;
+  if (h.covered_only && open) items.push(el('li', {}, [el('b', { text: 'Not included.' }),
+    document.createTextNode(' Neither figure contains the ' + open + ' not-covered line'
+      + (open === 1 ? '' : 's') + ' still without a number; add vendor quotes for '
+      + (open === 1 ? 'it' : 'them') + '.')]));
+  const mk = c.market === 'txdot' ? 'TxDOT' : 'city / county';
+  const more = [
+    'Before the bids open, nobody knows what the low bid will be. What the estimate can say is where '
+      + 'it is likely to land: the curve on the left. The higher the curve, the more likely that amount; '
+      + 'the whole area under it is every way the bidding could turn out.',
+    'P50 is the line that splits that area in half. The low bid is as likely to come in under it as '
+      + 'over it, so it is the best single guess.',
+    'P80 sits further right, where 80% of the area is to its left: the low bid comes in at or under '
+      + 'P80 four times out of five. The shaded 20% to its right is the chance that it still comes in higher.',
+    'The picture on the right shows the same thing as a running total. Go up from an amount to the '
+      + 'curve and across: that is the share of jobs whose low bid came in at or under that amount. '
+      + '50% is reached at P50 and 80% at P80.',
+    'The distance between the two lines shows how uncertain the job is. A wide curve (small, unusual or '
+      + 'thinly referenced work) pushes P80 further from P50; a narrow one (common, well-referenced work) '
+      + 'keeps them close.' + (gap !== null ? ' On this job P80 is ' + Math.round(100 * gap)
+      + '% above P50.' : ''),
+    'How the curve is known: ' + (c.lettings ? c.lettings + ' past ' + mk + ' jobs' : 'past jobs')
+      + ' were each estimated using only bids made before them and compared with their actual low bid. '
+      + 'The spread of those misses is the width of the curve.',
+  ];
+  // folded until asked for (user, 2026-11-21: "collapsed; it expands only
+  // when they click"), then a fuller explanation with a picture of the idea
+  // stays as you left it when the headline is drawn again
+  const box = el('details', { class: 'meaning fold', open: !!S.meaningOpen }, [
+    el('summary', { class: 'mtitle', text: 'What P50 and P80 mean' }),
+    el('div', { class: 'mbody' }, [
+      el('ul', {}, items),
+      el('div', { class: 'mcharts', html: p50p80Picture() }),
+      el('div', { class: 'mnote', text: 'An illustration of the idea, not this job\u2019s data.' }),
+      el('div', { class: 'mmore' }, more.map(t => el('p', { text: t }))),
+    ]),
   ]);
+  box.addEventListener('toggle', () => { S.meaningOpen = box.open; });
+  return box;
+}
+
+// The picture behind P50 and P80, drawn from a textbook curve, not from any
+// job (user, 2026-11-21: "a theoretical picture ... which line is P50 and
+// which is P80"). Left: how likely each low bid is, the area split 50 / 30 /
+// 20 by the P50 and P80 lines. Right: the same as a running total, 50% at
+// P50 and 80% at P80. A lognormal curve with spread 0.36: P80 = 1.35 x P50.
+function p50p80Picture() {
+  const s = 0.36, x0 = 0.45, x1 = 2.15, W = 340, H = 200, L = 34, R = 12, T = 26, B = 36;
+  const p80 = Math.exp(0.8416 * s);
+  const pdf = x => Math.exp(-Math.pow(Math.log(x), 2) / (2 * s * s)) / (x * s * Math.sqrt(2 * Math.PI));
+  const erf = z => {           // Abramowitz and Stegun 7.1.26
+    const t = 1 / (1 + 0.3275911 * Math.abs(z));
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t
+      + 0.254829592) * t * Math.exp(-z * z);
+    return z >= 0 ? y : -y;
+  };
+  const cdf = x => 0.5 * (1 + erf(Math.log(x) / (s * Math.SQRT2)));
+  const X = x => L + (x - x0) / (x1 - x0) * (W - L - R);
+  const ymax = 1.25;
+  const Yd = v => H - B - v / ymax * (H - B - T);
+  const Yc = v => H - B - v * (H - B - T);
+  const f = n => n.toFixed(1);
+  const pts = (fn, a, b, Y) => {
+    const out = [];
+    for (let k = 0; k <= 90; k++) { const x = a + (b - a) * k / 90; out.push(f(X(x)) + ',' + f(Y(fn(x)))); }
+    return out;
+  };
+  const area = (a, b, cls) => '<polygon class="' + cls + '" points="' + f(X(a)) + ',' + f(Yd(0)) + ' '
+    + pts(pdf, a, b, Yd).join(' ') + ' ' + f(X(b)) + ',' + f(Yd(0)) + '"/>';
+  const vline = (x, y, cls) => '<line class="' + cls + '" x1="' + f(X(x)) + '" y1="' + f(y) + '" x2="'
+    + f(X(x)) + '" y2="' + f(H - B) + '"/>';
+  const txt = (x, y, t, cls, anchor) => '<text class="' + (cls || '') + '" x="' + f(x) + '" y="' + f(y)
+    + '" text-anchor="' + (anchor || 'middle') + '">' + t + '</text>';
+  const axis = '<line class="pp-axis" x1="' + L + '" y1="' + (H - B) + '" x2="' + (W - R) + '" y2="' + (H - B) + '"/>';
+  // left: how likely each low bid is
+  const left = '<svg class="pp" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="'
+    + 'A curve of how likely each low bid is. The P50 line splits the area in half; 80% of the area is left of the P80 line.">'
+    + area(x0, 1, 'pp-r50') + area(1, p80, 'pp-r30') + area(p80, x1, 'pp-r20')
+    + '<polyline class="pp-curve" points="' + pts(pdf, x0, x1, Yd).join(' ') + '"/>'
+    + vline(1, T - 6, 'pp-l50') + vline(p80, T - 6, 'pp-l80') + axis
+    + txt(X(1), T - 10, 'P50', 'pp-t50') + txt(X(p80), T - 10, 'P80', 'pp-t80')
+    + txt(X(0.78), Yd(0.35), '50%', 'pp-big') + txt(X((1 + p80) / 2), Yd(0.35), '30%', 'pp-big')
+    + txt(X(1.62), Yd(0.04), '20%', 'pp-big')
+    + txt(L, H - B + 16, 'lower', '', 'start') + txt(W - R, H - B + 16, 'higher', '', 'end')
+    + txt((L + W - R) / 2, H - 6, 'the low bid', '')
+    + txt(L, 14, 'how likely', '', 'start') + '</svg>';
+  // right: the running total
+  const c50 = 0.5, c80 = 0.8;
+  const hguide = (v, x, cls) => '<polyline class="' + cls + '" points="' + L + ',' + f(Yc(v)) + ' '
+    + f(X(x)) + ',' + f(Yc(v)) + ' ' + f(X(x)) + ',' + f(H - B) + '"/>';
+  const right = '<svg class="pp" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="'
+    + 'The running total: the share of jobs with the low bid at or under each amount reaches 50% at P50 and 80% at P80.">'
+    + '<line class="pp-axis" x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (H - B) + '"/>' + axis
+    + hguide(c50, 1, 'pp-g50') + hguide(c80, p80, 'pp-g80')
+    + '<polyline class="pp-curve" points="' + pts(cdf, x0, x1, Yc).join(' ') + '"/>'
+    + txt(L - 4, Yc(1) + 4, '100%', '', 'end') + txt(L - 4, Yc(c80) + 4, '80%', 'pp-t80', 'end')
+    + txt(L - 4, Yc(c50) + 4, '50%', 'pp-t50', 'end') + txt(L - 4, Yc(0) + 4, '0%', '', 'end')
+    + txt(X(1), H - B + 16, 'P50', 'pp-t50') + txt(X(p80), H - B + 16, 'P80', 'pp-t80')
+    + txt((L + W - R) / 2, H - 6, 'the low bid', '')
+    + txt(L, 14, 'share of jobs at or under it', '', 'start') + '</svg>';
+  return left + right;
 }
 
 function renderContext(r) {
@@ -2266,9 +2418,24 @@ function renderContext(r) {
 function renderWarnings(r) {
   const host = $('#r-warnings');
   host.innerHTML = '';
-  if ((S.leftOut || []).length) host.appendChild(notice('caution', null, leftOutText(S.leftOut)));
+  const lo = S.leftOut || [];
+  if (lo.length) host.appendChild(ackNotice({ level: 'caution', code: 'left_out',
+    title: lo.length + ' line' + (lo.length === 1 ? ' has' : 's have') + ' no quantity and '
+      + (lo.length === 1 ? 'is' : 'are') + ' left out of the estimate.',
+    action: 'Fill in a quantity in the takeoff.', items: lo.map(rowName) }));
+  const open = ncOpen(r);
   (r.alerts || []).filter(a => a.placement !== 'above_headline')
-    .forEach(a => host.appendChild(notice(a.level, null, a.text)));
+    // the not-covered alert names only the lines still without your number
+    .filter(a => a.code !== 'not_covered' || open.length)
+    .forEach(a => {
+      if (a.code === 'not_covered') {
+        a = Object.assign({}, a, { more: 0,
+          title: open.length + ' line' + (open.length === 1 ? ' has' : 's have') + ' no bid history and '
+            + (open.length === 1 ? 'is' : 'are') + ' left out of P50 and P80.',
+          items: open.map(l => String(l.description || l.item_no || '').slice(0, 60)) });
+      }
+      host.appendChild(a.level === 'info' ? notice('info', null, a.text) : ackNotice(a));
+    });
   const ws = r.warnings || [];
   if (!ws.length) return;
   host.appendChild(el('details', { class: 'fold warnfold' }, [
@@ -2289,10 +2456,15 @@ function renderNotCovered(r) {
       + 'synthetic turf / play equipment and meter vaults are listed here when present.)' }));
     return;
   }
-  host.appendChild(notice('caution', 'The expected low bid and the recommended OPCC above EXCLUDE these lines.',
-    'They are specialty items with almost no comparable bid history, so any figure '
-    + 'from history would be a guess. Price them from vendor quotes (enter them under '
-    + 'Project details) and add them.'));
+  const open = ncOpen(r);
+  host.appendChild(open.length
+    ? notice('caution', 'The expected low bid and the recommended OPCC above EXCLUDE these lines.',
+      'They are specialty items with almost no comparable bid history, so any figure '
+      + 'from history would be a guess. Price them from vendor quotes (enter them under '
+      + 'Project details) and add them.')
+    : el('div', { class: 'muted-note', text: 'Every not-covered line has your number. They stay outside '
+      + 'P50 and P80 (no comparable bid history); your numbers are added in the worksheet.' }));
+  const byId = new Map((r.lines || []).map(x => [x.row_id, x]));
   host.appendChild(el('table', { class: 'mini' }, [
     el('thead', {}, el('tr', {}, ['Item', 'Description', 'Class', 'Qty', 'Unit', 'Vendor quote']
       .map((h, k) => el('th', { class: k >= 3 && k !== 4 ? 'num' : '', text: h })))),
@@ -2300,7 +2472,8 @@ function renderNotCovered(r) {
       el('td', { text: l.item_no }), el('td', { text: l.description }),
       el('td', { text: l.class_label }), el('td', { class: 'num', text: qtyFmt(l.quantity) }),
       el('td', { text: l.unit }),
-      el('td', { class: 'num', text: l.quote ? money(l.quote) : 'needs a quote' }),
+      el('td', { class: 'num', text: l.quote ? money(l.quote)
+        : (ncNumber(byId.get(l.row_id)) !== null ? 'yours ' + money(ncNumber(byId.get(l.row_id))) : 'needs a quote') }),
     ]))),
   ]));
   if (nc.complete_total !== null && nc.complete_total !== undefined) {
@@ -2391,10 +2564,62 @@ function wsLine(l) {
   } else if ((l.status === 'not_covered' || l.status === 'not_covered_whole') && l.quote > 0
              && (!w.src || w.src === 'quote')) {
     w.src = 'quote'; w.src_label = 'vendor quote'; w.your_amount = l.quote; w.your_unit = null;
+  } else if (!w.src && engineerInput(l)) {
+    // the engineer sets it: no default price of yours (the model's price
+    // stays a quick pick)
+    w.your_unit = null; w.raw = null; w.src_label = engineerInputLabel(l);
   } else if ((!w.src || w.src === 'model') && l.unit_price_p50) {
-    w.src = 'model'; w.src_label = 'model price'; w.your_unit = l.unit_price_p50;
+    w.src = 'model'; w.src_label = 'model price'; w.raw = l.unit_price_p50;
+  }
+  // a price taken from the model or a quick pick follows the rounding
+  // setting (a printed cap is never rounded past the cap); a price you
+  // typed is never rounded
+  if (isNum(w.raw) && !['', 'you', 'quote', 'owner-set'].includes(w.src)) {
+    w.your_unit = nicePrice(w.raw, w.src === 'cap' ? (S.ws.round === 'off' ? 'off' : 'down') : S.ws.round);
   }
   return w;
+}
+
+// "Nice" prices for the OPCC (user's team, 2026-11-21: reviewers read $50
+// at a glance and stumble on $48): no cents and no stray units digit, in a
+// step that grows with the price -- $0.50 under $10, $5 to $100, $10 to
+// $1,000, $100 to $10,000, $500 to $100,000, then $1,000. Mode 'up' (the
+// default), 'nearest', 'down' or 'off'.
+function niceStep(v) {
+  const a = Math.abs(v);
+  return a < 1 ? 0.05 : a < 10 ? 0.5 : a < 100 ? 5 : a < 1000 ? 10 : a < 10000 ? 100
+    : a < 100000 ? 500 : 1000;
+}
+
+function nicePrice(v, mode) {
+  if (!isNum(v) || !mode || mode === 'off') return isNum(v) ? Number(v) : v;
+  const st = niceStep(Number(v)), k = Number(v) / st;
+  const n = mode === 'nearest' ? Math.round(k) : mode === 'down' ? Math.floor(k + 1e-9) : Math.ceil(k - 1e-9);
+  return Math.round(n * st * 100) / 100;
+}
+
+function priceText(v) {
+  return !isNum(v) ? '' : Number.isInteger(Number(v)) ? String(Number(v)) : Number(v).toFixed(2);
+}
+
+// Lines the engineer prices, not the worksheet (user, 2026-11-21): a
+// mobilization line (some bid forms have one, some do not; when it is there
+// the engineer sets it) and temporary erosion control as a lump sum (it
+// depends on the site -- a creek or a river, its size, how hard the work is).
+// No default price of yours; the model's P50 still prices them, since the low
+// bid includes them, and its price stays a quick pick.
+function engineerInput(l) {
+  if (!l || (l.status !== 'priced' && l.status !== 'unpriced')) return false;
+  const lc = String(l.lowconf_class || '');
+  if (l.family === 'mobilization' || lc === 'mobilization') return true;
+  const u = String(l.unit || '').trim().toUpperCase();
+  return (l.family === 'erosion_control' || /erosion/.test(lc)) && (u === 'LS' || u === '');
+}
+
+function engineerInputLabel(l) {
+  return (l.family === 'mobilization' || l.lowconf_class === 'mobilization')
+    ? 'engineer input: mobilization, if the job has it'
+    : 'engineer input: depends on the site (creek or river), its size and difficulty';
 }
 
 // Your SUBTOTAL: your amounts for every line except a contingency, which
@@ -2429,9 +2654,12 @@ function wsRefs(l) { return (S.ws.refs || {})[l.row_id] || null; }
 function wsJudgment(l) {
   const x = wsRefs(l);
   const why = [];
-  if (l.status === 'not_covered' || l.status === 'not_covered_whole') why.push('not covered');
+  if ((l.status === 'not_covered' || l.status === 'not_covered_whole') && wsAmount(l, wsLine(l)) === null) {
+    why.push('not covered');
+  }
   if (l.status === 'unpriced') why.push('not priced');
   if (l.amount_missing) why.push('allowance without an amount');
+  if (engineerInput(l)) why.push('engineer input');
   if (l.status === 'priced') {
     if (x && x.n_refs < 3) why.push(x.n_refs + ' reference' + (x.n_refs === 1 ? '' : 's'));
     if ((x && x.generic) || ['other', 'needs_review', ''].includes(l.family || '')) why.push('generic match');
@@ -2455,7 +2683,21 @@ function wsPicks(l) {
   const x = wsRefs(l);
   const yr = x && x.to_year ? x.to_year + ' $' : 'bid-year $';
   const out = [];
+  const tagOf = pk => pk.owner + ' ' + String(pk.date).slice(0, 4) + ' ' + pk.project;
+  // the newest reference worded exactly like this line comes first: the
+  // most telling price there is (user's team, 2026-11-21)
+  const ident = ((x && x.picks) || []).filter(pk => (pk.word_match || 0) >= 0.999
+      && isNum(isNum(pk.mean_esc) ? pk.mean_esc : pk.median_esc))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+  if (ident) {
+    const v = isNum(ident.mean_esc) ? ident.mean_esc : ident.median_esc;
+    out.push({ v: 'ident', price: v, date: ident.date, label: 'Newest identical item: ' + ident.project
+      + ' (' + ident.date + ') average ' + rate(v) + ' (' + yr + ')',
+      note: 'used ' + tagOf(ident) + ' average bid (identical item)' });
+  }
   if (l.unit_price_p50) out.push({ v: 'model', price: l.unit_price_p50, label: 'Model price ' + rate(l.unit_price_p50) });
+  if (x && x.range && isNum(x.range.mean)) out.push({ v: 'ref_mean', price: x.range.mean, label: 'Reference average ('
+    + x.n_refs + ', ' + yr + ') ' + rate(x.range.mean), note: 'average bid of ' + x.n_refs + ' reference projects' });
   if (x && x.range) out.push({ v: 'ref_median', price: x.range.median, label: 'Reference median ('
     + x.n_refs + ', ' + yr + ') ' + rate(x.range.median), note: 'reference median of ' + x.n_refs + ' projects' });
   const uh = x && x.unit_hint;
@@ -2469,14 +2711,16 @@ function wsPicks(l) {
       + (l.printed_cap.basis === 'rest' ? 'rest of the bid' : 'total bid') + ' = ' + money(capAmt),
     note: 'printed cap ' + l.printed_cap.text + '; bidders usually price it at or just under the cap' });
   const sp = similarPick(l);
-  if (sp) out.push({ v: 'similar', price: sp.m.their_low_unit, label: 'Most recent similar: '
+  if (sp) out.push({ v: 'similar', price: sp.m.their_low_unit, date: sp.c.date, label: 'Most recent similar: '
     + sp.c.project + ' (' + sp.c.date + ') low ' + rate(sp.m.their_low_unit),
     note: 'used ' + sp.c.owner + ' ' + String(sp.c.date).slice(0, 4) + ' ' + sp.c.project + ' low bid' });
   ((x && x.picks) || []).forEach((pk, i) => {
-    const tag = pk.owner + ' ' + String(pk.date).slice(0, 4) + ' ' + pk.project;
-    if (isNum(pk.median_esc)) out.push({ v: 'ref' + i + 'm', price: pk.median_esc, label: pk.project
+    const tag = tagOf(pk);
+    if (isNum(pk.mean_esc)) out.push({ v: 'ref' + i + 'a', price: pk.mean_esc, date: pk.date, label: pk.project
+      + ' (' + pk.date + ') average ' + rate(pk.mean_esc) + ' (' + yr + ')', note: 'used ' + tag + ' average bid' });
+    if (isNum(pk.median_esc)) out.push({ v: 'ref' + i + 'm', price: pk.median_esc, date: pk.date, label: pk.project
       + ' (' + pk.date + ') median ' + rate(pk.median_esc) + ' (' + yr + ')', note: 'used ' + tag + ' median bid' });
-    if (isNum(pk.low_esc)) out.push({ v: 'ref' + i + 'l', price: pk.low_esc, label: pk.project
+    if (isNum(pk.low_esc)) out.push({ v: 'ref' + i + 'l', price: pk.low_esc, date: pk.date, label: pk.project
       + ' (' + pk.date + ') low ' + rate(pk.low_esc) + ' (' + yr + ')', note: 'used ' + tag + ' low bid' });
   });
   return out;
@@ -2492,8 +2736,39 @@ function renderWorksheet(r) {
   // until the user sets it
   if (!S.ws.contTouched) S.ws.contingency = contingencyLines(r).length ? 0 : DEFAULT_CONTINGENCY;
   const focus = focusState();
+  syncWsMeta(r);
   renderWorksheetRows(r);
   restoreFocus(focus);
+}
+
+// the worksheet's heading fields show what S.ws holds (a reopened worksheet)
+function syncWsMeta(r) {
+  const i = (r && r.inputs) || {};
+  const set = (sel, v) => { const n = $(sel); if (n && document.activeElement !== n) n.value = v || ''; };
+  set('#ws-project', S.ws.name);
+  set('#ws-prepared', S.ws.prepared_by);
+  set('#ws-projno', S.ws.project_no);
+  const p = $('#ws-project');
+  if (p) p.placeholder = [i.owner_label, i.work_type_label, i.bid_date].filter(Boolean).join(' ') || 'project name';
+  const rs = $('#ws-round');
+  if (rs) rs.value = S.ws.round || 'off';
+}
+
+// Where a line's price came from, for the export's "Unit Cost Source" and
+// "Date" columns: the reference projects behind it, as an OPCC writes them.
+function wsSource(l, w) {
+  const x = wsRefs(l);
+  if (l.status === 'owner_set') return [w.src_label || 'owner-set amount', ''];
+  if (w.src === 'quote') return ['Vendor quote', ''];
+  if (w.src === 'you') return ['Engineer\u2019s price', ''];
+  if (!w.src) return [engineerInput(l) ? 'Engineer input' : '', ''];
+  if (w.src === 'model') {
+    const pk = ((x && x.picks) || []).slice(0, 3).map(p => p.owner + ' ' + String(p.date).slice(0, 4) + ' avg '
+      + rate(isNum(p.mean_esc) ? p.mean_esc : p.median_esc));
+    return ['Model price from earlier public bids' + (pk.length ? ': ' + pk.join('; ') : ''),
+      (x && x.latest && x.latest.date) || ''];
+  }
+  return [w.src_label || w.src, w.src_date || ''];
 }
 
 function renderWorksheetRows(r) {
@@ -2686,7 +2961,7 @@ function contingencyGuide(r, t) {
   }
   return el('div', { class: 'cguide' }, kids);
 }
-function renderWsNow() { renderWorksheet(S.result); }
+function renderWsNow() { renderWorksheet(S.result); renderNcReminders(); }
 
 async function loadWsRefs(tries) {
   const req = S.resultReq;
@@ -2713,10 +2988,13 @@ function wsDoc() {
     version: 1, kind: 'opcc-worksheet',
     request: S.resultReq,
     worksheet: { contingency_pct: S.ws.contingency, project_name: S.ws.name || '',
+      prepared_by: S.ws.prepared_by || '', project_no: S.ws.project_no || '', round: S.ws.round || 'off',
       lines: (r.lines || []).map(l => {
         const w = wsLine(l);
+        const so = wsSource(l, w);
         return { row_id: l.row_id, your_unit: w.your_unit, your_amount: wsAmount(l, w), src: w.src,
-          src_label: w.src_label, note: w.note, judgment: wsJudgment(l) };
+          src_label: w.src_label, note: w.note, judgment: wsJudgment(l), raw: w.raw,
+          src_date: w.src_date || '', source: so[0], source_date: so[1] };
       }) },
     totals: { subtotal: t.sub, contingency_pct: t.c, your_opcc: t.yours, missing: t.missing },
     model: { p50: t.p50, p80: t.p80 },
@@ -2837,10 +3115,15 @@ async function wsRestore(doc) {
   if (isNum(q.n_bidders)) { S.bidders.mode = 'user'; $('#in-bidders').value = q.n_bidders; }
   else { S.bidders.mode = 'auto'; }
   const wl = (doc.worksheet || {}).lines || [];
-  S.ws = { lines: {}, contingency: (doc.worksheet || {}).contingency_pct ?? null, contTouched: true, refs: null, refsReq: null,
-    filter: false, open: {}, name: doc.name || (doc.worksheet || {}).project_name || '' };
+  const dw = doc.worksheet || {};
+  S.ws = { lines: {}, contingency: dw.contingency_pct ?? null, contTouched: true, refs: null, refsReq: null,
+    filter: false, open: {}, name: doc.name || dw.project_name || '',
+    round: ['up', 'nearest', 'off'].includes(dw.round) ? dw.round : 'off',
+    prepared_by: dw.prepared_by || '', project_no: dw.project_no || '' };
+  // a worksheet saved before the rounding setting keeps its prices as saved
   wl.forEach(w => { S.ws.lines[w.row_id] = { your_unit: w.your_unit, src: w.src, src_label: w.src_label,
-    note: w.note || '', your_amount: w.your_amount }; });
+    note: w.note || '', your_amount: w.your_amount, raw: isNum(w.raw) ? Number(w.raw) : null,
+    src_date: w.src_date || '' }; });
   clearResult();
   renderGrid();
   renderQuotes();
@@ -2882,6 +3165,11 @@ function initWorksheet() {
     if (next) { next.focus(); if (next.select) next.select(); }
   });
   $('#ws-filter').addEventListener('change', e => { S.ws.filter = e.target.checked; renderWorksheet(S.result); });
+  // the export's heading and the rounding of picked prices
+  $('#ws-project').addEventListener('change', e => { S.ws.name = e.target.value.trim(); });
+  $('#ws-prepared').addEventListener('change', e => { S.ws.prepared_by = e.target.value.trim(); });
+  $('#ws-projno').addEventListener('change', e => { S.ws.project_no = e.target.value.trim(); });
+  $('#ws-round').addEventListener('change', e => { S.ws.round = e.target.value; afterInput(renderWsNow); });
   $('#ws-save').addEventListener('click', wsSave);
   $('#ws-open').addEventListener('click', wsOpen);
   $('#ws-xlsx').addEventListener('click', () => wsExport('xlsx'));
@@ -3006,12 +3294,14 @@ function resultRow(l, judg, isOpen) {
   // your unit price
   const locked = l.status === 'owner_set' || w.src === 'quote';
   const inp = el('input', { class: 'cellinput num yourp' + (isNum(w.your_unit) || locked ? '' : ' flag'), type: 'text',
-    value: locked ? '' : (isNum(w.your_unit) ? Number(w.your_unit).toFixed(2) : ''),
-    placeholder: locked ? (l.status === 'owner_set' ? 'owner-set' : 'vendor quote') : 'your $/unit',
+    value: locked ? '' : priceText(w.your_unit),
+    placeholder: locked ? (l.status === 'owner_set' ? 'owner-set' : 'vendor quote')
+      : (engineerInput(l) ? 'engineer input' : 'your $/unit'),
     disabled: locked, 'data-fk': focusKey('ws', l.row_id, 'price'), 'data-wsrow': l.row_id,
     onchange: e => {
       const v = parseNum(e.target.value);
       w.your_unit = isNum(v) ? v : null;
+      w.raw = null; w.src_date = '';
       w.src = isNum(v) ? 'you' : '';
       w.src_label = isNum(v) ? 'your price' : '';
       afterInput(renderWsNow);
@@ -3022,9 +3312,11 @@ function resultRow(l, judg, isOpen) {
     onchange: e => {
       const pk = picks.find(p => p.v === e.target.value);
       if (!pk) return;
-      w.your_unit = pk.price;
+      // the picked price, rounded per the worksheet's setting (wsLine)
+      w.raw = pk.price;
       w.src = pk.v === 'model' ? 'model' : pk.v;
       w.src_label = pk.label;
+      w.src_date = pk.date || '';
       if (pk.note && !w.note) w.note = pk.note;
       afterInput(renderWsNow);
     } }, [el('option', { value: '', text: 'pick…' })]       // a menu: it always reads "pick…"; the
@@ -3303,6 +3595,7 @@ const REF_COLS = [
   ['low_total', 'Project low bid', null],
   ['item', 'Item as written', null],
   ['quantity', 'Qty', x => x.quantity || 0],
+  ['mean_unit', 'Average bid $/unit', x => x.mean_unit || 0],
   ['median_unit', 'Median bid $/unit', x => x.median_unit],
   ['low_unit', 'Low bid $/unit', null],
   ['range', 'Bids range', null],
@@ -3361,7 +3654,7 @@ function referencesView(r) {
   function paint() {
     tableHost.innerHTML = '';
     const head = el('tr', {}, REF_COLS.map(([k, lab, f]) => el('th', {
-      class: (['bidders', 'low_total', 'quantity', 'median_unit', 'low_unit'].includes(k) ? 'num' : '')
+      class: (['bidders', 'low_total', 'quantity', 'mean_unit', 'median_unit', 'low_unit'].includes(k) ? 'num' : '')
         + (f && state.all ? ' sortable' : '') + (state.sort === k ? ' sorted' : ''),
       title: f && state.all ? 'Sort by ' + lab.toLowerCase() : '',
       text: lab + (state.sort === k ? (state.dir > 0 ? ' ▲' : ' ▼') : ''),
@@ -3386,6 +3679,12 @@ function referencesView(r) {
         el('td', { class: 'num', text: money(x.low_total) }),
         el('td', { text: x.item }),
         el('td', { class: 'num', text: qtyFmt(x.quantity) }),
+        // the average bid: what an OPCC's unit-cost source usually quotes
+        el('td', { class: 'num' }, [
+          el('div', { text: rate(x.mean_unit) }),
+          x.escalated_mean ? el('div', { class: 'dim', text: '≈ ' + rate(x.escalated_mean)
+            + ' in ' + r.to_year + ' $' }) : null,
+        ]),
         el('td', { class: 'num' }, [
           el('div', { class: 'strong', text: rate(x.median_unit) }),
           x.escalated_unit ? el('div', { class: 'dim', text: '≈ ' + rate(x.escalated_unit)

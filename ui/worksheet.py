@@ -261,36 +261,154 @@ def _m(v):
 #: The deliverable's own sheet, laid out as an OPCC is (user, 2026-11-21,
 #: showing one: items, Sub-Total, Construction Contingency (10%), Project
 #: Total): the estimator's prices only, no model or reference columns.
-OPCC_HEADER = ["Item No.", "Description", "Unit", "Quantity", "Unit Cost",
-               "Total Cost"]
+OPCC_HEADER = ["Item No.", "Description", "Units", "Quantity", "Unit Cost",
+               "Total Cost", "Date", "Unit Cost Source"]
+OPCC_TITLE = "OPINION OF PROBABLE CONSTRUCTION COSTS"
+
+
+def _txt(v, n=300) -> str:
+    return ("" if v is None else str(v))[:n]
+
+
+def _opcc_unit(l: dict, w: dict, a: Optional[float]) -> Optional[float]:
+    """The line's unit cost in the OPCC: your price, or for a lump amount
+    (owner-set money, a vendor quote) the amount over the quantity."""
+    q = _f(l.get("quantity"))
+    if l.get("status") == "owner_set" or w.get("src") == "quote":
+        return (a / q) if (a is not None and q) else None
+    return _f(w.get("your_unit"))
+
+
+def _below_label(l: dict) -> str:
+    pct = share_pct(l)
+    return "%s (%s)" % (_txt(l.get("description"), 200) or "Contingency",
+                        "%g%% of the sub-total" % pct if pct is not None
+                        else "owner's fixed amount")
+
+
+def _extra_label(t: dict) -> str:
+    return "%s (%g%%)" % ("Additional Construction Contingency" if t["below"]
+                          else "Construction Contingency",
+                          t["contingency_pct"])
 
 
 def opcc_rows(t: dict, ws: dict) -> list:
+    """The OPCC as values (the CSV's first block)."""
     rows = []
     for l, w, a in t["rows"]:
         q = _f(l.get("quantity"))
-        if l.get("status") == "owner_set" or w.get("src") == "quote":
-            unit = (a / q) if (a is not None and q) else None
-        else:
-            unit = _f(w.get("your_unit"))
-        rows.append([l.get("item_no") or "", l.get("description") or "",
-                     l.get("unit") or "", q if q is not None else "",
-                     _m(unit), _m(a)])
-    rows.append([""] * 6)
-    rows.append(["", "Sub-Total", "", "", "", _m(t["subtotal"])])
+        rows.append([_txt(l.get("item_no"), 20), _txt(l.get("description")),
+                     _txt(l.get("unit"), 12), q if q is not None else "",
+                     _m(_opcc_unit(l, w, a)), _m(a),
+                     _txt(w.get("source_date"), 10),
+                     _txt(w.get("source") or w.get("src_label"))])
+    rows.append([""] * 8)
+    rows.append(["", "Sub-Total", "", "", "", _m(t["subtotal"]), "", ""])
+    for l, w, a in t["below"]:
+        rows.append([_txt(l.get("item_no"), 20), _below_label(l), "", "", "",
+                     _m(a), "", _txt(w.get("note"))])
+    if t["contingency"]:
+        rows.append(["", _extra_label(t), "", "", "", _m(t["contingency"]),
+                     "", ""])
+    rows.append(["", "Project Total", "", "", "", _m(t["your_opcc"]), "", ""])
+    return rows
+
+
+def _opcc_sheet(sh, t: dict, ws: dict) -> list:
+    """The OPCC itself, laid out the way an OPCC is delivered (user's team,
+    2026-11-21), and generic: no firm, no names, no house style.
+    - A title, the project block (date, prepared by, project no.) and
+      ESTIMATED QUANTITIES.
+    - The items with their unit cost source.
+    - Sub-Total, the contingency and Project Total.
+    - A blank interim-review block for the engineer.
+    Returns the (cell, formula) pairs to write after the text-only pass, so
+    the totals stay live in Excel."""
+    from openpyxl.styles import Border, Font, PatternFill, Side
+    bold = Font(bold=True)
+    sh["A1"] = OPCC_TITLE
+    sh["A1"].font = Font(bold=True, size=13)
+    sh["A3"] = _txt(ws.get("project_name"), 120)
+    sh["A3"].font = Font(bold=True, size=12)
+    for r, lab, val in ((3, "DATE:", _dt.date.today().isoformat()),
+                        (4, "PREPARED BY:", _txt(ws.get("prepared_by"), 60)),
+                        (5, "PROJECT NO.:", _txt(ws.get("project_no"), 60))):
+        sh.cell(row=r, column=5, value=lab).font = bold
+        sh.cell(row=r, column=6, value=val)
+    sh["A7"] = "ESTIMATED QUANTITIES"
+    sh["A7"].font = bold
+    head = 8
+    for j, name in enumerate(OPCC_HEADER, 1):
+        c = sh.cell(row=head, column=j, value=name)
+        c.font = bold
+        c.fill = PatternFill("solid", fgColor="E5E7EB")
+        c.border = Border(bottom=Side(style="thin", color="9CA3AF"))
+    formulas = []
+    first = r = head + 1
+    for l, w, a in t["rows"]:
+        q = _f(l.get("quantity"))
+        unit = _opcc_unit(l, w, a)
+        sh.cell(row=r, column=1, value=_txt(l.get("item_no"), 20))
+        sh.cell(row=r, column=2, value=_txt(l.get("description")))
+        sh.cell(row=r, column=3, value=_txt(l.get("unit"), 12))
+        if q is not None:
+            sh.cell(row=r, column=4, value=q)
+        # full precision in the cell (the format shows whole dollars, or
+        # cents when there are any), so Excel's totals equal the page's
+        if unit is not None:
+            sh.cell(row=r, column=5, value=unit)
+        if unit is not None and q is not None:
+            formulas.append(("F%d" % r, "=D%d*E%d" % (r, r)))
+        elif a is not None:
+            sh.cell(row=r, column=6, value=a)
+        sh.cell(row=r, column=7, value=_txt(w.get("source_date"), 10))
+        sh.cell(row=r, column=8, value=_txt(w.get("source") or w.get("src_label")))
+        r += 1
+    last = r - 1
+    sub = r + 1
+    sh.cell(row=sub, column=2, value="Sub-Total").font = bold
+    formulas.append(("F%d" % sub, ("=SUM(F%d:F%d)" % (first, last))
+                     if last >= first else "=0"))
+    conts, r = [], sub + 1
     for l, w, a in t["below"]:
         pct = share_pct(l)
-        rows.append([l.get("item_no") or "", "%s (%s)" % (
-            l.get("description") or "Contingency",
-            "%g%% of the sub-total" % pct if pct is not None
-            else "owner's fixed amount"), "", "", "", _m(a)])
+        sh.cell(row=r, column=1, value=_txt(l.get("item_no"), 20))
+        sh.cell(row=r, column=2, value=_below_label(l))
+        if pct is not None:
+            formulas.append(("F%d" % r, "=F%d*%r" % (sub, pct / 100.0)))
+        elif a is not None:
+            sh.cell(row=r, column=6, value=a)
+        sh.cell(row=r, column=8, value=_txt(w.get("note")))
+        conts.append(r)
+        r += 1
     if t["contingency"]:
-        rows.append(["", "%s (%g%%)" % (
-            "Additional Construction Contingency" if t["below"]
-            else "Construction Contingency", t["contingency_pct"]),
-            "", "", "", _m(t["contingency"])])
-    rows.append(["", "Project Total", "", "", "", _m(t["your_opcc"])])
-    return rows
+        sh.cell(row=r, column=2, value=_extra_label(t))
+        formulas.append(("F%d" % r, "=F%d*%r" % (sub, t["contingency_pct"] / 100.0)))
+        conts.append(r)
+        r += 1
+    tot = r
+    sh.cell(row=tot, column=2, value="Project Total").font = bold
+    sh.cell(row=tot, column=6).font = bold
+    formulas.append(("F%d" % tot, "=" + "+".join("F%d" % k for k in [sub] + conts)))
+    for rr in range(first, tot + 1):
+        e = sh.cell(row=rr, column=5)
+        cents = isinstance(e.value, float) and abs(e.value - round(e.value)) > 0.004
+        e.number_format = '"$"#,##0.00' if cents else '"$"#,##0'
+        sh.cell(row=rr, column=6).number_format = '"$"#,##0'
+    for col, wd in zip("ABCDEFGH", (9, 58, 8, 11, 13, 15, 12, 64)):
+        sh.column_dimensions[col].width = wd
+    # a blank interim-review block: the standard wording, no names
+    r = tot + 3
+    for k, text in enumerate(("INTERIM REVIEW ONLY",
+                              "Document incomplete: not intended for "
+                              "permit or construction.",
+                              "Engineer: ______________________   "
+                              "P.E. No.: ____________   Date: ____________")):
+        c = sh.cell(row=r + k, column=2, value=text)
+        if k == 0:
+            c.font = bold
+    sh.freeze_panes = "A%d" % first
+    return formulas
 
 
 def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
@@ -445,12 +563,16 @@ def to_xlsx(result, ws, refs) -> bytes:
     wb = openpyxl.Workbook()
     first = True
     bold = Font(bold=True)
+    formulas = []
     for title, head, rows in sections(result, ws, refs):
         sh = wb.active if first else wb.create_sheet()
         first = False
         sh.title = {"OPCC estimate": "OPCC", "OPCC worksheet": "Summary",
                     "OPCC lines": "Lines",
                     "References appendix": "References"}[title]
+        if title == "OPCC estimate":
+            formulas = _opcc_sheet(sh, totals(result, ws), ws)
+            continue
         sh.append([title])
         sh.cell(row=1, column=1).font = bold
         if head:
@@ -463,16 +585,16 @@ def to_xlsx(result, ws, refs) -> bytes:
                     "Sub-Total", "Project Total", "SUBTOTAL", "PROJECT TOTAL"))):
                 for c in sh[sh.max_row]:
                     c.font = bold
-        if title == "OPCC estimate":
-            for row in sh.iter_rows(min_row=3, min_col=5, max_col=6):
-                for c in row:
-                    c.number_format = "#,##0.00"
         for col in sh.columns:
             width = max((len(str(c.value)) for c in col if c.value is not None),
                         default=8)
             sh.column_dimensions[col[0].column_letter].width = min(60, max(9, width + 1))
     from exporter import xlsx_text_only    # "=..." notes stay text
     xlsx_text_only(wb)
+    # then the OPCC's own totals, as live formulas (written by this module,
+    # never taken from the browser)
+    for ref, f in formulas:
+        wb["OPCC"][ref] = f
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

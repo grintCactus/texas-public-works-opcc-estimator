@@ -260,6 +260,18 @@
       reference projects&rsquo;; your prices are output only &mdash; they never feed back into the estimator</span></h2>
     <div class="body">
       <div id="ws-totals"></div>
+      <!-- the export's heading, and how picked prices are rounded -->
+      <div class="wsmeta" id="ws-meta">
+        <label>Project <input type="text" id="ws-project" class="cellinput"></label>
+        <label>Prepared by <input type="text" id="ws-prepared" class="cellinput" placeholder="initials"></label>
+        <label>Project no. <input type="text" id="ws-projno" class="cellinput"></label>
+        <label title="The model's and the quick picks' prices are rounded to a round number ($5 to $1,000 steps by size). A price you type is never rounded.">Round prices
+          <select id="ws-round">
+            <option value="up">up to a round number</option>
+            <option value="nearest">to the nearest round number</option>
+            <option value="off">off (exact)</option>
+          </select></label>
+      </div>
       <div class="row-actions wstools" id="ws-tools">
         <label class="chk"><input type="checkbox" id="ws-filter"> only lines that need your judgment
           <span id="ws-filter-n"></span></label>

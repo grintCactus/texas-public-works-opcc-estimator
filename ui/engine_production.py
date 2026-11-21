@@ -1825,15 +1825,29 @@ class ProductionEngine:
     @staticmethod
     def _alerts(r, lines, nc, comp, n_bidders):
         """What the reader must not miss, decided on the result's keys (the
-        estimator's own warnings follow verbatim, as notes)."""
+        estimator's own warnings follow verbatim, as notes). Each alert is
+        short (user, 2026-11-21: "shorter and clearer"): a `title` (what is
+        wrong, one sentence), an `action` (what to do) and `items` (the lines
+        it is about); `text` joins them for the exports."""
         out = []
         el = r.get("expected_low")
+
+        def name(ln):
+            return (ln.get("description") or ln.get("item_no") or "a line")[:60]
+
+        def add(level, code, title, action="", items=(), **kw):
+            items = list(items)
+            text = " ".join(x for x in (title, action) if x)
+            if items:
+                text += " " + "; ".join(items[:6]) + ("; ..." if len(items) > 6 else "") + "."
+            out.append(dict({"level": level, "code": code, "title": title,
+                             "action": action, "items": items[:6],
+                             "more": max(0, len(items) - 6), "text": text}, **kw))
+
         if nc["as_a_whole"]:
-            out.append({"level": "severe", "code": "not_covered_whole",
-                        "text": "No estimate: the schedule is not covered as "
-                                "a whole -- " + "; ".join(nc["why"]) +
-                                ". Price the job from vendor / specialty "
-                                "quotes."})
+            add("severe", "not_covered_whole",
+                "No estimate: this kind of job has no comparable bid history.",
+                "Price it from vendor or specialty quotes.", nc["why"])
         elif el is None:
             if (r.get("market_total") or 0) <= 0:
                 why = "not a single line could be priced"
@@ -1842,48 +1856,38 @@ class ProductionEngine:
                        "competition effect is unknown" % n_bidders)
             else:
                 why = "see the estimator notes"
-            out.append({"level": "severe", "code": "no_estimate",
-                        "text": "No estimate: %s." % why})
+            add("severe", "no_estimate", "No estimate: %s." % why)
         unp = [ln for ln in lines if ln["status"] == "unpriced"]
         if unp and el is not None:
-            covered = len([ln for ln in lines
-                           if ln["status"] not in ("not_covered",
-                                                   "not_covered_whole")])
-            out.append({"level": "severe", "code": "lines_unpriced",
-                        "text": "%d of %d covered line(s) could not be priced "
-                                "(%s). P50 and P80 leave them out and are "
-                                "NOT a complete project estimate."
-                                % (len(unp), covered,
-                                   ", ".join(ln["item_no"] or ln["description"]
-                                             [:30] for ln in unp[:6]))})
+            add("severe", "lines_unpriced",
+                "%d line%s could not be priced and %s left out of P50 and P80."
+                % (len(unp), "" if len(unp) == 1 else "s",
+                   "is" if len(unp) == 1 else "are"),
+                "Price %s yourself in the OPCC worksheet." % ("it" if len(unp) == 1 else "them"),
+                [name(ln) for ln in unp])
         if nc["n"] and not nc["as_a_whole"]:
-            out.append({"level": "caution", "code": "not_covered",
-                        "text": "%d not-covered line(s) are left out of the "
-                                "expected low bid (P50) and the recommended "
-                                "OPCC (P80); see the panel below%s."
-                                % (nc["n"], "" if nc["complete_total"] is None
-                                   else " for the complete total")})
+            add("caution", "not_covered",
+                "%d line%s no bid history and %s left out of P50 and P80."
+                % (nc["n"], " has" if nc["n"] == 1 else "s have",
+                   "is" if nc["n"] == 1 else "are"),
+                "Add a vendor quote, or your own price in the OPCC worksheet.",
+                [(l.get("description") or l.get("item_no") or "a line")[:60]
+                 for l in nc["lines"]])
         uc = [ln for ln in lines if ln["status"] == "priced"
               and ln["evidence"]["usable"] == "unclassified"]
         if uc:
-            out.append({"level": "caution", "code": "unclassified_priced",
-                        "text": "%d line(s) are priced from a catch-all "
-                                "group of unlike items (%s): check what they "
-                                "are with Change in the takeoff."
-                                % (len(uc), ", ".join(
-                                    ln["item_no"] or ln["description"][:30]
-                                    for ln in uc[:6]))})
+            add("caution", "unclassified_priced",
+                "%d line%s priced from a mixed group of unlike items."
+                % (len(uc), " is" if len(uc) == 1 else "s are"),
+                "Check the item type with Change in the takeoff.",
+                [name(ln) for ln in uc])
         al = [ln for ln in lines if ln["amount_missing"]]
         if al:
-            out.append({"level": "severe", "code": "allowance_missing",
-                        "placement": "above_headline",
-                        "text": "%d owner-set allowance(s) have no amount "
-                                "\u2014 totals are understated. Enter each "
-                                "amount from the bid form under Project "
-                                "details \u2192 Owner-set amounts (%s)."
-                                % (len(al), ", ".join(
-                                    ln["item_no"] or ln["description"][:30]
-                                    for ln in al[:6]))})
+            add("severe", "allowance_missing",
+                "%d owner-set allowance%s no amount, so the totals are too low."
+                % (len(al), " has" if len(al) == 1 else "s have"),
+                "Enter the amount from the bid form under Project details.",
+                [name(ln) for ln in al], placement="above_headline")
         # The lines that carry much of the money on almost no evidence, named
         # (2026-11-21). Presentation only: P50 / P80 are unchanged. Example:
         # "Embankment Fill 48,600 CF" priced from the one earlier letting in
@@ -1897,38 +1901,29 @@ class ProductionEngine:
                 key=lambda ln: -(ln.get("amount_p50") or 0))
             if heavy:
                 share = sum(ln["amount_p50"] for ln in heavy) / el
-                names = "; ".join(
-                    "%s (%s, %d earlier project%s)" % (
-                        (ln["description"] or ln["item_no"] or "a line")[:60],
-                        "${:,.0f}".format(ln["amount_p50"]),
+                add("caution", "thin_heavy_lines",
+                    "%d big line%s on only 1\u2013%d past jobs (%.0f%% of the "
+                    "expected low bid)." % (len(heavy), " rests" if len(heavy) == 1
+                                            else "s rest",
+                                            THIN_HEAVY_MAX_PROJECTS - 1,
+                                            100 * share),
+                    "Check %s references." % ("its" if len(heavy) == 1 else "their"),
+                    ["%s \u2014 %s, %d past job%s" % (
+                        name(ln), "${:,.0f}".format(ln["amount_p50"]),
                         ln["evidence"]["n_projects"],
                         "" if ln["evidence"]["n_projects"] == 1 else "s")
-                    for ln in heavy[:4])
-                out.append({
-                    "level": "caution", "code": "thin_heavy_lines",
-                    "text": "%s %s %.0f%% of the expected low bid but rest%s "
-                            "on fewer than %d earlier projects: %s. Check %s "
-                            "against its references and any unit hint shown "
-                            "on its line before relying on the total."
-                            % (len(heavy), "line carries" if len(heavy) == 1
-                               else "lines carry", 100 * share,
-                               "s" if len(heavy) == 1 else "",
-                               THIN_HEAVY_MAX_PROJECTS, names,
-                               "it" if len(heavy) == 1 else "them")})
+                     for ln in heavy])
         ds = r.get("degraded_dollar_share")
         if el is not None and ds and ds >= 0.5:
-            out.append({"level": "caution", "code": "thin_evidence",
-                        "text": "%.0f%% of the money is priced from items "
-                                "with fewer than 5 earlier projects (or from a "
-                                "catch-all group) -- common for city work; read "
-                                "the ranges, not just the expected low bid."
-                                % (100 * ds)})
+            add("caution", "thin_evidence",
+                "%.0f%% of the total is priced from thin history (fewer than "
+                "5 past jobs)." % (100 * ds),
+                "Read the ranges, not just P50.")
         if comp.get("extrapolated"):
-            out.append({"level": "info", "code": "bin_extrapolated",
-                        "text": "No past jobs with exactly %s bidders; the "
-                                "nearest count (%s) was used for the "
-                                "competition discount." % (n_bidders,
-                                                           comp["bin"])})
+            add("info", "bin_extrapolated",
+                "No past jobs with exactly %s bidders; the nearest count (%s) "
+                "was used for the competition discount." % (n_bidders,
+                                                            comp["bin"]))
         return out
 
     @staticmethod
@@ -2562,6 +2557,9 @@ class ProductionEngine:
                 esc = [(rf.get("escalated_unit") or rf.get("median_unit"))
                        for rf in refs]
                 esc = sorted(v for v in esc if v)
+                am = [(rf.get("escalated_mean") or rf.get("mean_unit"))
+                      for rf in refs]
+                am = [v for v in am if v]
                 latest = max(refs, key=lambda rf: rf["date"]) if refs else None
 
                 def pick(rf):
@@ -2575,6 +2573,10 @@ class ProductionEngine:
                             if (f and rf.get("median_unit")) else rf.get("median_unit"),
                             "low_esc": (rf["low_unit"] * f)
                             if (f and rf.get("low_unit")) else rf.get("low_unit"),
+                            "mean_unit": rf.get("mean_unit"),
+                            "mean_esc": (rf["mean_unit"] * f)
+                            if (f and rf.get("mean_unit")) else rf.get("mean_unit"),
+                            "word_match": rf.get("word_match"),
                             "source": rf.get("source")}
                 w = x.get("warning") or ""
                 out.append({
@@ -2582,7 +2584,10 @@ class ProductionEngine:
                     "special": x.get("special"), "to_year": to_year,
                     "n_refs": len(refs),
                     "range": ({"low": esc[0], "median": statistics.median(esc),
-                               "high": esc[-1]} if esc else None),
+                               "high": esc[-1],
+                               # the average of the references' average bids
+                               "mean": (statistics.mean(am) if am else None)}
+                              if esc else None),
                     "latest": pick(latest) if latest else None,
                     "picks": [pick(rf) for rf in refs[:picks]],
                     "generic": w.startswith("Generic match"),
@@ -2759,6 +2764,8 @@ class ProductionEngine:
                 (1.5 if same_owner else 1.0)
             meta = self.panel.meta.get(pkk) or {}
             tots = self.panel.totals.get(pkk) or []
+            bu = [u for _b, u, _q, _w in e["bids"] if u and u > 0]
+            mean_u = (sum(bu) / len(bu)) if bu else None
             refs.append({
                 "key": pkk, "project": project_title(pkk, market),
                 "title": meta.get("title") or "",
@@ -2774,8 +2781,12 @@ class ProductionEngine:
                 "quantity": qe, "median_unit": e["median_unit"],
                 "low_unit": e["low_unit"], "min_unit": e["min_unit"],
                 "max_unit": e["max_unit"], "n_bids": len(e["bids"]),
+                # the average bid: what an OPCC's unit cost source usually
+                # quotes (user's team, 2026-11-21); display only
+                "mean_unit": mean_u,
                 "escalation": f,
                 "escalated_unit": (e["median_unit"] * f) if f else None,
+                "escalated_mean": (mean_u * f) if (f and mean_u) else None,
                 "word_match": j, "score": score,
                 "bids": [{"bidder": (b or "").title(), "unit_price": u,
                           "quantity": qq, "low": bool(w)}

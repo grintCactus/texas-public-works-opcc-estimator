@@ -401,6 +401,14 @@ table.grid td.basis { font-size: 12px; color: var(--ink-dim); }
 .notice.ok { border-color: var(--ok-line); background: var(--ok-bg); }
 .notice.ok .ic { color: var(--ok); }
 .notice .body-txt { flex: 1; }
+/* a warning you tick once read; gray once ticked (user, 2026-11-21) */
+.notice.ack .ackchk { display: inline-flex; align-items: center; padding-top: 2px; cursor: pointer; }
+.notice.ack .ackchk input { width: 16px; height: 16px; margin: 0; cursor: pointer; }
+.notice.ack ul.ackitems { margin: 4px 0 0; padding-left: 18px; font-size: 13.5px; }
+.notice.ack ul.ackitems li { margin: 1px 0; overflow-wrap: anywhere; }
+.notice.acked { border-color: var(--line); background: var(--panel-2); color: var(--ink-faint); }
+.notice.acked .ic { color: var(--ink-faint); }
+.notice.acked b { font-weight: 600; }
 .notice h4 { margin: 0 0 3px; font-size: 14px; }
 ul.tight { margin: 3px 0 0; padding-left: 18px; }
 
@@ -430,10 +438,29 @@ ul.tight { margin: 3px 0 0; padding-left: 18px; }
 .bigcard .band .bv { font-family: var(--mono); }
 .bigcard .covnote { margin-top: 8px; font-size: 14px; font-weight: 600; color: var(--bad-ink); }
 .calib { font-size: 12px; color: var(--ink-dim); align-self: center; line-height: 1.55; }
-/* what P50 and P80 mean -- always visible, plain words, this job's numbers */
+/* what P50 and P80 mean -- folded until clicked; plain words, this job's
+   numbers, then a picture of the idea and a fuller explanation */
 .meaning { margin: 12px 0 4px; padding: 10px 13px; border: 1px solid var(--line);
   border-radius: 8px; background: var(--panel-2); font-size: 13.5px; line-height: 1.55; }
-.meaning .mtitle { font-weight: 650; font-size: 14px; margin-bottom: 4px; }
+.meaning .mtitle { font-weight: 650; font-size: 14px; cursor: pointer; }
+.meaning[open] .mtitle { margin-bottom: 6px; }
+.meaning .mcharts { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 10px 0 2px; }
+.meaning .mcharts svg.pp { width: 340px; max-width: 100%; height: auto; }
+.meaning .mnote { font-size: 12px; color: var(--ink-faint); margin-bottom: 6px; }
+.meaning .mmore p { margin: 6px 0; max-width: 820px; }
+svg.pp text { font-size: 12px; fill: var(--ink-dim); font-family: var(--sans); }
+svg.pp text.pp-big { font-size: 14px; font-weight: 650; fill: var(--ink); }
+svg.pp text.pp-t50 { fill: var(--accent-strong); font-weight: 650; }
+svg.pp text.pp-t80 { fill: var(--warn-ink); font-weight: 650; }
+svg.pp .pp-curve { fill: none; stroke: var(--ink); stroke-width: 1.8; }
+svg.pp .pp-axis { stroke: var(--line); stroke-width: 1; }
+svg.pp .pp-r50 { fill: var(--accent-strong); fill-opacity: 0.22; }
+svg.pp .pp-r30 { fill: var(--accent-strong); fill-opacity: 0.09; }
+svg.pp .pp-r20 { fill: var(--bad); fill-opacity: 0.16; }
+svg.pp .pp-l50 { stroke: var(--accent-strong); stroke-width: 2; }
+svg.pp .pp-l80 { stroke: var(--warn); stroke-width: 2; }
+svg.pp .pp-g50 { fill: none; stroke: var(--accent-strong); stroke-width: 1.4; stroke-dasharray: 4 3; }
+svg.pp .pp-g80 { fill: none; stroke: var(--warn); stroke-width: 1.4; stroke-dasharray: 4 3; }
 .meaning ul { margin: 0; padding-left: 18px; }
 .meaning li { margin: 3px 0; overflow-wrap: anywhere; }
 .meaning b { font-weight: 650; }
@@ -813,6 +840,12 @@ table.btgrid th .bname { white-space: normal; overflow-wrap: anywhere; min-width
 table.grid tfoot tr.wssub td { border-top: 1px solid var(--line); }
 table.grid tfoot tr.controw td, table.grid tfoot tr.wscont td { border-top: 0; font-weight: 400; }
 table.grid tfoot tr.wstotal td { border-top: 2px solid var(--ink-faint); font-size: 13.5px; }
+/* the worksheet's heading fields (the export's) and the rounding setting */
+.wsmeta { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 10px 0 2px;
+  font-size: 12.5px; color: var(--ink-dim); }
+.wsmeta label { display: inline-flex; align-items: center; gap: 6px; }
+.wsmeta input.cellinput { width: 170px; border-color: var(--line); }
+.wsmeta select { font-size: 12.5px; padding: 3px 6px; }
 /* the blank takeoff template, at the top of the takeoff step */
 .tplbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 10px; }
 a.btn { display: inline-block; text-decoration: none; }
