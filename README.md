@@ -165,6 +165,10 @@ What happened:
   - On large jobs, the misses come from weakly matched main items, not from mobilization.
 - **Status:** not adopted; production is unchanged.
 
+**Park equipment as "not covered" (registered before scoring).** Playground units, shade structures, dog-park gear and similar vendor-priced park items are bought by model. In the bid history they spread 10–100× across jobs, and the model priced them at a fraction of the bids, about $1,000 for a $165,000 play unit. Marking them "not covered" (left out of P50 / P80, vendor quote asked for) was tested on 34 line types in 6 lettings.
+- **It did not pass.** On the two small park jobs, removing the equipment left mostly lump sums, and our mobilization there was about $140,000 against the low bidder's $25,000. The underpriced equipment had been hiding that.
+- **Status:** not adopted. It waits for the small-job lump-sum problem to be fixed, which keeps showing up in rounds 12 and 14 and here.
+
 **Converting between units (registered before scoring).** Takeoffs come in mixed units: CY or CF, SY or SF or acres, tons or pounds. Two ways of converting between units of the same kind were tested.
 - **Pooling all bids into one unit per kind** makes a takeoff price the same in any unit, to the cent.
   - Today, rewriting the units of 188 city takeoffs changes P50 by more than 20% on 79 of them, and leaves 624 lines unpriced.
