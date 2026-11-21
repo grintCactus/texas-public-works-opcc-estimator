@@ -2765,7 +2765,7 @@ function wsSource(l, w) {
   if (w.src === 'model') {
     const pk = ((x && x.picks) || []).slice(0, 3).map(p => p.owner + ' ' + String(p.date).slice(0, 4) + ' avg '
       + rate(isNum(p.mean_esc) ? p.mean_esc : p.median_esc));
-    return ['Model price from earlier public bids' + (pk.length ? ': ' + pk.join('; ') : ''),
+    return ['Model price' + (pk.length ? ' \u00b7 ' + pk.join('; ') : ''),
       (x && x.latest && x.latest.date) || ''];
   }
   return [w.src_label || w.src, w.src_date || ''];

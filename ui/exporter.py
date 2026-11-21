@@ -365,8 +365,9 @@ TEMPLATE_ROWS = 300
 
 
 def takeoff_template_xlsx() -> bytes:
-    """The blank takeoff workbook: notes, a header row and TEMPLATE_ROWS
-    empty rows with a unit list and number checks."""
+    """The blank takeoff workbook: a title, short notes, a header row and
+    TEMPLATE_ROWS bordered rows with a unit list and number checks, laid out
+    as a form (gridlines off, notes wrapped, the header kept on screen)."""
     import openpyxl
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.worksheet.datavalidation import DataValidation
@@ -374,24 +375,39 @@ def takeoff_template_xlsx() -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Takeoff"
-    ws.cell(row=1, column=1, value=TEMPLATE_NOTES[0]).font = Font(
-        bold=True, size=14)
+    ws.sheet_view.showGridLines = False
+    for col, width in zip("ABCDE", (11, 60, 10, 13, 22)):
+        ws.column_dimensions[col].width = width
+    ws.merge_cells("A1:E1")
+    ws["A1"] = TEMPLATE_NOTES[0]
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.row_dimensions[1].height = 24
     for i, text in enumerate(TEMPLATE_NOTES[1:], start=2):
-        ws.cell(row=i, column=1, value=text).font = Font(color="4B5563")
+        ws.merge_cells(start_row=i, start_column=1, end_row=i, end_column=5)
+        c = ws.cell(row=i, column=1, value=text)
+        c.font = Font(size=10, color="4B5563")
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.row_dimensions[i].height = 28
     head = len(TEMPLATE_NOTES) + 2            # one blank row, then the header
     first, last = head + 1, head + TEMPLATE_ROWS
-    line = Side(style="thin", color="9CA3AF")
+    thin = Side(style="thin", color="BFBFBF")
+    box = Border(left=thin, right=thin, top=thin, bottom=thin)
     for j, name in enumerate(TEMPLATE_HEADER, start=1):
         c = ws.cell(row=head, column=j, value=name)
         c.font = Font(bold=True)
-        c.fill = PatternFill("solid", fgColor="DCE6F1")
-        c.border = Border(bottom=line)
-        c.alignment = Alignment(vertical="center")
-    for col, width in zip("ABCDE", (11, 64, 9, 13, 22)):
-        ws.column_dimensions[col].width = width
+        c.fill = PatternFill("solid", fgColor="D9D9D9")
+        c.border = box
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[head].height = 20
     for r in range(first, last + 1):
-        ws.cell(row=r, column=4).number_format = "General"
-        ws.cell(row=r, column=5).number_format = "#,##0.00"
+        for j in range(1, 6):
+            c = ws.cell(row=r, column=j)
+            c.border = box
+            if j == 2:
+                c.alignment = Alignment(wrap_text=True, vertical="top")
+            elif j in (1, 3):
+                c.alignment = Alignment(horizontal="center", vertical="top")
+        ws.cell(row=r, column=5).number_format = '"$"#,##0.00'
     unit = DataValidation(
         type="list", formula1='"%s"' % ",".join(TEMPLATE_UNITS),
         allow_blank=True, showErrorMessage=True, errorStyle="warning",

@@ -83,18 +83,18 @@ All figures are forward in time: each letting is priced from lettings dated befo
 |---|---|---|---|---|---|
 | **TxDOT** (DFW counties), 2023–26 | 807 | **16%** | 16% | 32% | **26% / 27% / 30%** |
 | TxDOT engineers' own estimates (same 451 lettings, official totals) | 451 | 21% | 14% | — | 19% / 22% / 23% |
-| **City / municipal** (DFW), 2024–26 | 224 | **20%** | 14% | 46% | **32% / 32% / 36%** |
+| **City / municipal** (DFW), 2024–26 | 224 | **20%** | 14% | 46% | **32% / 33% / 34%** |
 | Municipal engineers' own estimates | 140 | ~15% | 33% | — | 20% / 21% / 25% |
 | Locked public test set, municipal (last confirmation) | 56 | 14% | 20% | 31% | — |
 
-Municipal figures use the "covered" scope (see below). The discount uses each letting's actual number of bidders, which is not known when quoting. On the previous data build, a forecast bidder count from earlier lettings of the same market, work type and size cost TxDOT about 2 points of overshoot and left municipal unchanged. Figures are from the current data build: parser .32 (2026-11-21), plus 63 more public bid tabs from smaller DFW cities and counties, many found inside city council agenda packets. Parser rounds 10 and 11 made three changes:
+Municipal figures use the "covered" scope (see below). The discount uses each letting's actual number of bidders, which is not known when quoting. On the previous data build, a forecast bidder count from earlier lettings of the same market, work type and size cost TxDOT about 2 points of overshoot and left municipal unchanged. Figures are from the current data build: parser .33 (2026-11-21), on top of 63 more public bid tabs from smaller DFW cities and counties, many found inside city council agenda packets. Parser round 12 (.33) moved 637 lines to the right item type: trail excavation and grading out of sidewalk (a 400 CY "Excavation (Trail)" had been priced like concrete sidewalk), "Earthwork" to excavation, and pipe abandonment, plugs and grout fill to utility removal work. On the same 224 city jobs, overshoot went from 46.3% to 45.8%; nothing else moved. Parser rounds 10 and 11 made three changes:
 - they read more table layouts;
 - they tell an engineer's column from a bidder's;
 - they recover units printed in odd places, about 8,500 lines.
 
 Many of the newly scorable jobs are hard to estimate, with specialty items the model prices low. Since the parser .29 build:
 - overshoot rose from 42% to 46%;
-- the overshoot at a matched 80% not-under rate rose from 32% to 36%;
+- the overshoot at a matched 80% not-under rate rose from 32% to 34%;
 - the median P50 error rose from 19% to 20%.
 
 On the lettings that both builds score, the change is within noise. That build corrected misread bid dates and labels, priced a few more item wordings correctly, and stopped scoring annual / as-needed unit-price contracts as projects: their bid totals are an evaluation formula over notional quantities, not the price of a project. Their unit prices stay in the price history. The locked-set row is from the last confirmation, before the latest data fixes and the scope change. For the engineer rows, "P80 under the low bid" means their single published estimate came in under the low bid.
