@@ -320,25 +320,100 @@ def r_options(req):
         raise ApiError(503, str(e))
 
 
+# -- reading a takeoff: lines, or a plain "could not read" --------------------
+# Whatever is pasted or uploaded, the answer is 200 with the lines read (each
+# possibly flagged) or, when nothing could be read, the same shape with
+# `unreadable` = {reason, hint}: never a 500, never a bare error the page
+# cannot show (QA 2026-11-20, user: "if you can't read it, say so").
+
+#: Limits on what is read at once, with a plain message past them.
+MAX_TEXT_CHARS = 500_000
+MAX_TAKEOFF_LINES = 2_000
+READ_HINT = ("Paste a table with Description, Unit and Quantity columns -- "
+             "one item per line, for example “Rock riprap   SY   1,200” -- "
+             "or upload the takeoff as .xlsx, .csv or .pdf.")
+
+
+def _unreadable(source, reason, hint=READ_HINT, method="unreadable"):
+    return {"lines": [], "source": source, "method": method,
+            "notes": [reason], "mock": False, "skipped": [], "n_skipped": 0,
+            "unread": [], "n_unread": 0,
+            "unreadable": {"reason": reason, "hint": hint}}
+
+
+#: The verdict on input with no readable line item (garbage, prose, symbols
+#: or numbers only, headings only): plain words, and READ_HINT.
+NO_ITEMS = "Couldn't read any line items from this."
+#: Readers whose note says why the FILE could not be opened at all (a legacy
+#: .xls, a picture with no OCR engine): that note is the reason instead.
+_FILE_LEVEL = ("unsupported", "image/ocr-unavailable", "image/ocr-contract-error")
+
+
+def _verdict(p: dict) -> dict:
+    """A parse with no readable line item gets `unreadable` -- NO_ITEMS, or
+    for a file the page cannot open at all the reader's own reason -- and
+    keeps the lines it could not read (p["unread"]) for the page to show;
+    one with too many lines is refused."""
+    n = len(p.get("lines") or [])
+    if n > MAX_TAKEOFF_LINES:
+        return _unreadable(p.get("source"), "This has %s line items; the page "
+                           "reads up to %s at once." % ("{:,}".format(n),
+                                                        "{:,}".format(MAX_TAKEOFF_LINES)),
+                           "Split the takeoff into parts and estimate each.")
+    if not n:
+        notes = [x for x in (p.get("notes") or []) if x]
+        reason = notes[-1] if (notes and p.get("method") in _FILE_LEVEL) else NO_ITEMS
+        p = dict(p, unreadable={"reason": reason, "hint": READ_HINT})
+    return p
+
+
 @route("POST", "/api/takeoff/text")
 def r_takeoff_text(req):
-    text = req.json().get("text") or ""
+    text = req.json().get("text")
+    text = text if isinstance(text, str) else ("" if text is None else str(text))
     if not text.strip():
-        raise ApiError(400, "No text supplied.")
-    return takeoff.from_text(text).to_dict()
+        return _unreadable("pasted text", "Nothing was pasted.")
+    if len(text) > MAX_TEXT_CHARS:
+        return _unreadable("pasted text", "This is %s characters long; the page "
+                           "reads up to %s at once." % ("{:,}".format(len(text)),
+                                                        "{:,}".format(MAX_TEXT_CHARS)),
+                           "Paste the takeoff in parts, or upload it as a file.")
+    rows = sum(1 for ln in text.splitlines() if ln.strip())
+    if rows > MAX_TAKEOFF_LINES:
+        return _unreadable("pasted text", "This has %s lines; the page reads up to "
+                           "%s at once." % ("{:,}".format(rows),
+                                            "{:,}".format(MAX_TAKEOFF_LINES)),
+                           "Paste the takeoff in parts and estimate each.")
+    try:
+        return _verdict(takeoff.from_text(text).to_dict())
+    except Exception as e:  # noqa: BLE001 - a reader bug must not reach the page
+        log.warning("reading pasted text failed: %s: %s", type(e).__name__, e)
+        return _unreadable("pasted text", "This text could not be read.")
 
 
 @route("POST", "/api/takeoff/file")
 def r_takeoff_file(req):
-    name, data = _uploaded_file(req.headers, req.query, req.body)
+    try:
+        name, data = _uploaded_file(req.headers, req.query, req.body)
+    except ApiError as e:
+        if e.status == 413:
+            raise
+        return _unreadable("upload", e.message,
+                           "Choose the takeoff file again (.xlsx, .csv, .pdf or .docx).")
 
     def parse(path):
         try:
-            return takeoff.from_file(path, name).to_dict()
+            return _verdict(takeoff.from_file(path, name).to_dict())
         except ModuleNotFoundError as e:
-            raise ApiError(400, "%s cannot be read here: %s is not installed. "
-                                "Save it as .xlsx or .csv, or paste the rows."
-                           % (name, e.name))
+            return _unreadable(name, "%s cannot be read here: %s is not installed."
+                               % (name, e.name),
+                               "Save it as .xlsx or .csv, or paste the rows.")
+        except Exception as e:  # noqa: BLE001 - damaged, encrypted, not a takeoff
+            log.warning("reading %s failed: %s: %s", name, type(e).__name__, e)
+            return _unreadable(name, "%s could not be read: it may be damaged, "
+                               "password-protected or not a takeoff." % name,
+                               "Open it and save it again as .xlsx or .csv, or "
+                               "paste the rows as text.")
     return _with_temp(name, data, parse)
 
 
@@ -346,7 +421,12 @@ def r_takeoff_file(req):
 def r_classify(req):
     d = req.json()
     market = str(d.get("market") or "municipal")
-    lines = [ln for ln in (d.get("lines") or []) if isinstance(ln, dict)]
+    lines = d.get("lines") if isinstance(d.get("lines"), list) else []
+    lines = [ln for ln in lines if isinstance(ln, dict)]
+    if len(lines) > MAX_TAKEOFF_LINES:
+        raise ApiError(400, "%d lines at once is more than the page handles "
+                            "(%d). Split the takeoff into parts."
+                       % (len(lines), MAX_TAKEOFF_LINES))
     try:
         out = ENGINE.classify(lines, market)
         # public mode: the corrections the browser keeps, for this request

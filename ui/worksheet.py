@@ -45,6 +45,10 @@ def _f(v) -> Optional[float]:
 # Totals
 # ---------------------------------------------------------------------------
 
+#: Line statuses outside P50 / P80 (not covered: a vendor quote's line).
+NOT_COVERED = ("not_covered", "not_covered_whole")
+
+
 def line_amount(line: dict, w: dict) -> Optional[float]:
     """The estimator's amount for one result line: owner-set money at face
     value, a vendor quote as given, else their unit price x the quantity."""
@@ -63,7 +67,7 @@ def totals(result: dict, ws: dict) -> dict:
     arithmetic is never trusted), and its distance to the model's P50/P80."""
     by = {str(w.get("row_id")): w for w in (ws.get("lines") or [])
           if isinstance(w, dict)}
-    sub, missing, owner_set, quotes = 0.0, [], 0.0, 0.0
+    sub, missing, owner_set, quotes, not_covered = 0.0, [], 0.0, 0.0, 0.0
     rows = []
     for l in result.get("lines") or []:
         w = by.get(str(l.get("row_id"))) or {}
@@ -76,20 +80,29 @@ def totals(result: dict, ws: dict) -> dict:
                 owner_set += a
             elif w.get("src") == "quote":
                 quotes += a
+            if l.get("status") in NOT_COVERED:
+                not_covered += a
         rows.append((l, w, a))
     c = _f(ws.get("contingency_pct"))
     cont = sub * c / 100.0 if c else 0.0
     yours = sub + cont
     h = result.get("headline") or {}
     p50, p80 = _f(h.get("p50")), _f(h.get("p80"))
+    # P50 / P80 leave the not-covered lines out, your OPCC has your amounts
+    # for them (vendor quotes): the comparison adds those amounts to the
+    # model's side too, so it compares like with like
+    m50 = p50 + not_covered if p50 else p50
+    m80 = p80 + not_covered if p80 else p80
 
     def diff(m):
         return None if not m else {"amount": yours - m, "ratio": yours / m - 1}
 
     return {"subtotal": sub, "contingency_pct": c, "contingency": cont,
             "your_opcc": yours, "owner_set": owner_set, "quotes": quotes,
+            "not_covered": not_covered,
             "missing": missing, "p50": p50, "p80": p80,
-            "vs_p50": diff(p50), "vs_p80": diff(p80),
+            "model_p50": m50, "model_p80": m80,
+            "vs_p50": diff(m50), "vs_p80": diff(m80),
             "suggested_contingency_pct": (100.0 * (p80 / p50 - 1))
             if (p50 and p80) else None,
             "rows": rows}
@@ -210,9 +223,20 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
         [],
         ["Model P50 (expected low bid)", _m(t["p50"])],
         ["Model P80", _m(t["p80"])],
-        ["Your OPCC vs P50", _m((t["vs_p50"] or {}).get("amount")),
+    ]
+    nc = t["not_covered"]
+    if nc:
+        head_rows += [
+            ["  your amounts for the not-covered lines (outside P50 / P80)",
+             _m(nc)],
+            ["Model P50 + not-covered lines", _m(t["model_p50"])],
+            ["Model P80 + not-covered lines", _m(t["model_p80"])],
+        ]
+    vs = " + not-covered lines" if nc else ""
+    head_rows += [
+        ["Your OPCC vs P50" + vs, _m((t["vs_p50"] or {}).get("amount")),
          "" if not t["vs_p50"] else "%+.1f%%" % (100 * t["vs_p50"]["ratio"])],
-        ["Your OPCC vs P80", _m((t["vs_p80"] or {}).get("amount")),
+        ["Your OPCC vs P80" + vs, _m((t["vs_p80"] or {}).get("amount")),
          "" if not t["vs_p80"] else "%+.1f%%" % (100 * t["vs_p80"]["ratio"])],
         ["Lines without your price", len(t["missing"])],
         [],
@@ -263,6 +287,7 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
 def to_csv(result, ws, refs) -> bytes:
     import csv
     import io
+    from exporter import safe_row      # text is never run as a formula
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["# OPCC worksheet -- the estimator's prices next to the "
@@ -271,9 +296,9 @@ def to_csv(result, ws, refs) -> bytes:
         w.writerow([])
         w.writerow(["## " + title])
         if head:
-            w.writerow(head)
+            w.writerow(safe_row(head))
         for r in rows:
-            w.writerow(r)
+            w.writerow(safe_row(r))
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
@@ -304,6 +329,8 @@ def to_xlsx(result, ws, refs) -> bytes:
             width = max((len(str(c.value)) for c in col if c.value is not None),
                         default=8)
             sh.column_dimensions[col[0].column_letter].width = min(60, max(9, width + 1))
+    from exporter import xlsx_text_only    # "=..." notes stay text
+    xlsx_text_only(wb)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

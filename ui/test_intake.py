@@ -162,6 +162,409 @@ class TakeoffReading(unittest.TestCase):
             shutil.rmtree(d)
 
 
+    # -- QA 2026-11-20 -----------------------------------------------------
+    def test_units_written_in_two_words_are_units(self):
+        """'Lump Sum', 'Sq. Yd.', 'Cubic Yard', 'Linear Feet' in free text
+        were left in the description with no unit (the 2-space column split
+        never ran: the line is whitespace-collapsed first)."""
+        cases = {
+            "1     Mobilization, Bonds and Insurance            Lump Sum   1":
+                ("1", "Mobilization, Bonds and Insurance", "LS", 1.0),
+            "2  Rock Riprap, 18 in   Sq. Yd.   1,200":
+                ("2", "Rock Riprap, 18 in", "SY", 1200.0),
+            "3  Channel Excavation   Cubic Yard   4,200":
+                ("3", "Channel Excavation", "CY", 4200.0),
+            "4  Silt Fence   2,300   Linear Feet": ("4", "Silt Fence", "LF", 2300.0),
+            "5  Block Sod   Square Yards   9,500": ("5", "Block Sod", "SY", 9500.0),
+            "6  Concrete Curb   1,200 Lin Ft": ("6", "Concrete Curb", "LF", 1200.0),
+            "9  Mobilization   1 Lump Sum": ("9", "Mobilization", "LS", 1.0),
+        }
+        for raw, want in cases.items():
+            with self.subTest(raw=raw):
+                l = takeoff._parse_free_line(raw)
+                self.assertEqual((l.item_no, l.description, l.unit, l.quantity), want)
+                self.assertEqual(l.confidence, "ok")
+        # a unit word inside the wording is not swallowed
+        l = takeoff._parse_free_line("8 Remove Each Sign EA 4")
+        self.assertEqual((l.description, l.unit, l.quantity), ("Remove Each Sign", "EA", 4.0))
+
+    def test_a_leading_size_is_not_an_item_number(self):
+        """'18 inch RCP  LF  420' lost its size to the item number (and its
+        size bucket with it), with no flag."""
+        for raw, desc in (("18 inch RCP Storm Sewer  LF  420", "18 inch RCP Storm Sewer"),
+                          ("24 in. Rock Riprap  SY  300", "24 in. Rock Riprap"),
+                          ("6 ft Chain Link Fence  LF  500", "6 ft Chain Link Fence")):
+            with self.subTest(raw=raw):
+                l = takeoff._parse_free_line(raw)
+                self.assertEqual((l.item_no, l.description), ("", desc))
+        l = takeoff._parse_free_line("5  18 inch RCP Storm Sewer  LF  420")
+        self.assertEqual((l.item_no, l.description, l.quantity),
+                         ("5", "18 inch RCP Storm Sewer", 420.0))
+
+    def test_a_headerless_grid_keeps_its_item_numbers(self):
+        """The page's own example (tab-separated, no header) lost every item
+        number: only description, unit and quantity were inferred."""
+        p = takeoff.from_text("101\tMobilization\tLS\t1\n"
+                              "102\tTemporary Erosion Control\tLS\t1\n"
+                              "103\tUnclassified Channel Excavation\tCY\t4,200\n")
+        self.assertEqual([(l.item_no, l.unit, l.quantity) for l in p.lines],
+                         [("101", "LS", 1.0), ("102", "LS", 1.0), ("103", "CY", 4200.0)])
+        # no unit column: the item numbers are not taken for the quantity
+        p = takeoff.from_text("101\tMobilization\t1\n102\tRock riprap\t1,745\n")
+        self.assertEqual([(l.item_no, l.quantity) for l in p.lines],
+                         [("101", 1.0), ("102", 1745.0)])
+        # quantity first, then unit and description: unchanged
+        p = takeoff.from_text("1\tLS\tMobilization\n4200\tCY\tChannel excavation\n")
+        self.assertEqual([(l.item_no, l.unit, l.quantity) for l in p.lines],
+                         [("", "LS", 1.0), ("", "CY", 4200.0)])
+
+
+# ===========================================================================
+MESSY = os.path.join(HERE, "fixtures", "messy_paste_2026-11-20.txt")
+
+#: What every row of the user's paste must come out as (item: description,
+#: unit, quantity, assumed fields).
+MESSY_WANT = {
+    "101": ("Mobilization", "LS", 1.0, ["unit", "quantity"]),
+    "102": ("Temporary Erosion Control", "LS", 1.0, ["unit"]),
+    "103": ("Unclassified", "CY", 4200.0, []),
+    "104": ("Grouted Rock Riprap, 18 inch", "SY", 2600.0, []),
+    "105": ("Gabion Mattress, 12 inch", "SY", 880.0, []),
+    "106": ("8 inch PVC SDR-26 Sanitary Sewer Pipe", "LF", 1450.0, []),
+    "107": ("Block Sod, Bermuda", "SY", 9500.0, []),
+    "108": ("Trench Safety System", "LF", 1450.0, []),
+    "109": ("Submersible Pump, 15 HP", "EA", 2.0, []),
+    "110": ("Owner's Contingency Allowance", "LS", 1.0, []),
+}
+
+
+class MessyPaste(unittest.TestCase):
+    """The user's paste of 2026-11-20 (cells missing, a fragment, a trailing
+    space) and variants of it: every cell lands in its own column, missing
+    values are shown, lump sums with no unit are 'assumed -- check'."""
+
+    def check(self, text):
+        p = takeoff.from_text(text)
+        got = {l.item_no: (l.description, l.unit, l.quantity, l.assumed)
+               for l in p.lines}
+        self.assertEqual(got, MESSY_WANT)
+        for l in p.lines:
+            self.assertEqual(any(i.startswith("assumed") for i in l.issues),
+                             bool(l.assumed), l.item_no)
+        return p
+
+    def lines(self):
+        with open(MESSY, encoding="utf-8") as fh:
+            return fh.read().splitlines()
+
+    def test_the_paste_exactly(self):
+        with open(MESSY, encoding="utf-8") as fh:
+            p = self.check(fh.read())
+        self.assertEqual(p.method, "text/tab-separated")
+
+    def test_extra_leading_trailing_and_inner_tabs(self):
+        ls = self.lines()
+        ls[0] = "\t" + ls[0]
+        ls[1] = ls[1] + "\t\t"
+        ls[2] = ls[2].replace("\tCY", "\t\tCY")
+        ls[3] = "\t\t" + ls[3]
+        self.check("\n".join(ls))
+
+    def test_rows_typed_with_spaces_among_tab_rows(self):
+        ls = self.lines()
+        ls[4] = "105  Gabion Mattress, 12 inch  SY  880"
+        ls[5] = "106 8 inch PVC SDR-26 Sanitary Sewer Pipe LF 1,450"
+        self.check("\n".join(ls))
+
+    def test_a_header_row_blank_lines_crlf_and_trailing_spaces(self):
+        ls = self.lines()
+        self.check("Item\tDescription\tUnit\tQuantity\r\n\r\n"
+                   + "\r\n\r\n".join(l + "  " for l in ls) + "\r\n\r\n")
+
+    def test_a_row_with_fewer_cells_never_pulls_the_next_one(self):
+        p = takeoff.from_text("101\tMobilization\n102\tRock riprap\tSY\t1,745\n"
+                              "103\tBlock sod\n104\tSilt fence\tLF\t2,300\n")
+        got = [(l.item_no, l.description, l.unit, l.quantity) for l in p.lines]
+        self.assertEqual(got, [("101", "Mobilization", "LS", 1.0),
+                               ("102", "Rock riprap", "SY", 1745.0),
+                               ("103", "Block sod", "", None),
+                               ("104", "Silt fence", "LF", 2300.0)])
+        self.assertIn("no quantity found", p.lines[2].issues)
+        self.assertIn("no unit found", p.lines[2].issues)
+
+    def test_the_reasons_name_the_assumption_and_the_fragment(self):
+        c = {"family": "other", "unit": "CY", "unit_known": True}
+        a = intake.assess({"description": "Unclassified", "quantity": 4200}, c, None)
+        self.assertIn("unclear_description", [r["code"] for r in a["reasons"]])
+        c = {"family": "mobilization", "unit": "LS", "unit_known": True}
+        a = intake.assess({"description": "Mobilization", "quantity": 1,
+                           "confidence": "low",
+                           "issues": ["assumed LS, quantity 1 -- check"]}, c, None)
+        self.assertEqual([r["code"] for r in a["reasons"]], ["assumed"])
+        a = intake.assess({"description": "Mobilization", "quantity": 1}, c, None)
+        self.assertFalse(a["low"])         # one word, but a real item group
+
+
+# ===========================================================================
+def latin1_noise(seed, n=600):
+    """n random latin-1 characters: binary-ish garbage."""
+    import random
+    rng = random.Random(seed)
+    return "".join(chr(rng.randint(0, 255)) for _ in range(n))
+
+
+#: Garbage that must come back as "could not read", never as a line item
+#: (coordinator, 2026-11-20, after the user asked "what about garbled input?").
+GARBAGE = [
+    ("symbols and keyboard mash", "asdkj@#$%^&*()_+ ~~ ||||"),
+    ("600 random latin-1 characters (1)", latin1_noise(1)),
+    ("600 random latin-1 characters (2)", latin1_noise(2)),
+    ("600 random latin-1 characters (3)", latin1_noise(3)),
+    ("keyboard mash on two lines", "fjdksla;fjdksla\nqwerqwer zxcv"),
+    ("two lines of Chinese prose", "\u8fd9\u662f\u4e00\u6bb5\u4e2d\u6587\u8bf4\u660e\uff0c\u4e0d\u662f\u5de5\u7a0b\u91cf\u6e05\u5355\u3002\n\u8bf7\u628a\u8868\u683c\u7c98\u8d34\u5230\u8fd9\u91cc\uff0c\u8c22\u8c22\u3002"),
+    ("JSON", '{"a": [1,2,3]}'),
+    ("one 20,000-character word", "x" * 20000),
+    ("numbers only", "1 2 3 4 5 6 7 8 9\n10 11 12 13"),
+    ("mojibake with a unit and a quantity", "ç¬¬ä¸€è¡Œ 12 LF 3.5"),
+]
+#: Hidden characters and emoji around a real line: removed, the line read.
+HIDDEN = [
+    ("zero-width, joiner and an RTL override", "101​ Mobili‍zation‮ LS 1",
+     ("101", "Mobilization", "LS", 1.0)),
+    ("a zero-width space inside the quantity", "102 Rip​rap CY 4​200",
+     ("102", "Riprap", "CY", 4200.0)),
+    ("leading emoji", "\U0001F6A7\U0001F6A7 101 \U0001F4A5 Mobilization LS 1",
+     ("101", "Mobilization", "LS", 1.0)),
+]
+
+
+class GarbageInput(unittest.TestCase):
+    """QA 2026-11-20 ("what about garbled input?"): the reader cleans every line first
+    (control and format characters, bidi overrides, U+FFFD, emoji go) and
+    takes a line as a pay item only when its description has a real word and
+    it has a unit or a quantity (or an item number in a cell of its own).
+    Everything else is listed as could-not-read with its text; headings are
+    skipped as headings."""
+
+    def test_garbage_is_never_a_line_item(self):
+        for label, text in GARBAGE:
+            with self.subTest(label):
+                p = takeoff.from_text(text)
+                self.assertEqual(p.lines, [], label)
+                self.assertTrue(p.unread, label)
+                for u in p.unread:
+                    self.assertTrue(u["reason"])
+                    self.assertIsInstance(u["raw"], str)
+                    self.assertLessEqual(len(u["raw"]), 200)
+                    for ch in u["raw"]:       # cleaned: nothing that can reorder
+                        self.assertNotIn(ch, "‪‫‬‭‮⁦⁧⁨⁩​�")
+                d = p.to_dict()
+                self.assertEqual(d["n_unread"], len(p.unread))
+
+    def test_the_reasons_are_plain(self):
+        why = {label: [u["reason"] for u in takeoff.from_text(text).unread]
+               for label, text in GARBAGE}
+        self.assertEqual(why["numbers only"], ["numbers only", "numbers only"])
+        self.assertEqual(why["JSON"], ["no words"])
+        self.assertEqual(why["mojibake with a unit and a quantity"], ["garbled or not English"])
+        self.assertEqual(why["two lines of Chinese prose"], ["garbled or not English"] * 2)
+        self.assertEqual(why["keyboard mash on two lines"], ["no unit or quantity"] * 2)
+
+    def test_hidden_characters_and_emoji_are_removed_and_the_line_read(self):
+        for label, text, want in HIDDEN:
+            with self.subTest(label):
+                p = takeoff.from_text(text)
+                self.assertEqual([(l.item_no, l.description, l.unit, l.quantity)
+                                  for l in p.lines], [want])
+                self.assertEqual(p.unread, [])
+
+    def test_schedule_characters_stay(self):
+        d = "18″ Ø RCP, 45° bend ± ½ inch – “Class III” × 2"
+        p = takeoff.from_text("101\t%s\tLF\t420" % d)
+        self.assertEqual(p.lines[0].description, d)
+        self.assertEqual(takeoff.garbage_reason(d), None)
+        self.assertEqual(takeoff.clean_text("Señal été"), "Señal été")
+
+    def test_clean_text_keeps_the_layout(self):
+        self.assertEqual(takeoff.clean_text("a\tb\r\nc\x0bd\x00e​f﻿g­h"),
+                         "a\tb\r\nc\nde" + "fgh")
+
+    def test_headings_are_skipped_as_headings_not_as_errors(self):
+        p = takeoff.from_text("BASE BID\n101 Mobilization LS 1\nSTORM DRAINAGE\n"
+                              "102 24 inch RCP LF 300\nPaving:\n103 Concrete pavement SY 1,200\n")
+        self.assertEqual([(l.item_no, l.description) for l in p.lines],
+                         [("101", "Mobilization"), ("102", "24 inch RCP"),
+                          ("103", "Concrete pavement")])
+        self.assertEqual([s["reason"] for s in p.skipped], ["section heading"] * 3)
+        self.assertEqual(p.unread, [])
+
+    def test_a_wrapped_capitals_line_still_joins_the_line_above(self):
+        p = takeoff.from_text("101 CONCRETE PAVEMENT, 8 INCH, REINFORCED SY 1,200\n"
+                              "AND CURING\n102 Block sod SY 9,500\n")
+        self.assertEqual(p.lines[0].description, "CONCRETE PAVEMENT, 8 INCH, REINFORCED AND CURING")
+        self.assertEqual(len(p.lines), 2)
+
+    def test_a_mixed_paste_keeps_its_items_and_lists_the_rest(self):
+        p = takeoff.from_text("101 Mobilization LS 1\nç¬¬ä¸€ 12 LF 3.5\n"
+                              "102 Rock riprap SY 1,200\n%%%% ^^^^\n103 Silt fence LF 2,300\n")
+        self.assertEqual([l.item_no for l in p.lines], ["101", "102", "103"])
+        self.assertEqual([(u["row"], u["reason"]) for u in p.unread],
+                         [(2, "garbled or not English"), (4, "symbols only")])
+        self.assertEqual(p.lines[0].description, "Mobilization")    # nothing glued on
+
+    def test_a_grid_lists_its_garbage_rows_and_keeps_rows_with_cells_missing(self):
+        p = takeoff.from_text("101\tMobilization\tLS\t1\nç¬¬ä\t12\tLF\n"
+                              "103\tBlock sod\n\tqwerty asdf\t\t\n104\tSilt fence\tLF\t2,300\n")
+        self.assertEqual([(l.item_no, l.description, l.unit, l.quantity) for l in p.lines],
+                         [("101", "Mobilization", "LS", 1.0), ("103", "Block sod", "", None),
+                          ("104", "Silt fence", "LF", 2300.0)])
+        self.assertEqual([u["reason"] for u in p.unread],
+                         ["garbled or not English", "no unit or quantity"])
+
+    def test_a_tab_paste_never_drops_a_lone_line_without_a_word(self):
+        p = takeoff.from_text("101\tMobilization\t\n102\tRock riprap\tSY\t1,200\n"
+                              "asdkj@#$%^&*()_+ ~~ ||||\n103\tBlock sod\tSY\t9,500\n"
+                              "STORM DRAINAGE\nPlease see the plans\n")
+        self.assertEqual([l.item_no for l in p.lines], ["101", "102", "103"])
+        self.assertEqual([(u["row"], u["reason"]) for u in p.unread],
+                         [(3, "no unit or quantity"), (6, "no unit or quantity")])
+        self.assertEqual([(s["row"], s["reason"]) for s in p.skipped], [(5, "section heading")])
+
+    def test_uploaded_files_are_screened_too(self):
+        d = tempfile.mkdtemp()
+        try:
+            path = os.path.join(d, "t.csv")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("Item,Description,Unit,Quantity\n101,Mobilization,LS,1\n"
+                         "102,‮ç¬¬ä¸€è,LF,3\n"
+                         "103,Rock riprap​,SY,1200\n")
+            p = takeoff.from_file(path, "t.csv")
+            self.assertEqual([(l.item_no, l.description) for l in p.lines],
+                             [("101", "Mobilization"), ("103", "Rock riprap")])
+            self.assertEqual([u["reason"] for u in p.unread], ["garbled or not English"])
+        finally:
+            shutil.rmtree(d)
+
+    def test_the_users_paste_and_the_sample_still_read(self):
+        with open(MESSY, encoding="utf-8") as fh:
+            p = takeoff.from_text(fh.read())
+        got = {l.item_no: (l.unit, l.quantity, l.assumed) for l in p.lines}
+        self.assertEqual(got["101"], ("LS", 1.0, ["unit", "quantity"]))
+        self.assertEqual(got["102"], ("LS", 1.0, ["unit"]))
+        self.assertEqual(got["103"][:2], ("CY", 4200.0))
+        self.assertEqual(got["104"][:2], ("SY", 2600.0))
+        self.assertEqual(p.unread, [])
+        with open(os.path.join(HERE, "static", "app.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        i = js.index("const SAMPLE = [")
+        rows = [r.strip().strip(",").strip("'").replace("\\t", "\t").replace("\\'", "'")
+                for r in js[i:js.index("].join", i)].splitlines()[1:]]
+        p = takeoff.from_text("\n".join(r for r in rows if r))
+        self.assertEqual(len(p.lines), 10)
+        self.assertEqual(p.unread, [])
+
+
+# ===========================================================================
+class IntakeQuantityChecks(unittest.TestCase):
+    """QA 2026-11-20: a quantity no bid form prints is a 'check' reason."""
+
+    def assess(self, unit, qty):
+        c = {"family": "mobilization", "unit": unit, "unit_known": True}
+        return intake.assess({"quantity": qty}, c, None)
+
+    def test_a_lump_sum_other_than_one_is_checked(self):
+        a = self.assess("LS", 5200)
+        self.assertTrue(a["low"])
+        self.assertEqual([r["code"] for r in a["reasons"]], ["odd_quantity"])
+        self.assertFalse(self.assess("LS", 1)["low"])
+
+    def test_a_fractional_count_is_checked(self):
+        self.assertEqual([r["code"] for r in self.assess("EA", 17.25)["reasons"]],
+                         ["odd_quantity"])
+        self.assertFalse(self.assess("EA", 4)["low"])
+        self.assertFalse(self.assess("SY", 17.25)["low"])
+
+    def test_the_page_names_the_reason(self):
+        with open(os.path.join(HERE, "static", "app.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        self.assertIn("'odd_quantity' ? 'quantity?'", js)
+
+
+# ===========================================================================
+class ExportSafety(unittest.TestCase):
+    """QA 2026-11-20: exported text is never run as a spreadsheet formula."""
+
+    def test_csv_cells_that_look_like_formulas_are_quoted(self):
+        import exporter
+        for v in ('=HYPERLINK("http://x","y")', "+1 Rock Riprap", "-Remove fence",
+                  "@SUM(A1)", "\tx"):
+            self.assertEqual(exporter.safe_text(v), "'" + v)
+        for v in ("-96.9%", "+20.3%", "-10912.06", "Rock riprap", "", None, -3, 2.5):
+            self.assertEqual(exporter.safe_text(v), v)
+
+    def test_xlsx_text_starting_with_equals_stays_text(self):
+        import openpyxl
+        import exporter
+        wb = openpyxl.Workbook()
+        wb.active.append(['=HYPERLINK("http://x","y")', "=1+1 note", 5])
+        exporter.xlsx_text_only(wb)
+        buf = io.BytesIO()
+        wb.save(buf)
+        back = openpyxl.load_workbook(io.BytesIO(buf.getvalue())).active
+        self.assertEqual([c.data_type for c in back[1]], ["s", "s", "n"])
+        self.assertEqual(back["B1"].value, "=1+1 note")
+
+    def test_the_bid_tab_csv_is_quoted_too(self):
+        v = {"project": "-Demo", "key": "k", "source": {}, "bidders": [
+            {"name": "@Acme", "total": 10.0, "low": True}],
+             "lines": [{"item_no": "1", "description": "=2+2", "unit": "LS",
+                        "quantity": 1.0, "prices": [{"unit_price": 10.0, "amount": 10.0}],
+                        "median_unit": 10.0}]}
+        text = lettings.to_csv(v).decode("utf-8-sig")
+        self.assertIn("'-Demo", text)
+        self.assertIn("'@Acme", text)
+        self.assertIn("'=2+2", text)
+        self.assertNotIn(",=2+2", text)
+
+
+# ===========================================================================
+class WorksheetComparison(unittest.TestCase):
+    """QA 2026-11-20: your OPCC is compared with the model on the same
+    lines -- P50 / P80 leave the not-covered lines out, so your amounts for
+    them (vendor quotes) are added to the model's side as well."""
+
+    RESULT = {"headline": {"p50": 700000.0, "p80": 980000.0},
+              "lines": [{"row_id": "r1", "status": "priced", "quantity": 10.0,
+                         "unit_price_p50": 65000.0},
+                        {"row_id": "r2", "status": "owner_set", "quantity": 1.0,
+                         "fixed_amount": 50000.0},
+                        {"row_id": "r3", "status": "not_covered", "quantity": 2.0,
+                         "quote": 84000.0}]}
+
+    def test_a_vendor_quote_is_on_both_sides(self):
+        import worksheet
+        ws = {"lines": [{"row_id": "r1", "your_unit": 65000.0, "src": "model"},
+                        {"row_id": "r2"},
+                        {"row_id": "r3", "src": "quote", "your_amount": 84000.0}]}
+        t = worksheet.totals(self.RESULT, ws)
+        self.assertEqual(t["your_opcc"], 784000.0)
+        self.assertEqual(t["not_covered"], 84000.0)
+        self.assertEqual(t["model_p50"], 784000.0)
+        self.assertEqual(t["vs_p50"]["amount"], 0.0)
+        self.assertAlmostEqual(t["model_p80"], 1064000.0)
+        rows = dict((r[0], r[1:]) for r in worksheet.sections(self.RESULT, ws, None)[0][2]
+                    if r)
+        self.assertEqual(rows["Your OPCC vs P50 + not-covered lines"][0], 0.0)
+
+    def test_without_not_covered_lines_nothing_changes(self):
+        import worksheet
+        res = dict(self.RESULT, lines=self.RESULT["lines"][:2])
+        ws = {"lines": [{"row_id": "r1", "your_unit": 70000.0, "src": "you"}]}
+        t = worksheet.totals(res, ws)
+        self.assertEqual(t["model_p50"], 700000.0)
+        self.assertEqual(t["vs_p50"]["amount"], 50000.0)
+
+
 # ===========================================================================
 class CorrectionsMemory(unittest.TestCase):
 

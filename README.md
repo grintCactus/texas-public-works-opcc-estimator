@@ -27,6 +27,8 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
    - Paste a bid schedule, or upload Excel, CSV, Word or PDF. Scanned PDFs are read with OCR.
    - Check each line's description, unit, quantity and the item type it was matched to. Change the type with the picker if it is wrong.
    - Lines the reader is unsure of are flagged, with the closest items from bid history to pick from. Corrections you make are remembered on your machine.
+   - Lines it cannot read at all (stray symbols, garbled text, notes) are listed apart as "could not be read", with their original text; nothing is guessed from them. You can add any of them back.
+   - Click "+ Add row" under the table to add a line. Drag a row by any part that is not an input box to move it; the other rows slide aside and it drops in where you let go.
 2. **Describe the project.**
    - Market (city/county or TxDOT), owner, work type and bid date. If the owner or work type is not in the list, type it in.
    - Expected number of bidders: it is prefilled from similar past lettings, and you can change it.
@@ -36,13 +38,21 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
    - P50 (expected low bid) and P80 (a not-under OPCC), with their ranges and the market's track record.
    - The items left out for a vendor quote, and the lump sums whose prices are uncertain.
 4. **Check the evidence.**
-   - Open any line to see the earlier public bids behind its price: project, date, quantity, low and median bidders' unit prices.
+   - Click any line to see the earlier public bids behind its price: project, date, quantity, low and median bidders' unit prices.
    - Open a project to see its whole bid tabulation, the original document, its public source page, and its copy in the data repository.
    - The four most similar past projects are shown with their full bids.
 5. **Build your OPCC.**
    - In the worksheet, keep the model's unit price or pick one from the references, line by line. Add notes and a contingency.
    - "Your OPCC" is shown next to the model's P50 and P80.
 6. **Export** the worksheet to Excel or CSV, with your prices, notes and a references appendix.
+
+![The estimate for a public creek-bank schedule: expected low bid (P50) and recommended OPCC (P80) with their ranges, and one line opened to the earlier public bids behind its price](assets/screenshot-estimate.png)
+
+*The estimate for a public creek-bank schedule (Coppell, 2025). P50 and P80 come with their ranges; one line is opened to the three most relevant earlier public bids, each linked to its source page and the public mirror.*
+
+![The OPCC worksheet: the estimator's own unit prices, notes and a contingency next to P50 and P80, and the most similar past project opened to its full bid](assets/screenshot-worksheet.png)
+
+*The OPCC worksheet. Your own unit prices, notes and a contingency sit next to P50 and P80. Below it, the most similar past project is opened to its full public bid, with the lines that match yours highlighted.*
 
 **Your inputs stay yours.**
 - An engineer's estimate is never an input.

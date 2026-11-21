@@ -104,11 +104,10 @@
       <div class="notice info slim">
         <span class="ic">i</span>
         <div class="body-txt">
-          Each line is classified with the bid-tab parser's own rules (family, unit,
-          size) &mdash; the same rules that built the price history &mdash; so a
-          lookup cannot silently miss. Check the classification column and correct
-          a family with <b>Change</b> when it is wrong. Nothing is priced until you
-          press <b>Estimate</b>.
+          Each line is matched to an item type (with its unit and size) the same way the price
+          history was sorted, so it is compared with like items. Check the classification column and
+          pick another item type with <b>Change</b> when it is wrong. Nothing is priced until you press
+          <b>Estimate</b>.
         </div>
       </div>
     </div>
@@ -118,17 +117,16 @@
 
   <div class="gridhead" id="grid-head" hidden>
     <span class="hint" id="review-count"></span>
-    <span class="spacer"></span>
-    <span class="legend">
-      <span class="badge unc">not covered</span>
-      <span class="badge lowc">low confidence</span>
-      <span class="badge allow">owner-set money?</span>
-      <span class="badge uncl">unclassified</span>
-      <span class="badge check">check: &hellip;</span>
-      <span class="badge remembered">remembered</span>
-      <span class="badge claude">read by Claude</span>
-    </span>
-    <button class="btn sm" id="btn-add-row">+ Add row</button>
+    <!-- what each tag on a line means, in words (no tooltip needed on a phone) -->
+    <ul class="legend" id="grid-legend" aria-label="What the tags on the lines mean">
+      <li><span class="badge unc">not covered</span> almost no earlier bids for this kind of item &mdash; get a vendor quote</li>
+      <li><span class="badge lowc">low confidence</span> a lump sum bidders price very differently &mdash; read the range</li>
+      <li><span class="badge allow">owner-set</span> owner&rsquo;s money (allowance, contingency) &mdash; enter its amount</li>
+      <li><span class="badge uncl">unclassified</span> no item type found &mdash; pick one with Change</li>
+      <li><span class="badge check">check</span> the reader is unsure about this line; the reasons are shown on the line</li>
+      <li><span class="badge remembered">remembered</span> your earlier choice for this wording</li>
+      <li id="legend-claude" hidden><span class="badge claude">read by Claude</span> read from a PDF by Claude &mdash; check it against the document</li>
+    </ul>
   </div>
   <div class="tablewrap" id="grid-wrap" hidden>
     <table class="grid" id="review-table">
@@ -139,7 +137,7 @@
           <th>Description</th>
           <th style="width:70px">Unit</th>
           <th style="width:100px" class="num">Quantity</th>
-          <th style="width:330px">Classification <span class="thnote">family &middot; size</span></th>
+          <th style="width:330px">Classification <span class="thnote">item type &middot; size</span></th>
           <th style="width:130px" class="num" title="Owner-set money (allowance, contingency, force account): the owner's amount, taken at face value and not discounted">Owner-set $</th>
           <th style="width:96px"></th>
         </tr>
@@ -147,6 +145,12 @@
       <tbody id="review-body"></tbody>
     </table>
   </div>
+  <div class="addrow-bar" id="addrow-bar" hidden>
+    <button class="btn addrow" id="btn-add-row" type="button">+ Add row</button>
+    <button class="btn ghost sm" id="btn-renumber" type="button"
+            title="Number the items 1, 2, 3 &hellip; (or on from the first item&rsquo;s number) in the order shown">Renumber items</button>
+  </div>
+  <div id="sr-live" class="sr-only" aria-live="polite"></div>
   <details class="fold pad" id="skipped-fold" hidden><summary>Rows not treated as pay items</summary></details>
 </section>
 
@@ -163,32 +167,31 @@
             <button data-v="txdot" aria-pressed="false">TxDOT</button>
             <button data-v="not_sure" aria-pressed="false" title="Priced as City / County, the default market">Not sure</button>
           </div>
-          <span class="sub">Picks the price history, the competition table and the
-            calibration the estimate uses.</span>
+          <span class="sub">Which past bids the estimate is based on.</span>
         </label>
         <label class="field">
           <span class="lab">Owner <span class="dim">(optional)</span></span>
           <input type="text" id="in-owner" list="owner-list" autocomplete="off"
                  placeholder="type or pick an owner">
           <datalist id="owner-list"></datalist>
-          <span class="sub" id="owner-note">Earlier jobs of the same owner count 1.5&times; when the
-            comparables are chosen. Not listed? Pick "Other &mdash; not in the list" or just type it.</span>
+          <span class="sub" id="owner-note">Earlier jobs of the same owner weigh more when similar
+            projects are picked. Not listed? Pick "Other &mdash; not in the list" or just type it.</span>
         </label>
         <label class="field">
           <span class="lab">Work type <span class="dim">(optional)</span></span>
           <input type="text" id="in-worktype" list="worktype-list" autocomplete="off"
                  placeholder="type or pick a work type">
           <datalist id="worktype-list"></datalist>
-          <span class="sub" id="worktype-note">Same work type counts 1.5&times; in the comparables, and
-            picks the bidder-count history. Not listed? Pick "Other / not listed" or just type it.</span>
+          <span class="sub" id="worktype-note">Jobs of the same work type weigh more when similar
+            projects are picked. Not listed? Pick "Other / not listed" or just type it.</span>
         </label>
       </div>
       <div>
         <label class="field">
           <span class="lab">Bid date</span>
           <input type="date" id="in-biddate">
-          <span class="sub">Prices are escalated to its year; comparables and every
-            history read are limited to lettings before it.</span>
+          <span class="sub">Prices are brought to its year; only bids made before it are
+            used.</span>
         </label>
         <label class="field">
           <span class="lab">Expected bidders</span>
@@ -196,7 +199,7 @@
             <input type="number" id="in-bidders" min="1" max="60" step="1" placeholder="auto">
             <button class="btn ghost sm" id="btn-bidders-reset" hidden>use suggestion</button>
           </div>
-          <span class="sub" id="bidders-hint">Prefilled from earlier lettings once the
+          <span class="sub" id="bidders-hint">Prefilled from earlier jobs once the
             takeoff is read. Edit it if you know better.</span>
         </label>
         <div id="discount-preview"></div>
@@ -220,8 +223,7 @@
       <span class="muted-note" id="estimate-hint"></span>
       <span class="spacer"></span>
       <span class="muted-note opcc-note"><b>There is deliberately no field for your
-        OPCC or the engineer's estimate.</b> It is never an input &mdash; only a
-        backtest baseline.</span>
+        OPCC or the engineer's estimate:</b> they never feed the estimate.</span>
     </div>
   </div>
 </section>
@@ -235,6 +237,12 @@
     <h2><span class="secnum">3</span>Estimate <span class="hint" id="result-sub"></span></h2>
     <div class="body">
       <div id="r-headline"></div>
+      <nav class="resjump" id="r-jump" aria-label="Jump to a part of the results">
+        <span class="lab">Jump to:</span>
+        <a href="#result-table">Lines</a><span class="sep" aria-hidden="true">&middot;</span>
+        <a href="#p-similar">Similar projects</a><span class="sep" aria-hidden="true">&middot;</span>
+        <a href="#p-worksheet">Worksheet</a>
+      </nav>
       <div id="r-context"></div>
       <div id="r-warnings"></div>
     </div>
@@ -255,27 +263,35 @@
         <button class="btn sm ghost" id="ws-json" type="button">Download JSON</button>
         <input type="file" id="ws-upload" hidden accept=".json,application/json">
       </div>
+      <div class="hintline" id="ws-hint" role="note" hidden>
+        <span>Click a line to see the past bids behind its price.</span>
+        <button type="button" class="btn ghost sm x" id="ws-hint-close" aria-label="Dismiss this hint" title="Dismiss">&#10005;</button>
+      </div>
     </div>
     <div class="tablewrap tall">
       <table class="grid" id="result-table">
         <thead>
           <tr>
-            <th style="width:54px">Item</th>
+            <th style="width:58px">Item</th>
             <th>Description</th>
-            <th style="width:82px" class="num">Qty</th>
+            <th style="width:76px" class="num">Qty</th>
             <th style="width:46px">Unit</th>
-            <th style="width:104px" class="num" title="The model&rsquo;s unit price at the P50 level">Model $/unit</th>
-            <th style="width:170px" class="num" title="Low &ndash; median &ndash; high of this line&rsquo;s reference projects&rsquo; median-bidder unit prices, escalated to the bid year">Reference range</th>
-            <th style="width:110px">Accuracy</th>
-            <th style="width:210px">Your $/unit</th>
-            <th style="width:118px" class="num">Your amount</th>
-            <th style="width:190px">Note</th>
+            <th style="width:96px" class="num" title="The model&rsquo;s unit price at the P50 level">Model $/unit</th>
+            <th style="width:150px" class="num" title="Low &ndash; median &ndash; high of this line&rsquo;s reference projects&rsquo; median-bidder unit prices, escalated to the bid year">Reference range</th>
+            <th style="width:104px">Accuracy</th>
+            <th style="width:200px">Your $/unit</th>
+            <th style="width:108px" class="num">Your amount</th>
+            <th style="width:140px">Note</th>
           </tr>
         </thead>
         <tbody id="result-body"></tbody>
         <tfoot id="result-foot"></tfoot>
       </table>
     </div>
+  </div>
+  <div class="panel" id="p-similar">
+    <h2>Similar past projects <span class="hint" id="sim-sub"></span></h2>
+    <div class="body" id="r-similar"></div>
   </div>
   <div class="panel" id="p-notcovered">
     <h2>Not covered &mdash; get a vendor quote <span class="hint" id="nc-sub"></span></h2>
@@ -289,10 +305,6 @@
     <h2>Competition <span class="hint">bidders and the discount</span></h2>
     <div class="body" id="r-competition"></div>
   </div>
-  <div class="panel" id="p-similar">
-    <h2>Similar past projects <span class="hint" id="sim-sub"></span></h2>
-    <div class="body" id="r-similar"></div>
-  </div>
 </section>
 
 <!-- =========================================================== EXPORT -->
@@ -301,10 +313,10 @@
   <div class="body row-actions">
     <button class="btn" id="btn-export-csv">Download CSV</button>
     <button class="btn" id="btn-export-xlsx">Download Excel (.xlsx)</button>
-    <span class="muted-note">Everything above &mdash; project details, P50 / P80 with their
-      bands, accuracy context, alerts, not-covered and low-confidence lines, the line
-      table, the competition step and the similar past projects with their matched
-      lines.</span>
+    <span class="muted-note">Everything above &mdash; project details, the expected low bid
+      and the recommended OPCC with their ranges, how accurate this has been, alerts,
+      not-covered and low-confidence lines, the line table, competition and the similar
+      past projects with their matched lines.</span>
   </div>
 </section>
 
@@ -332,6 +344,10 @@
 </details>
 
 </main>
+<footer class="foot" id="foot">
+  <button type="button" class="linkbtn" id="btn-about">About this tool</button>
+  <span class="dim">&middot; data, versions and the tools behind this page</span>
+</footer>
 </div>
 
 <div class="toast-host" id="toasts"></div>

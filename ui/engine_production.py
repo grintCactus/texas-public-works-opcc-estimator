@@ -77,13 +77,13 @@ FORBIDDEN_INPUTS = ("opcc", "opcc_total", "engineer_estimate",
 #: adopts an estimator change and re-scores.
 MARKET_ACCURACY = {
     "municipal": {"label": "City / municipal (DFW) lettings, 2024-26",
-                  "lettings": 190, "p50_median_error": 0.20,
-                  "p80_under": 0.15, "median_overshoot": 0.43,
-                  "as_of": "2026-11-20 (rebuild 19:40, 23 new city tabs)"},
+                  "lettings": 188, "p50_median_error": 0.19,
+                  "p80_under": 0.14, "median_overshoot": 0.42,
+                  "as_of": "2026-11-20 (parser .30)"},
     "txdot": {"label": "TxDOT (DFW counties) lettings, 2023-26",
               "lettings": 806, "p50_median_error": 0.16,
-              "p80_under": 0.16, "median_overshoot": 0.32,
-              "as_of": "2026-11-20 (parser .29)"},
+              "p80_under": 0.16, "median_overshoot": 0.31,
+              "as_of": "2026-11-20 (parser .30)"},
 }
 
 COVERAGE_LABELS = {
@@ -121,10 +121,17 @@ ESTIMATOR_FILES = ("estimate_low_bid.py", "comparables.py", "coverage.py",
                    "item_tokens.py", "qty_shape.py", "parse_bidtabs.py")
 MAX_SIMILAR = 4      # similar past projects shown under an estimate
 LOWCONF_GUIDE = ("A guide, not a band: in the back-tests the low bidder's own "
-                 "amount fell inside this range in about a third of lettings.")
+                 "amount fell inside this range in about a third of past jobs.")
 
 _CJK = re.compile("[%s-%s%s-%s]" % (chr(0x3400), chr(0x9FFF), chr(0xFF00),
                                          chr(0xFFEF)))   # CJK + full-width forms
+
+
+#: Safety caps on what one request may carry. A description is cut to
+#: MAX_DESC_CHARS for classifying and pricing (the classifier is quadratic in
+#: its length; real bid-form wordings are a few hundred characters at most).
+MAX_DESC_CHARS = 1000
+MAX_LINES = 2000
 
 
 class EngineNotReady(RuntimeError):
@@ -285,6 +292,28 @@ def english(s):
     return s
 
 
+_CODE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
+
+
+def plain_codes(s):
+    """An estimator note with the internal ids it names -- not-covered
+    classes, item types, lump-sum classes ("(pump_equipment)") -- replaced
+    by their labels ("(Pumps / pump, lift or booster station)"). Only known
+    ids are replaced; other words are left as written."""
+    import build_item_accuracy as bia
+
+    def sub(m):
+        t = m.group(0)
+        if t in COVERAGE_LABELS:
+            return COVERAGE_LABELS[t]
+        if t in LOWCONF_LABELS:
+            return LOWCONF_LABELS[t]
+        if t in bia.LABELS or t in FAMILY_LABELS_EXTRA:
+            return family_label(t)
+        return t
+    return _CODE.sub(sub, str(s))
+
+
 def has_cjk(obj):
     """True when any string inside obj carries CJK text (for the tests)."""
     if isinstance(obj, str):
@@ -384,7 +413,7 @@ class ItemAccuracy:
             return dict(base, tier="none", text="no item figure",
                         tooltip=("Too few lines measured for this item in "
                                  "the %s forward test (%d line(s); the "
-                                 "threshold is 40 lines in 15 lettings). "
+                                 "threshold is 40 lines in 15 past jobs). "
                                  "Across all %s lines, half were within "
                                  "±%.0f%% of the median bid."
                                  % (window, n or 0, mlabel,
@@ -396,7 +425,7 @@ class ItemAccuracy:
         lean = ("runs %.0f%% high" % (100 * (r - 1)) if r >= 1.005 else
                 "runs %.0f%% low" % (100 * (1 - r)) if r <= 0.995 else
                 "is centred")
-        tip = ("%s, %s forward test (%s): half of %d lines in %d lettings "
+        tip = ("%s, %s forward test (%s): half of %d lines in %d past jobs "
                "were within ±%.0f%% of the median bid; our line price "
                "%s (median ratio %.2f); %.0f%% within ±20%%. Bidders "
                "themselves: the low bidder is typically %.0f%% from the "
@@ -410,7 +439,7 @@ class ItemAccuracy:
                     "every job, while bidders price it as a share of the "
                     "job -- treat this line as weak.")
         elif weak == "unclassified":
-            tip += (" Unclassified line: no item family matched, so this "
+            tip += (" Unclassified line: no item type matched, so this "
                     "figure is weak.")
         elif weak == "allowance":
             tip += (" Contingency / allowance line: enter the owner's "
@@ -675,16 +704,16 @@ class BidderHistory:
         w = (work_type or "") if market == "municipal" else ""
         s = size_class(total)
         pm = [h for h in prior if h[2] == market]
-        mlab = "municipal" if market == "municipal" else "TxDOT"
+        mlab = "city / county" if market == "municipal" else "TxDOT"
         cells = [
             ("market, work type, size",
-             "%s lettings with work type '%s' and size %s"
+             "%s jobs with work type '%s' and size %s"
              % (mlab, work_type_label(w) if w else "(blank)", SIZE_LABELS[s]),
              [h[3] for h in pm if h[4] == w and h[5] == s]),
-            ("market, size", "%s lettings of size %s" % (mlab, SIZE_LABELS[s]),
+            ("market, size", "%s jobs of size %s" % (mlab, SIZE_LABELS[s]),
              [h[3] for h in pm if h[5] == s]),
-            ("market", "%s lettings of any size" % mlab, [h[3] for h in pm]),
-            ("all markets", "lettings of both markets",
+            ("market", "%s jobs of any size" % mlab, [h[3] for h in pm]),
+            ("all markets", "jobs of both markets",
              [h[3] for h in prior]),
         ]
         for key, label, v in cells:
@@ -698,8 +727,7 @@ class BidderHistory:
                         "work_type": w,
                         "note": self.basis_note(market)}
         return {"n": N1_DEFAULT, "rule": "N1", "cell": "default",
-                "cell_label": "fewer than %d earlier lettings in every cell"
-                              % N1_MIN,
+                "cell_label": "fewer than %d similar earlier jobs" % N1_MIN,
                 "history_lettings": 0, "median": None, "before": D,
                 "size_total": total, "size_class": SIZE_LABELS[s],
                 "work_type": w, "note": self.basis_note(market)}
@@ -1034,6 +1062,7 @@ class ProductionEngine:
         """The parser's classification of one line (plus the user's family
         override), and what the estimator will make of it."""
         E = _E()
+        description = str(description or "")[:MAX_DESC_CHARS]
         c = upstream.classify_line(description, unit_raw)
         fam_parser = c["family"]
         fo = str(family_override or "").strip()
@@ -1043,6 +1072,7 @@ class ProductionEngine:
                 description, c["unit"], fam)
         c["family"] = fam
         c["family_parser"] = fam_parser
+        c["family_parser_label"] = family_label(fam_parser) if fam_parser else ""
         c["family_overridden"] = bool(fo) and fo != fam_parser
         c["family_label"] = family_label(fam)
         dn, unit = c["desc_norm"], c["unit"]
@@ -1066,7 +1096,7 @@ class ProductionEngine:
         elif not c["unit_known"]:
             issues.append("unit %r is not one the parser knows" % unit)
         if fam in ("other", "needs_review", ""):
-            issues.append("no item family matched (unclassified)")
+            issues.append("no item type matched (unclassified)")
         c["issues"] = issues
         return c
 
@@ -1143,10 +1173,19 @@ class ProductionEngine:
         if market not in MARKETS:
             raise BadRequest("market must be 'municipal' or 'txdot', got %r"
                              % payload.get("market"))
-        raw = [it for it in (payload.get("items") or [])
-               if it.get("include", True)]
+        items_in = payload.get("items") or []
+        if not isinstance(items_in, list) or not all(
+                isinstance(it, dict) for it in items_in):
+            # a malformed request is a 400 with a reason, not a 500
+            raise BadRequest("items must be a list of objects "
+                             "({description, unit, quantity, ...}).")
+        raw = [it for it in items_in if it.get("include", True)]
         if not raw:
             raise BadRequest("No line items supplied.")
+        if len(raw) > MAX_LINES:
+            raise BadRequest("This takeoff has %d lines; the estimate takes up "
+                             "to %d at once. Split it into parts."
+                             % (len(raw), MAX_LINES))
         bid_date = _iso_date(payload.get("bid_date"))
         if payload.get("bid_date") and not bid_date:
             raise BadRequest("bid_date must be YYYY-MM-DD, got %r"
@@ -1205,7 +1244,7 @@ class ProductionEngine:
         the dicts run_schedule() builds from a schedule CSV."""
         items, cls = [], []
         for i, it in enumerate(raw):
-            desc = str(it.get("description") or "").strip()
+            desc = str(it.get("description") or "").strip()[:MAX_DESC_CHARS]
             c = self.classify_one(desc, it.get("unit"), it.get("family"),
                                   market)
             c["row_id"] = str(it.get("row_id") or "r%d" % (i + 1))
@@ -1359,7 +1398,7 @@ class ProductionEngine:
             "context": dict(MARKET_ACCURACY[market], market=market),
             "alerts": self._alerts(r, lines, not_covered, competition,
                                    bidders["n"]),
-            "warnings": [english(w) for w in r.get("warnings") or []],
+            "warnings": [plain_codes(english(w)) for w in r.get("warnings") or []],
             "not_covered": not_covered,
             "low_confidence": low_conf,
             "lines": lines,
@@ -1397,9 +1436,8 @@ class ProductionEngine:
             if (r.get("market_total") or 0) <= 0:
                 why = "not a single line could be priced"
             elif not comp["available"]:
-                why = ("no competition discount within %d bidders of %s -- "
-                       "the estimator refuses to extrapolate"
-                       % (_E().MAX_BIN_DISTANCE, n_bidders))
+                why = ("no past jobs with about %s bidders, so the "
+                       "competition effect is unknown" % n_bidders)
             else:
                 why = "see the estimator notes"
             out.append({"level": "severe", "code": "no_estimate",
@@ -1418,19 +1456,18 @@ class ProductionEngine:
                                              [:30] for ln in unp[:6]))})
         if nc["n"] and not nc["as_a_whole"]:
             out.append({"level": "caution", "code": "not_covered",
-                        "text": "%d not-covered line(s) are excluded from P50 "
-                                "and P80; see the panel below%s."
+                        "text": "%d not-covered line(s) are left out of the "
+                                "expected low bid (P50) and the recommended "
+                                "OPCC (P80); see the panel below%s."
                                 % (nc["n"], "" if nc["complete_total"] is None
                                    else " for the complete total")})
         uc = [ln for ln in lines if ln["status"] == "priced"
               and ln["evidence"]["usable"] == "unclassified"]
         if uc:
             out.append({"level": "caution", "code": "unclassified_priced",
-                        "text": "%d line(s) are priced off a reference cell "
-                                "the data marks 'unclassified' -- a catch-all "
-                                "such as the 'other' family or the generic "
-                                "TRM family (%s): check their "
-                                "classification."
+                        "text": "%d line(s) are priced from a catch-all "
+                                "group of unlike items (%s): check what they "
+                                "are with Change in the takeoff."
                                 % (len(uc), ", ".join(
                                     ln["item_no"] or ln["description"][:30]
                                     for ln in uc[:6]))})
@@ -1448,15 +1485,17 @@ class ProductionEngine:
         ds = r.get("degraded_dollar_share")
         if el is not None and ds and ds >= 0.5:
             out.append({"level": "caution", "code": "thin_evidence",
-                        "text": "%.0f%% of the money rests on reference cells "
-                                "backed by fewer than 5 earlier projects or "
-                                "unclassified (usable is not 'yes') -- common "
-                                "for city work; read the bands, not just the "
-                                "P50." % (100 * ds)})
+                        "text": "%.0f%% of the money is priced from items "
+                                "with fewer than 5 earlier projects (or from a "
+                                "catch-all group) -- common for city work; read "
+                                "the ranges, not just the expected low bid."
+                                % (100 * ds)})
         if comp.get("extrapolated"):
             out.append({"level": "info", "code": "bin_extrapolated",
-                        "text": "No discount bin at %s bidders; the nearest "
-                                "(%s) was used." % (n_bidders, comp["bin"])})
+                        "text": "No past jobs with exactly %s bidders; the "
+                                "nearest count (%s) was used for the "
+                                "competition discount." % (n_bidders,
+                                                           comp["bin"])})
         return out
 
     @staticmethod
@@ -1543,7 +1582,7 @@ class ProductionEngine:
         pk = t.get("price_key")
         why = " | ".join(t.get("why") or [])
         n = _f(t.get("n_projects"))
-        ev = (" · %d project%s" % (n, "" if n == 1 else "s")) if n else ""
+        ev = (" · %d earlier project%s" % (n, "" if n == 1 else "s")) if n else ""
         warns = []
         if status == "not_covered":
             basis = ("Not covered (%s): no comparable bid history; get a "
@@ -1555,29 +1594,26 @@ class ProductionEngine:
         elif status == "owner_set":
             basis = "Owner-set amount, taken at face value (no discount)"
         elif pk == "token_jaccard":
-            basis = ("Item words matched (Jaccard %.2f over %s cell%s)%s"
-                     % (t.get("token_match_jaccard") or 0,
-                        t.get("token_candidates") or 0,
-                        "" if t.get("token_candidates") == 1 else "s", ev))
+            basis = "Priced from similarly worded items%s" % ev
             if t.get("token_exact_rule"):
-                basis += " · exact word set (T1)"
+                basis += " · same wording"
         elif pk == "family+unit+size+band":
-            basis = "Family, size and quantity band%s" % ev
+            basis = "Priced from this kind of item at this size and quantity%s" % ev
         elif pk == "family+unit+size":
-            basis = "Family median%s" % ev
+            basis = "Priced from the typical price of this kind of item%s" % ev
             if t.get("qty_factor"):
-                basis += " · quantity shape ×%.2f" % t["qty_factor"]
+                basis += " · adjusted for quantity (×%.2f)" % t["qty_factor"]
         elif pk == "f1_nearest_size":
             f1 = t.get("f1") or {}
-            basis = ("Nearest sized cell, scaled for size (×%.2f)%s"
-                     % (f1.get("factor") or 1.0, ev))
+            basis = ("Priced from the nearest size of this item, scaled for "
+                     "size (×%.2f)%s" % (f1.get("factor") or 1.0, ev))
         elif pk == "removal_typical_line":
-            basis = ("Removal-only line with no removal history: this "
-                     "schedule's typical line amount")
+            basis = ("No removal history: priced at this schedule's typical "
+                     "line amount")
         elif pk == "mobilization_ratio":
-            basis = ("Mobilization as a share of the rest of the schedule "
-                     "(%.1f%%, TxDOT T1)" % (100 * (t.get("mobilization_ratio")
-                                                    or 0)))
+            basis = ("Mobilization as a share of the rest of the job "
+                     "(%.1f%%, as on TxDOT jobs)"
+                     % (100 * (t.get("mobilization_ratio") or 0)))
         else:
             first = (t.get("why") or ["no reference cell"])[0]
             basis = "Not priced: %s" % english(first)
@@ -1585,8 +1621,8 @@ class ProductionEngine:
         if status == "priced":
             if u == "unclassified":
                 warns.append({"level": "severe",
-                              "text": "priced off an unclassified catch-all "
-                                      "cell"})
+                              "text": "unclassified: priced from a "
+                                      "catch-all group of unlike items"})
             elif u == "no":
                 warns.append({"level": "caution",
                               "text": "thin evidence (%s project%s)"
@@ -1598,25 +1634,26 @@ class ProductionEngine:
             # escalation, from the trace's keys
             if esc.get("to_year") and not t.get("escalation"):
                 warns.append({"level": "caution",
-                              "text": "not escalated to the bid year (no "
-                                      "index path)"})
+                              "text": "not brought to the bid year (no "
+                                      "price index)"})
             elif (t.get("escalation_basis") and esc.get("arm")
                   and t["escalation_basis"] != esc["arm"]):
                 warns.append({"level": "caution",
-                              "text": "escalated on another market's index "
-                                      "(%s)" % t["escalation_basis"]})
+                              "text": "brought to the bid year with "
+                                      "another market's price index (%s)"
+                                      % t["escalation_basis"]})
             elif t.get("escalation") and esc.get("carried"):
                 warns.append({"level": "info",
-                              "text": "index carried flat to %s"
-                                      % esc["to_year"]})
+                              "text": "no price index for %s yet: the "
+                                      "latest level is used" % esc["to_year"]})
             # best effort: the estimator records these only in its notes
             if "quantity effect NOT applied" in why:
                 warns.append({"level": "info",
-                              "text": "no quantity adjustment (no band "
-                                      "table for this family)"})
+                              "text": "no quantity adjustment for this "
+                                      "kind of item"})
             if "UNSIZED bucket" in why or "substituted the best" in why:
                 warns.append({"level": "caution",
-                              "text": "priced from a different size bucket"})
+                              "text": "priced from a different size"})
             if c["owner_set_like"]:
                 warns.append({"level": "severe", "code": "allowance_missing",
                               "text": ALLOWANCE_MISSING})
@@ -1633,7 +1670,8 @@ class ProductionEngine:
                                   "panel"})
         if c["family"] in ("other", "needs_review", "") and status == "priced":
             warns.append({"level": "caution",
-                          "text": "unclassified line (no item family)"})
+                          "text": "unclassified: no item type "
+                                  "matched"})
         return basis, warns
 
     @staticmethod
@@ -1892,12 +1930,12 @@ class ProductionEngine:
         nc = cm.get("n_candidates") or 0
         why = None
         if len(cards) < MAX_SIMILAR:
-            why = ("Only %d earlier public job%s dated before %s share%s at "
-                   "least %.0f%% of this schedule's dollars (the comparables "
-                   "rule's minimum overlap)%s."
+            why = ("Only %d earlier public job%s bid before %s share%s at "
+                   "least %.0f%% of this schedule's dollars%s."
                    % (nc, "" if nc == 1 else "s", D, "s" if nc == 1 else "",
                       100 * upstream.comparables.O_MIN,
-                      "" if nc else "; P50 rests on the line prices alone"))
+                      "" if nc else "; the expected low bid rests on the line "
+                                    "prices alone"))
         head.update({
             "cards": cards, "why_fewer": why, "n_candidates": nc,
             "n_blended": cm.get("n_comps"), "before": D,
@@ -2206,13 +2244,13 @@ class ProductionEngine:
         span = (("%d" % years[0]) if years and years[0] == years[-1] else
                 ("%d–%d" % (years[0], years[-1])) if years else "")
         what = {"tok": "items worded like this one",
-                "band": "this item family in this quantity band",
-                "fam": "this item family"}[kind]
+                "band": "this item type in this quantity band",
+                "fam": "this item type"}[kind]
         tier = {"tok": "word match" + (" (exact word set, rule T1)"
                                        if cell.get("exact") else ""),
-                "band": "family + size + quantity band",
+                "band": "item type + size + quantity band",
                 "fam": ("nearest sized cell, scaled for size" if f1 else
-                        "family median" + (" (%s)" % cell["substituted"]
+                        "item type median" + (" (%s)" % cell["substituted"]
                                            if cell.get("substituted")
                                            else ""))}[kind]
         head = ("%s/%s = the median of the median bids of %d earlier "
@@ -2228,13 +2266,13 @@ class ProductionEngine:
         warning = None
         if t.get("usable") == "unclassified" or \
                 (it.get("family") or "") in ("other", "needs_review", ""):
-            warning = ("Generic match: this cell is a catch-all (%s) of "
-                       "unrelated items, so its references say little about "
-                       "this line. Treat the price as a placeholder and check "
-                       "the classification." % _cell_label(kind, key))
+            warning = ("Generic match: this line falls in a catch-all "
+                       "group of unlike items, so these past prices say "
+                       "little about it. Treat the price as a placeholder and "
+                       "check the item type.")
         elif (_f(row.get("n_projects")) or 0) < 5:
             warning = ("Thin evidence: only %d earlier project%s behind this "
-                       "cell." % (n_let, "" if n_let == 1 else "s"))
+                       "price." % (n_let, "" if n_let == 1 else "s"))
         # the references, public lettings dated strictly before the bid date
         our_tok = E.item_tokens.tokens(it.get("description") or "")
         q0 = _f(it.get("quantity"), 0.0) or 0.0
@@ -2299,17 +2337,16 @@ class ProductionEngine:
         refs.sort(key=lambda x: -x["score"])
         note = None
         if later or undated:
-            note = ("The cell's median also includes %s -- the published "
-                    "reference tables are built from every public letting "
-                    "-- which %s not listed here." % (
+            note = ("The median price also counts %s, not listed here: the "
+                    "price tables use every public bid, while this list shows "
+                    "only projects dated before your bid date." % (
                         " and ".join(x for x in (
-                            ("%d letting%s dated on or after the bid date"
+                            ("%d project%s bid on or after your bid date"
                              % (later, "" if later == 1 else "s"))
                             if later else "",
-                            ("%d undated letting%s" % (undated, "" if
+                            ("%d undated project%s" % (undated, "" if
                                                        undated == 1 else "s"))
-                            if undated else "") if x),
-                        "is" if later + undated == 1 else "are"))
+                            if undated else "") if x)))
         return dict(base, tier=tier, kind=kind, derivation=derivation,
                     warning=warning, note=note,
                     cell={"label": _cell_label(kind, key),

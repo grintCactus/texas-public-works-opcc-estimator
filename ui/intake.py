@@ -7,8 +7,9 @@ Three pieces, all local and all deterministic:
                   classified well: no item family matched ("other"), the
                   wording matches nothing in the public price history well
                   (best history score below matching.WEAK_MATCH), no unit, no
-                  quantity, or the reader itself was unsure (an OCR'd or
-                  Claude-read line it flagged).
+                  quantity, a quantity no bid form prints (a lump sum other
+                  than 1, a count with a fraction), or the reader itself was
+                  unsure (an OCR'd or Claude-read line it flagged).
   suggestions()   the top 3 earlier public line items for such a line -- the
                   same unit when the line has one, ranked by the history
                   search's token similarity -- for a one-click choice of
@@ -156,7 +157,7 @@ class Corrections:
             raise ValueError("A correction needs the line's description.")
         family = str(family or "").strip()
         if not family or family in UNCLASSIFIED:
-            raise ValueError("A correction needs a real item family.")
+            raise ValueError("A correction needs a real item type.")
         unit = upstream.norm_unit(str(unit or "")).upper() if unit else ""
         with self._lock:
             self._load()
@@ -234,7 +235,7 @@ class BrowserCorrections:
             raise ValueError("A correction needs the line's description.")
         family = str(family or "").strip()
         if not family or family in UNCLASSIFIED:
-            raise ValueError("A correction needs a real item family.")
+            raise ValueError("A correction needs a real item type.")
         unit = upstream.norm_unit(str(unit or "")).upper() if unit else ""
         return {"key": k, "family": family, "unit": unit,
                 "source": str(source or "picker")[:20], "last": _now()}
@@ -317,7 +318,7 @@ def assess(line: dict, c: dict, best: Optional[float]) -> dict:
                   or line.get("family"))
     if c.get("family") in UNCLASSIFIED:
         reasons.append({"code": "unclassified",
-                        "text": "no item family matched"})
+                        "text": "no item type matched"})
     if (best is not None and best < m.WEAK_MATCH and not chosen
             and not c.get("owner_set_like") and not c.get("coverage_class")):
         reasons.append({"code": "weak_match",
@@ -337,11 +338,37 @@ def assess(line: dict, c: dict, best: Optional[float]) -> dict:
         qok = False
     if not qok:
         reasons.append({"code": "no_quantity", "text": "no quantity"})
+    else:
+        # a quantity a bid form would not print: a lump sum other than 1, a
+        # count with a fraction -- usually a price or a page number read as
+        # the quantity (an OCR'd "MOBILIZATION LS 5200" was priced as 5,200
+        # lump sums without a flag)
+        u, qf = str(c.get("unit") or "").upper(), float(q)
+        if u == "LS" and abs(qf - 1.0) > 1e-9:
+            reasons.append({"code": "odd_quantity",
+                            "text": "a lump sum with quantity %s (bid forms "
+                                    "print 1)" % ("%g" % qf)})
+        elif u == "EA" and abs(qf - round(qf)) > 1e-9:
+            reasons.append({"code": "odd_quantity",
+                            "text": "a count with a fraction (%s EA)" % ("%g" % qf)})
+    words = [w for w in str(line.get("description") or "").replace("-", " ").split()
+             if any(ch.isalpha() for ch in w)]
+    if len(words) <= 1 and c.get("family") in UNCLASSIFIED and \
+            str(line.get("description") or "").strip():
+        # a fragment ("Unclassified"): too little to tell what the line is
+        reasons.append({"code": "unclear_description",
+                        "text": "the description is too short to tell what "
+                                "this is"})
+    issues = [str(x) for x in (line.get("issues") or [])]
+    assumed = [x for x in issues if x.startswith("assumed")]
+    if assumed:
+        # the reader filled in a unit / quantity (a lump sum with neither)
+        reasons.append({"code": "assumed", "text": assumed[0]})
     if str(line.get("confidence") or "") == "low":
         # the reader's own notes, minus the missing unit / quantity already
-        # reported above
-        why = [str(x) for x in (line.get("issues") or [])
-               if not str(x).startswith(_COVERED_ISSUES)][:2]
+        # reported above and an assumption reported on its own
+        why = [x for x in issues if not x.startswith(_COVERED_ISSUES)
+               and not x.startswith("assumed")][:2]
         if why:
             reasons.append({"code": "reader_unsure",
                             "text": "the reader was unsure: " + "; ".join(why)})
@@ -370,18 +397,27 @@ def annotate(engine, lines: List[dict], classified: List[dict], market: str,
                         ln2["unit"] = e["unit"]
                     c2 = engine.classify([ln2], market)[0]
                     c2["row_id"] = c.get("row_id")
-                    c2["remembered"] = {
-                        "family": e["family"], "family_label": c2.get("family_label"),
-                        "unit": e["unit"] if fill_unit else "",
-                        "last": e.get("last"), "times": e.get("times")}
-                    c = c2
+                else:
+                    # the estimator confirmed the parser's own family (a
+                    # suggestion picked for a weak-match line): nothing to
+                    # re-classify, but it is still their answer -- tagged
+                    # remembered, so the line is not flagged again
+                    c2 = dict(c)
+                c2["remembered"] = {
+                    "family": e["family"], "family_label": c2.get("family_label"),
+                    "unit": e["unit"] if fill_unit else "",
+                    "last": e.get("last"), "times": e.get("times")}
+                c = c2
         best, sugg = None, None
         if history_ready and str(ln.get("description") or "").strip():
             unit = c.get("unit") or ""
             cands = history_candidates(ln.get("description"), unit)
             best = best_match_score(cands)
             a = assess(ln, c, best)
-            if a["low"]:
+            # family suggestions help a doubtful wording, not a doubtful
+            # quantity
+            if a["low"] and any(r["code"] != "odd_quantity"
+                                for r in a["reasons"]):
                 sugg = suggestions(cands, unit)
         else:
             a = assess(ln, c, None)

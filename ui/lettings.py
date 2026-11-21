@@ -654,17 +654,28 @@ def build_view(pk: str, rows: List[dict], engine, tabs: Optional[LettingTabs] = 
         "classes": classes,
         "source": src,
         "public_only": True,
-        "note": ("Every row of this letting in data/clean/master_panel.csv "
-                 "with source_set = external: unit prices as tabulated, "
-                 "extended = quantity × unit price, totals = the sum of a "
-                 "bidder's extended amounts."),
+        "note": ("Every line of this public bid as tabulated: unit prices "
+                 "as written, amount = quantity × unit price, a bidder's "
+                 "total = the sum of their amounts."),
     }
+
+
+class _SafeWriter:
+    """csv.writer whose rows go through exporter.safe_row: a bid tab's own
+    text ("-Remove fence", "=...") is never run as a spreadsheet formula."""
+
+    def __init__(self, fh):
+        from exporter import safe_row
+        self._w, self._safe = csv.writer(fh), safe_row
+
+    def writerow(self, row):
+        self._w.writerow(self._safe(row))
 
 
 def to_csv(v: dict) -> bytes:
     """The tab as a CSV file (UTF-8 with BOM, opens in Excel)."""
     buf = io.StringIO()
-    w = csv.writer(buf)
+    w = _SafeWriter(buf)
     w.writerow(["Full bid tabulation", v.get("project") or v.get("key")])
     for k, lab in (("title", "Title"), ("owner", "Owner"), ("date", "Letting date"),
                    ("work_type", "Work type"), ("n_bidders", "Bidders")):

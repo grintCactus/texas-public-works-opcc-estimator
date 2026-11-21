@@ -14,10 +14,46 @@ from __future__ import annotations
 import csv
 import datetime as _dt
 import io
+import re
 from typing import Any, Dict, List
 
 P80_TEXT = ("the low bid came in at or below this in about 80% of past "
             "lettings")
+
+# ---------------------------------------------------------------------------
+# Spreadsheet safety: text is never run as a formula
+# ---------------------------------------------------------------------------
+# Descriptions come from the user's takeoff and from third-party bid tabs,
+# notes from the user. A spreadsheet runs a cell that starts with = + - @ as
+# a formula ("=HYPERLINK(...)", "-Remove fence" -> #NAME?), and openpyxl
+# stores any string starting with "=" as a live formula. Every export
+# (estimate, worksheet, full bid tab) writes its cells through these.
+_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+_NUMBERISH = re.compile(r"[+\-−]?\$?[\d,]*\.?\d+%?")
+
+
+def safe_text(v):
+    """A CSV cell: text that starts with = + - @ (tab, CR) gets a leading
+    apostrophe, so a spreadsheet shows it as text. Numbers, and numeric text
+    such as "-96.9%" or "+20.3%", are unchanged."""
+    if isinstance(v, str) and v[:1] in _FORMULA_LEAD \
+            and not _NUMBERISH.fullmatch(v.strip()):
+        return "'" + v
+    return v
+
+
+def safe_row(row):
+    return [safe_text(v) for v in row]
+
+
+def xlsx_text_only(wb) -> None:
+    """Store every cell openpyxl took for a formula ("=..." text) as plain
+    text: this workbook writes values, never formulas."""
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for c in row:
+                if c.data_type == "f":
+                    c.data_type = "s"
 
 
 class ExportError(ValueError):
@@ -147,7 +183,7 @@ def sections(result: Dict[str, Any]) -> List[tuple]:
         rows.append([lc.get("guide")])
     out.append(("Low confidence (mobilization / general-condition lump sums)",
                 ["Class", "Items", "Ours at P50 level", "Share of P50",
-                 "Earlier low bidders p25", "median", "p75", "Lettings",
+                 "Earlier low bidders p25", "median", "p75", "Past jobs",
                  "Job size", "Implied low", "Implied high", "Ours is"],
                 rows or [["(none)"]]))
 
@@ -283,9 +319,9 @@ def to_csv(result: Dict[str, Any]) -> bytes:
         w.writerow([])
         w.writerow(["## " + title])
         if head:
-            w.writerow(head)
+            w.writerow(safe_row(head))
         for r in rows:
-            w.writerow(r)
+            w.writerow(safe_row(r))
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
@@ -335,6 +371,7 @@ def to_xlsx(result: Dict[str, Any]) -> bytes:
                          if c.value is not None), default=8)
             ws.column_dimensions[col[0].column_letter].width = \
                 min(60, max(9, width + 1))
+    xlsx_text_only(wb)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

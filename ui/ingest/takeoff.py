@@ -21,6 +21,7 @@ import csv
 import io
 import os
 import re
+import unicodedata
 from dataclasses import dataclass, field, asdict
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -131,6 +132,113 @@ def _looks_like_subtotal(desc: str) -> bool:
     return bool(_TOTAL_HEAD.search(s)) and not _is_not_item(s)
 
 NUM_RE = re.compile(r"^\(?-?\$?\s*[\d,]*\.?\d+\s*\)?$")
+#: An item number as a cell holds it: 101, 2.01, 104-1, A-1, SP12, 7a, 3.
+_ITEM_CODE = re.compile(r"[A-Za-z]{0,4}[-.]?\d{1,5}(?:[-.]\d{1,4}){0,2}"
+                        r"[A-Za-z]?[.)]?")
+#: A word that makes the number before it a size, not an item number:
+#: "18 inch RCP", "24 in. riprap", "6 ft fence".
+_SIZE_WORD = re.compile(r"(?:in(?:ch(?:es)?)?|ft|feet|foot|mm|cm|dia(?:meter)?)"
+                        r"\.?,?|[\"'”″]", re.I)
+#: Wordings a bid form almost always prices as one lump sum. A line worded
+#: like this with no unit (and no quantity) is read as LS (and 1), marked
+#: "assumed -- check" -- never silently.
+_LS_WORDING = re.compile(
+    r"\b(?:de)?mobili[sz]ation\b|\bbonds?\b|\binsurance\b|\bswppp\b|"
+    r"storm\s*water\s+pollution|\btemporary\s+erosion\s+control\b|"
+    r"\berosion\s+control\s+plan\b|\btraffic\s+control\b|\bstaking\b|"
+    r"\bdewatering\b|right[\s-]+of[\s-]+way\s+prep", re.I)
+
+
+def _assume_lump_sum(line: "TakeoffLine") -> None:
+    """LS (and quantity 1) for a lump-sum wording that came with no unit --
+    recorded in line.assumed and line.issues so the grid says "assumed"."""
+    if line.unit or not _LS_WORDING.search(line.description or ""):
+        return
+    if line.quantity is not None and abs(line.quantity - 1.0) > 1e-9:
+        return
+    line.unit = "LS"
+    line.assumed.append("unit")
+    if line.quantity is None:
+        line.quantity = 1.0
+        line.assumed.append("quantity")
+    line.issues = [i for i in line.issues
+                   if i not in ("no unit found", "no quantity found")]
+    line.issues.append("assumed %s -- check" % (
+        "LS, quantity 1" if "quantity" in line.assumed else "unit LS"))
+    line.confidence = "low"
+
+
+def _plausible_row(cells, di, ui, qi, ii) -> bool:
+    """Do this row's cells fit the columns found for the sheet? A row with a
+    leading or an extra tab, or with cells missing in the middle, does not:
+    its description column holds a number, its unit column a sentence."""
+    def at(j):
+        return _txt(cells[j]) if (j is not None and j < len(cells)) else ""
+    d, u, q, it = at(di), at(ui), at(qi), at(ii)
+    if not d or _looks_numeric(d) or _unit_score(d):
+        return False
+    if u and not _unit_score(u) and _split_qty_unit(u)[0] is None:
+        return False
+    if q and _num(q) is None and _split_qty_unit(q)[0] is None:
+        return False
+    if it and len(it) > 12 and not _ITEM_CODE.fullmatch(it):
+        return False
+    # nothing left over outside the four columns but empty cells or prices
+    used = {j for j in (di, ui, qi, ii) if j is not None}
+    for j, c in enumerate(cells):
+        c = _txt(c)
+        if j in used or not c:
+            continue
+        if _unit_score(c) or (not _looks_numeric(c) and len(c) >= 8):
+            return False
+    return True
+
+
+def _cells_by_content(cells):
+    """(item_no, description, unit, quantity) from one row's cells by what
+    they hold, not where they sit: an item code first, a unit token, a plain
+    number for the quantity (after the unit, else after the description),
+    and the remaining text for the description."""
+    cs = [_txt(c) for c in cells]
+    nz = [i for i, c in enumerate(cs) if c]
+    used = set()
+    unit, qty, item = "", None, ""
+    unit_i = desc_i = -1
+    for i in nz:                                    # "1,745 SY" in one cell
+        q2, u2 = _split_qty_unit(cs[i])
+        if q2 is not None and not _looks_numeric(cs[i]):
+            qty, unit, unit_i = q2, u2, i
+            used.add(i)
+            break
+    if not unit:
+        for i in reversed(nz):
+            if _unit_score(cs[i]):
+                unit, unit_i = upstream.norm_unit(cs[i]).upper(), i
+                used.add(i)
+                break
+    nums = [i for i in nz if i not in used and _num(cs[i]) is not None]
+    texts = [i for i in nz if i not in used and _num(cs[i]) is None]
+    if nz and nz[0] in nums and _ITEM_CODE.fullmatch(cs[nz[0]]) and texts \
+            and nz[0] < texts[0] and (len(nums) >= 2 or not unit or qty is not None):
+        item = cs[nz[0]].rstrip(".)")
+        used.add(nz[0])
+        nums = [i for i in nums if i != nz[0]]
+    elif nz and nz[0] in texts and _ITEM_CODE.fullmatch(cs[nz[0]]) and \
+            len(texts) >= 2:
+        item = cs[nz[0]].rstrip(".)")             # "A-1", "2.01a"
+        used.add(nz[0])
+        texts = texts[1:]
+    if texts:
+        desc_i = texts[0]
+    if qty is None and nums:
+        plain = [i for i in nums if not _money_like(cs[i])] or nums
+        after_u = [i for i in plain if unit_i >= 0 and i > unit_i]
+        after_d = [i for i in plain if i > desc_i]
+        pick = (after_u or after_d or plain)[0]
+        qty = _num(cs[pick])
+        used.add(pick)
+    desc = _txt(" ".join(cs[i] for i in texts))
+    return item, desc, unit, qty
 
 
 @dataclass
@@ -154,6 +262,10 @@ class TakeoffLine:
     origin: str = ""
     #: The PDF page the line was read from, when the reader knows it.
     page: Optional[int] = None
+    #: Fields the reader filled in rather than read ("unit", "quantity"): a
+    #: lump-sum wording with no unit and no quantity becomes LS / 1, shown in
+    #: the grid as "assumed -- check".
+    assumed: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -167,8 +279,13 @@ class TakeoffParse:
     notes: List[str] = field(default_factory=list)
     #: True when any line came from a stand-in rather than a real engine.
     mock: bool = False
-    #: Rows the parser saw and rejected, so nothing disappears silently.
+    #: Headings, totals and column headers: rows that are not pay items,
+    #: kept so nothing disappears silently.
     skipped: List[dict] = field(default_factory=list)
+    #: Lines that could not be read as pay items -- garbled text, symbols or
+    #: numbers only, words with no unit and no quantity -- with their text,
+    #: so the page can show them ({row, reason, raw}).
+    unread: List[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -179,6 +296,8 @@ class TakeoffParse:
             "mock": self.mock,
             "skipped": self.skipped[:80],
             "n_skipped": len(self.skipped),
+            "unread": self.unread[:80],
+            "n_unread": len(self.unread),
         }
 
 
@@ -186,11 +305,153 @@ class TakeoffParse:
 # Value helpers
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Cleaning and judging text (QA 2026-11-20: "what about garbled input?" -- garbage must come
+# back as "could not read", never as line items)
+# ---------------------------------------------------------------------------
+
+#: Non-ASCII characters real schedules use. clean_text keeps them, and they
+#: do not count as foreign when a line is judged: degree, diameter, O-slash,
+#: fractions, dashes, times, plus-minus, curly quotes, feet / inch primes,
+#: squared / cubed, section sign, bullet.
+SCHEDULE_CHARS = frozenset(
+    "\u00b0\u2300\u00d8\u00f8\u00bd\u00bc\u00be\u2153\u2154\u215b"
+    "\u2013\u2014\u00d7\u00b1\u2018\u2019\u201c\u201d\u2032\u2033"
+    "\u00b2\u00b3\u00a7\u2022")
+#: The two "other symbols" (Unicode So) a schedule uses; every other So --
+#: emoji, pictographs, box drawing, (c), (r), U+FFFD -- is dropped.
+_SO_KEEP = frozenset("\u00b0\u2300")
+#: Characters str.splitlines() treats as line breaks: kept as line breaks.
+_BREAKS = str.maketrans({c: "\n" for c in "\x0b\x0c\x1c\x1d\x1e\x85"})
+_ASCII_CTRL = re.compile(r"[\x00-\x08\x0e-\x1f\x7f]")
+
+
+def _dropped(ch: str) -> bool:
+    cat = unicodedata.category(ch)
+    if cat in ("Cc", "Cf", "Cs", "Co", "Cn"):
+        return ch not in "\t\n\r"
+    if cat == "So":
+        return ch not in _SO_KEEP
+    o = ord(ch)
+    return (0xFE00 <= o <= 0xFE0F or 0xE0100 <= o <= 0xE01EF   # variation selectors
+            or o == 0x20E3 or 0x1F3FB <= o <= 0x1F3FF)            # keycap, skin tones
+
+
+def clean_text(s: str) -> str:
+    """What no schedule holds and what can break a page, removed: control
+    characters (tabs and line breaks stay -- they carry the layout), format
+    characters (zero-width space, joiners, bidi overrides such as U+202E,
+    BOM, soft hyphen), U+FFFD, private-use and unassigned code points,
+    emoji and other pictographs. Schedule characters (", ', °, Ø, ½, –, ×,
+    ±, curly quotes) stay. "Rip\u200brap" reads "Riprap"."""
+    if not s:
+        return s
+    s = s.translate(_BREAKS)
+    if s.isascii():
+        return _ASCII_CTRL.sub("", s)
+    out = []
+    for ch in s:
+        if ch < "\x80":
+            if (ch >= " " and ch != "\x7f") or ch in "\t\n\r":
+                out.append(ch)
+        elif not _dropped(ch):
+            out.append(ch)
+    return "".join(out)
+
+
 def _txt(v) -> str:
     if v is None:
         return ""
-    s = str(v).replace("\xa0", " ")
+    s = clean_text(str(v)).replace("\xa0", " ")
     return re.sub(r"\s+", " ", s).strip()
+
+
+_WORD = re.compile(r"[A-Za-z]{3,}")
+#: Two-letter words a description can be made of (besides the units).
+_SHORT_WORDS = frozenset({"AC", "HP", "MH", "DI", "CI", "RC", "PC", "SS", "WL",
+                          "SD", "FH", "GV", "BV", "PE", "CO", "TV"})
+
+
+def foreign_share(s: str) -> float:
+    """Share of the non-space characters that are neither printable ASCII
+    nor a schedule character."""
+    chars = [c for c in s if not c.isspace()]
+    if not chars:
+        return 0.0
+    n = sum(1 for c in chars if not ("!" <= c <= "~") and c not in SCHEDULE_CHARS)
+    return n / len(chars)
+
+
+def _has_word(s: str) -> bool:
+    if _WORD.search(s):
+        return True
+    return any(t.upper() in KNOWN_UNITS or t.upper() in _SHORT_WORDS
+               for t in re.split(r"[^A-Za-z]+", s) if t)
+
+
+def garbage_reason(text: str) -> Optional[str]:
+    """Why this is not a pay item's description, in plain words -- or None
+    when it reads as one: a real word (3+ letters running, or a known unit
+    / short word) and at most 30% characters that are not plain English."""
+    s = _txt(text)
+    if foreign_share(s) > 0.3:
+        return "garbled or not English"
+    if not _has_word(s):
+        if re.search(r"[A-Za-z]", s):
+            return "no words"
+        return "numbers only" if re.search(r"\d", s) else "symbols only"
+    return None
+
+
+#: Wordings of a section heading ("BASE BID", "Alternate No. 2", "Part A").
+_HEADING_WORDS = re.compile(
+    r"^(base\s+bid|((add(itive)?|deduct(ive)?)\s+)?alternates?\b|"
+    r"alt\.?\s*(no\.?)?\s*\d|bid\s+schedule|schedule\s+[a-z0-9]{1,3}\b|"
+    r"(part|section|division|phase|unit)\s+[a-z0-9]{1,4}\b)", re.I)
+#: A description that ends like this goes on on the next line.
+_GOES_ON = re.compile(r"([,&/+-]|\b(and|or|of|with|for|in|to|at|by|per|"
+                      r"incl\.?|including|w/))\s*$", re.I)
+
+
+def _heading_like(desc: str) -> bool:
+    """A section heading rather than a pay item: a line with no unit and no
+    quantity that is all capitals ("STORM DRAINAGE"), ends with a colon, or
+    is worded like one ("Base Bid", "Alternate No. 2")."""
+    s = _txt(desc)
+    words = s.split()
+    if not words or len(words) > 8 or len(s) > 80 or max(len(w) for w in words) > 25:
+        return False
+    if s.endswith(":") or _HEADING_WORDS.match(s):
+        return True
+    letters = [c for c in s if c.isalpha()]
+    return bool(letters) and all(c.isupper() for c in letters)
+
+
+_TEXTY = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                   " ,.-/()'\"&#:;") | SCHEDULE_CHARS
+
+
+def _texty(s: str) -> bool:
+    """Reads like words (a wrapped description), not a run of symbols: at
+    least 85% letters, digits, spaces and ordinary punctuation, and no
+    "word" longer than 30 characters."""
+    s = _txt(s)
+    return bool(s) and sum(1 for c in s if c in _TEXTY) >= 0.85 * len(s) and \
+        max(len(w) for w in s.split()) <= 30
+
+
+def _strong_heading(desc: str, prev_desc: str) -> bool:
+    """A heading line between items that must not be read as the wrapped end
+    of the description above it: all capitals, at most four words, no digits,
+    and the line above did not stop mid-phrase."""
+    s = _txt(desc)
+    if not s or len(s.split()) > 4 or re.search(r"\d", s) or _GOES_ON.search(prev_desc or ""):
+        return False
+    if s.endswith(":") or _HEADING_WORDS.match(s):
+        return True
+    letters = [c for c in s if c.isalpha()]
+    return bool(letters) and all(c.isupper() for c in letters) and \
+        not re.match(r"(and|or|of|with|for|in|to|incl|including)\b", s, re.I)
 
 
 def _num(v) -> Optional[float]:
@@ -328,6 +589,19 @@ def _infer_columns(body: Sequence[Sequence[str]]) -> Dict[str, int]:
         cols["unit"] = unit_score.index(max(unit_score))
     if max(text_score) > 0:
         cols["desc"] = text_score.index(max(text_score))
+    # An item-number column: short codes (101, 2.01, A-1) in most filled
+    # rows, left of the description. Without it a header-less paste (an
+    # Excel block, the page's own example) loses every item number.
+    item = None
+    if "desc" in cols:
+        for j in range(cols["desc"]):
+            if j == cols.get("unit") or not filled[j]:
+                continue
+            codes = sum(1 for row in body if j < len(row)
+                        and _ITEM_CODE.fullmatch(_txt(row[j])))
+            if codes and codes >= 0.6 * filled[j]:
+                item = j
+                break
     # The quantity is the numeric column closest to the right of the unit
     # column; failing that, the most-numeric column that is not the item no.
     if max(num_score) > 0:
@@ -337,7 +611,10 @@ def _infer_columns(body: Sequence[Sequence[str]]) -> Dict[str, int]:
             cols["qty"] = (right[0] if right
                            else max(cand, key=lambda j: num_score[j]))
         else:
-            cols["qty"] = max(cand, key=lambda j: num_score[j])
+            rest = [j for j in cand if j != item] or cand
+            cols["qty"] = max(rest, key=lambda j: num_score[j])
+    if item is not None and item not in (cols.get("qty"), cols.get("unit")):
+        cols["item_no"] = item
     return cols
 
 
@@ -380,7 +657,11 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
     else:
         body = grid
         body_rows = src_rows
-        cmap = _infer_columns(body)
+        # the columns are read off the rows that have several cells: a line
+        # pasted with spaces instead of tabs is one cell and says nothing
+        # about the columns
+        multi = [r for r in body if sum(1 for c in r if _txt(c)) >= 2]
+        cmap = _infer_columns(multi or body)
         if "desc" not in cmap:
             out.notes.append(
                 "No header row and no column looks like a description. "
@@ -406,7 +687,15 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
             "No quantity column found. Every line needs a quantity before it "
             "can be priced.")
 
+    # Typed or pasted grids (text, CSV, spreadsheets, Word tables) are read
+    # row by row: a row whose cells do not fit the columns -- a leading or an
+    # extra tab, a missing cell -- is read by what its cells hold, and a row
+    # typed with spaces in one cell is read as a free-text line. Nothing is
+    # shifted into the wrong column (QA 2026-11-20). PDF and OCR grids keep
+    # their own column logic.
+    by_row = not method.startswith(("pdf/", "image/"))
     n = 0
+    n_content = 0
     for k, row in enumerate(body):
         src_row = body_rows[k] if k < len(body_rows) else k + 1
 
@@ -418,6 +707,25 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
         item_no = cell(ii)
         amount = _num(cell(ai)) if ai is not None else None
         unit_price = _num(cell(pi)) if pi is not None else None
+        filled = [_txt(c) for c in row if _txt(c)]
+        free = None
+        if by_row and len(filled) == 1 and len(filled[0].split()) >= 2:
+            free = _parse_free_line(filled[0])
+            if free is not None and (free.unit or free.quantity is not None):
+                item_no, desc, unit, qty = (free.item_no, free.description,
+                                            free.unit, free.quantity)
+                n_content += 1
+            else:
+                free = None
+        if by_row and free is None and len(filled) >= 2 and \
+                not _plausible_row(row, di, ui, qi, ii):
+            item_no, desc, unit, qty = _cells_by_content(row)
+            n_content += 1
+        if by_row and free is None and len(filled) == 1 and not desc and \
+                _num(filled[0]) is None:
+            # a lone cell of text outside the description column (a heading,
+            # a note, garbage): judged below, never dropped without a word
+            desc = filled[0]
         if qty is None or not unit:
             # quantity and unit in one cell: "1,745 SY", "1745SY"
             for j in ([qi] if qi is not None else []) + ([ui] if ui is not None else []):
@@ -427,21 +735,29 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
                     unit = unit or u2
                     break
 
+        raw_row = " | ".join(filled)
         if not desc:
             # A row with a quantity but no description is a wrapped line or a
-            # broken parse; record it instead of dropping it.
+            # broken parse: shown as not read instead of dropped.
             if qty is not None or unit:
-                out.skipped.append({"row": src_row, "reason": "no description",
-                                    "raw": " | ".join(_txt(c) for c in row)[:200]})
+                out.unread.append({"row": src_row, "reason": "no description",
+                                   "raw": raw_row[:200]})
             continue
         if _is_not_item(desc):
             out.skipped.append({"row": src_row, "reason": "total/heading row",
                                 "raw": desc[:200]})
             continue
-        if len(desc) < 3:
-            out.skipped.append({"row": src_row, "reason": "description too short",
-                                "raw": desc[:200]})
+        if qty is None and _HEADER_LINE_RE.fullmatch(raw_row.lower().replace("|", " ")):
+            out.skipped.append({"row": src_row, "reason": "column header",
+                                "raw": raw_row[:200]})
             continue
+        why = garbage_reason(desc) or ("too short" if len(desc) < 3 else None)
+        if why:
+            out.unread.append({"row": src_row, "reason": why, "raw": raw_row[:200]})
+            continue
+        # the item number stands in a cell of its own: a takeoff row with
+        # cells missing ("needs input"), not a stray line of text
+        structured = bool(item_no) and free is None and len(filled) >= 2
 
         issues: List[str] = []
         if _looks_like_subtotal(desc):
@@ -453,9 +769,8 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
             issues.append("no unit found")
         elif not _unit_score(unit):
             issues.append("unrecognised unit %r" % unit)
-        n += 1
-        out.lines.append(TakeoffLine(
-            row_id="r%d" % n,
+        line = TakeoffLine(
+            row_id="",
             description=desc,
             unit=upstream.norm_unit(unit).upper() if unit else "",
             quantity=qty,
@@ -465,7 +780,25 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
             raw=" | ".join(_txt(c) for c in row)[:300],
             amount=amount if amount and amount > 0 else None,
             unit_price=unit_price if unit_price and unit_price > 0 else None,
-        ))
+        )
+        if by_row:
+            _assume_lump_sum(line)
+        # no unit and no quantity: a section heading, or a line that cannot
+        # be read as a pay item -- unless it is a structured takeoff row
+        if not _has_unit(line.unit) and line.quantity is None and not structured:
+            if _heading_like(desc):
+                out.skipped.append({"row": src_row, "reason": "section heading",
+                                    "raw": desc[:200]})
+            else:
+                out.unread.append({"row": src_row, "reason": "no unit or quantity",
+                                   "raw": raw_row[:200]})
+            continue
+        n += 1
+        line.row_id = "r%d" % n
+        out.lines.append(line)
+    if n_content:
+        out.notes.append("%d row(s) did not line up with the columns and were "
+                         "read by what their cells hold." % n_content)
     if not out.lines:
         out.notes.append("Columns were found but no row survived as a pay item.")
     return out
@@ -523,9 +856,63 @@ def grid_from_words(words: Sequence[dict], row_tol: float = 3.2,
 # Pasted text
 # ---------------------------------------------------------------------------
 
+#: A description longer than this is cut (and flagged): bid-form wordings
+#: are far shorter, and the classifier's time grows with the square of the
+#: length (50,000 characters took 36 s).
+MAX_DESC = 300
+
+
+def _cap_descriptions(p: "TakeoffParse") -> "TakeoffParse":
+    for l in p.lines:
+        if len(l.description or "") > MAX_DESC:
+            l.description = l.description[:MAX_DESC].rstrip()
+            l.issues.append("description cut to %d characters -- check" % MAX_DESC)
+            l.confidence = "low"
+    return p
+
+
+def _has_unit(u) -> bool:
+    """A unit, recognised or a short unit-like word kept as written."""
+    u = _txt(u)
+    return bool(u) and (_unit_score(u) or bool(
+        re.fullmatch(r"[A-Za-z][A-Za-z0-9./ ]{0,7}", u)))
+
+
+def _screen(p: "TakeoffParse") -> "TakeoffParse":
+    """The last word on every reader's lines: cleaned text, and only lines
+    that read as pay items -- a real word in the description and a unit or
+    a quantity (or an item number of their own, from a structured reader).
+    The rest go to p.unread (or p.skipped for headings) with their text."""
+    kept = []
+    for l in p.lines:
+        l.description, l.unit, l.item_no = _txt(l.description), _txt(l.unit), _txt(l.item_no)
+        raw = (_txt(l.raw) or l.description)[:200]
+        why = garbage_reason(l.description)
+        if why is None and not _has_unit(l.unit) and l.quantity is None and not l.item_no:
+            if _heading_like(l.description):
+                p.skipped.append({"row": None, "reason": "section heading", "raw": raw})
+                continue
+            why = "no unit or quantity"
+        if why:
+            p.unread.append({"row": None, "reason": why, "raw": raw})
+            continue
+        kept.append(l)
+    if len(kept) != len(p.lines):
+        p.lines = kept
+        for i, l in enumerate(p.lines, 1):
+            l.row_id = "r%d" % i
+    return p
+
+
 def from_text(text: str, source: str = "pasted text") -> TakeoffParse:
+    """Parse pasted lines (cleaned, screened, long descriptions cut and
+    flagged)."""
+    return _cap_descriptions(_screen(_from_text(text, source)))
+
+
+def _from_text(text: str, source: str = "pasted text") -> TakeoffParse:
     """Parse pasted lines. Delimiter is detected per paste, then per line."""
-    raw_lines = [l for l in (text or "").splitlines()]
+    raw_lines = [l for l in clean_text(text or "").splitlines()]
     nonempty = [l for l in raw_lines if l.strip()]
     if not nonempty:
         return TakeoffParse(source=source, method="text",
@@ -563,13 +950,22 @@ def from_text(text: str, source: str = "pasted text") -> TakeoffParse:
     for k, raw in enumerate(nonempty):
         line = _parse_free_line(raw)
         if line is None:
-            out.skipped.append({"row": k + 1, "reason": "no item found",
-                                "raw": raw[:200]})
+            t = _txt(raw)
+            if t and _is_not_item(t):
+                out.skipped.append({"row": k + 1, "reason": "total/heading row",
+                                    "raw": t[:200]})
+            elif t:
+                out.unread.append({"row": k + 1, "reason": garbage_reason(t)
+                                   or "too short", "raw": t[:200]})
             continue
         if _HEADER_LINE_RE.fullmatch(line.description.lower()) and \
                 line.quantity is None:
             out.skipped.append({"row": k + 1, "reason": "column header",
                                 "raw": raw[:200]})
+            continue
+        why = garbage_reason(line.description)
+        if why:              # never an item, and never glued to the one above
+            out.unread.append({"row": k + 1, "reason": why, "raw": _txt(raw)[:200]})
             continue
         # a wrapped description belongs to the line above it:
         #   item line (with unit and quantity) + a bare text line, or
@@ -580,7 +976,8 @@ def from_text(text: str, source: str = "pasted text") -> TakeoffParse:
             # text ("pipe, all depths": "all" reads as ALLOW)
             bare = line.quantity is None and (not line.unit
                                               or not _unit_at_end(raw))
-            if bare and prev.quantity is not None:
+            if bare and prev.quantity is not None and _texty(raw) and \
+                    not _strong_heading(line.description, prev.description):
                 prev.description = _txt(prev.description + " " + line.description)
                 joined += 1
                 continue
@@ -592,12 +989,27 @@ def from_text(text: str, source: str = "pasted text") -> TakeoffParse:
                 prev.confidence = line.confidence
                 joined += 1
                 continue
-        n += 1
-        line.row_id = "r%d" % n
+        line._row = k + 1
         out.lines.append(line)
     if joined:
         out.notes.append("%d wrapped description line(s) joined to the line "
                          "above." % joined)
+    kept = []
+    for line in out.lines:          # after joining: a wrapped line may carry
+        _assume_lump_sum(line)      # the unit and quantity
+        if not _has_unit(line.unit) and line.quantity is None:
+            row = getattr(line, "_row", None)
+            if _heading_like(line.description):
+                out.skipped.append({"row": row, "reason": "section heading",
+                                    "raw": line.description[:200]})
+            else:
+                out.unread.append({"row": row, "reason": "no unit or quantity",
+                                   "raw": (line.raw or line.description)[:200]})
+            continue
+        n += 1
+        line.row_id = "r%d" % n
+        kept.append(line)
+    out.lines = kept
     if not out.lines:
         out.notes.append(
             "No line yielded a description. Expected something like "
@@ -646,9 +1058,28 @@ def _parse_free_line(raw: str) -> Optional[TakeoffLine]:
             split_parts.append(p)
     parts = [p for p in split_parts if p]
 
+    # a unit written in two words ("Lump Sum", "Sq. Yd.", "Cubic Yard",
+    # "Linear Feet") -> one part, so it is read as the unit instead of
+    # being left in the description
+    def _nu(x):
+        return upstream.norm_unit(x).upper()
+
+    merged = []
+    for p in parts:
+        prev = merged[-1] if merged else ""
+        pair = prev + " " + p
+        if prev and not _looks_numeric(prev) and _unit_score(pair) and (
+                not _unit_score(prev) or _nu(prev) == _nu(p) == _nu(pair)):
+            merged[-1] = pair
+        else:
+            merged.append(p)
+    parts = merged
+
     item_no = ""
-    # A leading short integer/code is an item number, not a quantity.
-    if parts and re.fullmatch(r"\d{1,4}[.)]?|[A-Z]?\d{1,3}[-.]\d{1,4}", parts[0]):
+    # A leading short integer/code is an item number, not a quantity --
+    # unless a size word follows it ("18 inch RCP", "6 ft fence").
+    if parts and re.fullmatch(r"\d{1,4}[.)]?|[A-Z]?\d{1,3}[-.]\d{1,4}", parts[0]) \
+            and not (len(parts) > 1 and _SIZE_WORD.fullmatch(parts[1])):
         item_no, parts = parts[0].rstrip(".)"), parts[1:]
 
     unit, unit_i = "", -1
@@ -812,6 +1243,12 @@ def _pdf_ocr(path, name):
 # ---------------------------------------------------------------------------
 
 def from_file(path: str, original_name: str = "") -> TakeoffParse:
+    """Read an uploaded takeoff (cleaned, screened, long descriptions cut
+    and flagged)."""
+    return _cap_descriptions(_screen(_from_file(path, original_name)))
+
+
+def _from_file(path: str, original_name: str = "") -> TakeoffParse:
     name = original_name or os.path.basename(path)
     ext = os.path.splitext(name)[1].lower()
     if ext in (".xlsx", ".xlsm", ".xltx"):
