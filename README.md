@@ -1,9 +1,13 @@
 # Texas Public Works OPCC Estimator
 
-Estimates what a Texas public-works construction project will cost at bid time. For any bid schedule (a list of items with quantities) it predicts:
+A working aid for estimators preparing an opinion of probable construction cost (OPCC) for Texas public-works projects. For any bid schedule (a list of items with quantities) it does two things:
 
-- **P50**, the expected low bid;
-- **P80**, a "not-under" opinion of probable construction cost (OPCC), set so that the actual low bid comes in below it on at least 80% of lettings.
+- **It puts the evidence in front of the estimator.** For every line it shows the earlier public bids behind the price: project, date, quantity, the low and median bidders' unit prices. Each project links to its full bid tabulation and to the public page it came from. It also shows the most similar past projects, the lines it cannot price (specialty items that need a vendor quote), and the lines whose prices are uncertain.
+- **It estimates the bid where the history supports it:**
+  - **P50**, the expected low bid;
+  - **P80**, a "not-under" OPCC, set so that the actual low bid comes in below it on at least 80% of lettings.
+
+The estimator stays in charge. The model's number is one input among the references, not a replacement for judgment. Where history is thin, the tool says so and leans on the references instead.
 
 The focus is municipal work in the Dallas–Fort Worth area, especially creek erosion repair, drainage and streambank stabilization. Texas Department of Transportation (TxDOT) lettings are covered as a second market.
 
