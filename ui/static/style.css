@@ -430,6 +430,13 @@ ul.tight { margin: 3px 0 0; padding-left: 18px; }
 .bigcard .band .bv { font-family: var(--mono); }
 .bigcard .covnote { margin-top: 8px; font-size: 14px; font-weight: 600; color: var(--bad-ink); }
 .calib { font-size: 12px; color: var(--ink-dim); align-self: center; line-height: 1.55; }
+/* what P50 and P80 mean -- always visible, plain words, this job's numbers */
+.meaning { margin: 12px 0 4px; padding: 10px 13px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--panel-2); font-size: 13.5px; line-height: 1.55; }
+.meaning .mtitle { font-weight: 650; font-size: 14px; margin-bottom: 4px; }
+.meaning ul { margin: 0; padding-left: 18px; }
+.meaning li { margin: 3px 0; overflow-wrap: anywhere; }
+.meaning b { font-weight: 650; }
 .calib > div + div { margin-top: 5px; }
 .context {
   margin: 12px 0 10px; padding: 8px 11px; border-left: 3px solid var(--info);
@@ -797,3 +804,11 @@ html[data-public="1"] .local-only { display: none !important; }
 /* a bidder's whole name in a bid table header, wrapped */
 table.btgrid th .bname { white-space: normal; overflow-wrap: anywhere; min-width: 90px; max-width: 160px;
   margin-left: auto; }
+/* contingency: quick picks and the "how often under the low bid" guide */
+.cpicks { display: inline-flex; gap: 5px; margin-left: 8px; flex-wrap: wrap; }
+.chip.cpick { padding: 2px 9px; font-size: 12.5px; }
+.chip.cpick.sel { border-color: var(--accent-strong); background: var(--accent-wash); font-weight: 650; }
+.cguide { margin-top: 8px; font-size: 12.5px; line-height: 1.5; color: var(--ink-dim); max-width: 760px; }
+.cguide .cnow { margin-top: 5px; color: var(--ink); font-weight: 600; }
+.cguide .ctab { margin-top: 6px; }
+.cguide .ctab td, .cguide .ctab th { padding: 3px 10px 3px 0; }

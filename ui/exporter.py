@@ -17,8 +17,9 @@ import io
 import re
 from typing import Any, Dict, List
 
-P80_TEXT = ("the low bid came in at or below this in about 80% of past "
-            "lettings")
+P80_TEXT = ("a cautious figure: the low bid came in at or below this in "
+            "about 80% of past lettings, so an OPCC at P80 falls short about 1 "
+            "time in 5")
 
 # ---------------------------------------------------------------------------
 # Spreadsheet safety: text is never run as a formula
@@ -111,7 +112,8 @@ def sections(result: Dict[str, Any]) -> List[tuple]:
     b50, b80 = hl.get("p50_band") or ["", ""], hl.get("p80_band") or ["", ""]
     out.append(("Estimate", ["Figure", "Amount", "Note"], [
         ["Expected low bid (P50)%s" % cov, _money(hl.get("p50")),
-         "the expected low bid"],
+         "the middle estimate of the low bid: as likely to be too high as "
+         "too low"],
         ["Recommended OPCC (P80)%s" % cov, _money(hl.get("p80")),
          P80_TEXT + (" (P50 x %.3f)" % hl["p80_multiplier"]
                      if hl.get("p80_multiplier") else "")],

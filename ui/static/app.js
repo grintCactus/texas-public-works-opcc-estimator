@@ -1,3 +1,6 @@
+// An OPCC usually carries a contingency; 10% is the common default (user,
+// 2026-11-21). Applied to your line amounts except owner-set allowances.
+const DEFAULT_CONTINGENCY = 10;
 /* Bid Estimator front end.
  *
  * Plain DOM, no framework and no build step: a local tool started with
@@ -25,7 +28,7 @@ const S = {
   stale: false,
   // the OPCC worksheet: the estimator's own prices -- OUTPUT ONLY, never part
   // of an estimate request
-  ws: { lines: {}, contingency: null, refs: null, refsReq: null, filter: false,
+  ws: { lines: {}, contingency: DEFAULT_CONTINGENCY, refs: null, refsReq: null, filter: false,
         open: {}, name: '' },
 };
 
@@ -2018,14 +2021,15 @@ function renderHeadline(r) {
     el('div', { class: 'bigcard' }, [
       el('div', { class: 'cap', text: 'Expected low bid (P50)' }),
       el('div', { class: 'big', text: money(h.p50) }),
-      el('div', { class: 'expl', text: 'Our best estimate of the low bid.' }),
+      el('div', { class: 'expl', text: 'Our best single estimate of the low bid: as likely to be '
+        + 'too high as too low.' }),
       band(h.p50_band, 'Half of past jobs landed within'),
       cov,
     ]),
     el('div', { class: 'bigcard lead' }, [
       el('div', { class: 'cap', text: 'Recommended OPCC (P80)' }),
       el('div', { class: 'big', text: money(h.p80) }),
-      el('div', { class: 'expl', text: 'The low bid came in at or below this on about 80% '
+      el('div', { class: 'expl', text: 'A cautious figure: the low bid came in at or below this on about 80% '
         + 'of past jobs' + (h.p80_multiplier ? ' (' + h.p80_multiplier.toFixed(2) + ' \u00d7 the expected low bid).' : '.') }),
       band(h.p80_band, '80% of past jobs landed within'),
       cov ? cov.cloneNode(true) : null,
@@ -2038,13 +2042,50 @@ function renderHeadline(r) {
         + ' of owner-set money (allowances) at face value.' }) : null,
       el('details', { class: 'fold howcalc' }, [
         el('summary', { text: 'How this was calculated' }),
-        el('div', { class: 'howbody', text: 'P50 is centred \u00d7' + (h.level_correction || 1).toFixed(4)
-          + ' (a correction measured on past jobs); the P80 margin is set so the low bid came in under '
-          + 'it on no more than about 20% of past jobs'
-          + (h.not_under_level ? ' (level ' + h.not_under_level + ')' : '') + '.' }),
+        el('div', { class: 'howbody', text: 'P50 starts from what bidders charged for the same kinds of '
+          + 'items on earlier public jobs (the median bid, brought to today\u2019s prices), less the usual '
+          + 'gap between the median and the lowest bid for this many bidders. It is then multiplied by '
+          + (h.level_correction || 1).toFixed(2) + ', a correction measured on how our past estimates '
+          + 'compared with the actual low bids. P80 = P50 \u00d7 '
+          + (h.p80_multiplier ? h.p80_multiplier.toFixed(2) : '?') + ': the multiplier that kept the '
+          + 'low bid at or under P80 on about 80% of those past jobs.' }),
       ]),
     ]),
   ]));
+  host.appendChild(meaningBox(r));
+}
+
+// What P50 and P80 mean, in plain words and with this job's own numbers
+// (user, 2026-11-21: "\u5728 UI \u52a0\u5165\u5bf9 P50 P80 \u7684\u89e3\u91ca"). Always visible, not a
+// tooltip: the people reading it are estimators and their managers.
+function meaningBox(r) {
+  const h = r.headline, c = r.context || {}, nc = r.not_covered || {};
+  const gap = h.p50 ? h.p80 / h.p50 - 1 : null;
+  const over = c.median_overshoot !== undefined && c.median_overshoot !== null
+    ? pct(c.median_overshoot) : null;
+  const items = [
+    el('li', {}, [el('b', { text: 'P50 ' + money(h.p50) + ' is the middle estimate.' }),
+      document.createTextNode(' On past jobs like this one, the lowest bid came in above it about '
+        + 'half the time and below it about half the time. Use it as a best guess.')]),
+    el('li', {}, [el('b', { text: 'P80 ' + money(h.p80) + ' adds a safety margin'
+        + (gap !== null ? ' (+' + Math.round(100 * gap) + '%)' : '') + '.' }),
+      document.createTextNode(' The lowest bid came in at or under it on about 4 out of 5 past jobs, '
+        + 'so an OPCC set at P80 falls short of the low bid only about 1 time in 5.'
+        + (over ? ' The price of that safety: when the low bid does come in under P80, P80 is '
+          + 'typically about ' + over + ' above it.' : ''))]),
+    el('li', {}, [el('b', { text: 'Which to use.' }),
+      document.createTextNode(' P80 when coming in under the low bid is the costly mistake, for '
+        + 'example a budget that must not run short; P50 for a best guess. The wider the gap between '
+        + 'them, the less certain this kind of job is: small, unusual or thinly referenced jobs have '
+        + 'wider gaps.')]),
+  ];
+  if (h.covered_only && nc.n) items.push(el('li', {}, [el('b', { text: 'Not included.' }),
+    document.createTextNode(' Neither figure contains the ' + nc.n + ' not-covered line'
+      + (nc.n === 1 ? '' : 's') + '; add vendor quotes for ' + (nc.n === 1 ? 'it' : 'them') + '.')]));
+  return el('div', { class: 'meaning' }, [
+    el('div', { class: 'mtitle', text: 'What P50 and P80 mean' }),
+    el('ul', {}, items),
+  ]);
 }
 
 function renderContext(r) {
@@ -2307,11 +2348,14 @@ function wsTotals(r) {
   });
   const c = isNum(S.ws.contingency) ? Number(S.ws.contingency) : 0;
   const h = r.headline || {};
+  // contingency on your own pricing, not on owner-set allowances (an "Owner's
+  // Contingency Allowance" is already contingency; a testing allowance is fixed)
+  const base = sub - own;
   // P50 / P80 leave the not-covered lines out; your OPCC has your amounts
   // for them (vendor quotes), so the comparison adds them to the model's
   // side too (worksheet.totals does the same for the export)
   const plus = m => (isNum(m) && m ? Number(m) + nc : m);
-  return { sub, missing, own, quotes, nc, c, cont: sub * c / 100, yours: sub * (1 + c / 100),
+  return { sub, missing, own, quotes, nc, c, base, cont: base * c / 100, yours: sub + base * c / 100,
     p50: h.p50, p80: h.p80, m50: plus(h.p50), m80: plus(h.p80),
     suggest: h.p50 && h.p80 ? 100 * (h.p80 / h.p50 - 1) : null };
 }
@@ -2338,7 +2382,8 @@ function renderWsTotals(r) {
       el('div', { class: 'dim', text: 'your line amounts ' + money(t.sub)
         + (t.own ? ' (incl. owner-set ' + money(t.own) + ')' : '')
         + (t.quotes ? ' (incl. vendor quotes ' + money(t.quotes) + ')' : '')
-        + (t.c ? ' + contingency ' + t.c + '% ' + money(t.cont) : '') }),
+        + (t.c ? ' + contingency ' + t.c + '% ' + money(t.cont)
+          + (t.own ? ' (on ' + money(t.base) + ', allowances excluded)' : '') : '') }),
       t.missing ? el('div', { class: 'warnnote', text: t.missing + ' line' + (t.missing === 1 ? ' has' : 's have')
         + ' no price of yours and ' + (t.missing === 1 ? 'is' : 'are') + ' not in this total.' }) : null,
     ]),
@@ -2350,8 +2395,12 @@ function renderWsTotals(r) {
       t.nc ? el('div', { class: 'dim small', text: 'P50 ' + money(t.p50) + ' and P80 ' + money(t.p80)
         + ' leave the not-covered lines out; your ' + money(t.nc) + ' for them is added to both here.' }) : null,
       el('div', { class: 'cont' }, [el('span', { class: 'lab', text: 'Your contingency % ' }), cin,
-        el('span', { class: 'dim', text: isNum(t.suggest) ? '  optional — the model’s P80/P50 is '
-          + '+' + t.suggest.toFixed(0) + '% (a suggestion only)' : '' })]),
+        el('span', { class: 'cpicks' }, [0, 10, 15, 20].map(p => el('button', {
+          type: 'button', class: 'chip cpick' + (t.c === p ? ' sel' : ''), text: p + '%',
+          title: p ? 'Add ' + p + '% contingency to your line amounts (owner-set allowances excluded)'
+            : 'No contingency',
+          onclick: () => { S.ws.contingency = p; renderWsTotalsNow(); } })))]),
+      contingencyGuide(r, t),
     ]),
   ]));
   const foot = $('#result-foot');
@@ -2364,6 +2413,53 @@ function renderWsTotals(r) {
 }
 
 function renderWsTotalsNow() { renderWsTotals(S.result); }
+
+// How often an OPCC this high came in under the low bid on past jobs of the
+// same market: the share of forward-scored lettings with m x P50 < low bid,
+// read off the market's curve (context.under_curve, [[m, share], ...]).
+function underAt(curve, m) {
+  if (!curve || !curve.length || !isNum(m)) return null;
+  if (m <= curve[0][0]) return curve[0][1];
+  for (let i = 1; i < curve.length; i++) {
+    const [m1, u1] = curve[i], [m0, u0] = curve[i - 1];
+    if (m <= m1) return u0 + (u1 - u0) * (m - m0) / (m1 - m0);
+  }
+  return curve[curve.length - 1][1];
+}
+
+function contingencyGuide(r, t) {
+  const ctx = r.context || {}, curve = ctx.under_curve;
+  const mk = ctx.market === 'txdot' ? 'TxDOT' : 'city / county';
+  const mY = t.m50 ? t.yours / t.m50 : null;
+  const m80 = t.p50 && t.p80 ? t.p80 / t.p50 : null;
+  const kids = [el('div', { text: 'Contingency covers what this estimate cannot see yet: scope that may still '
+    + 'change, unknown site conditions, items left out. It is added to your line amounts, not to '
+    + 'owner-set allowances. P80 already carries a margin for pricing uncertainty, so on a final design '
+    + 'a contingency on top of P80 mostly adds overshoot; while the design is still changing, it covers '
+    + 'what P80 cannot.' })];
+  if (curve && mY) {
+    const uY = underAt(curve, mY), u80 = m80 ? underAt(curve, m80) : null;
+    kids.push(el('div', { class: 'cnow', text: 'Your OPCC is ' + mY.toFixed(2) + ' \u00d7 the expected low '
+      + 'bid. On past ' + mk + ' jobs, a figure this high came in under the low bid about '
+      + pct(uY) + ' of the time' + (u80 !== null ? ' (P80, ' + m80.toFixed(2) + ' \u00d7: about '
+      + pct(u80) + ')' : '') + '.' }));
+    const rows = [['P50', 1.0], ['P50 + 10%', 1.10], ['P50 + 15%', 1.15], ['P50 + 20%', 1.20]];
+    if (m80) rows.push(['P80', m80], ['P80 + 10%', m80 * 1.10]);
+    kids.push(el('details', { class: 'fold' }, [
+      el('summary', { text: 'How often each choice came in under the low bid' }),
+      el('table', { class: 'mini ctab' }, [
+        el('thead', {}, el('tr', {}, ['OPCC set at', '\u00d7 P50', 'Under the low bid on past '
+          + mk + ' jobs'].map(x => el('th', { text: x })))),
+        el('tbody', {}, rows.map(([lab, m]) => el('tr', {}, [
+          el('td', { text: lab }), el('td', { class: 'num', text: m.toFixed(2) }),
+          el('td', { class: 'num', text: pct(underAt(curve, m)) })]))),
+      ]),
+      el('div', { class: 'dim small', text: 'Measured forward in time on ' + (ctx.lettings || '?') + ' past '
+        + mk + ' jobs, each priced only from bids made before it.' }),
+    ]));
+  }
+  return el('div', { class: 'cguide' }, kids);
+}
 function renderWsNow() { renderWorksheet(S.result); }
 
 async function loadWsRefs(tries) {

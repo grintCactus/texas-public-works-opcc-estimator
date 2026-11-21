@@ -1,17 +1,17 @@
 {
- "generated": "2026-11-21 07:49",
+ "generated": "2026-11-21 11:04",
  "markets": {
   "municipal": {
    "all": {
     "dollar_weighted": 0.40646141075308573,
-    "half_within": 0.4629155791601116,
+    "half_within": 0.4630296208891749,
     "label": "All lines",
     "lettings": 224,
     "lines": 9991,
     "low_vs_median": 0.2441860465116279,
-    "ratio": 0.9494918226238146,
+    "ratio": 0.9498734752490398,
     "share_of_dollars": 1.0,
-    "within_20": 0.2751476328695826
+    "within_20": 0.2743469122209989
    },
    "groups": {
     "LS:bonds_insurance": {
@@ -70,9 +70,9 @@
      "lines": 173,
      "low_vs_median": 0.42999999999999994,
      "published": true,
-     "ratio": 0.9893401377074953,
+     "ratio": 1.0091641616558482,
      "share_of_dollars": 0.0020473473110319933,
-     "within_20": 0.2774566473988439
+     "within_20": 0.27167630057803466
     },
     "asphalt_pavement": {
      "dollar_weighted": 0.28916985124893513,
@@ -82,13 +82,13 @@
      "lines": 180,
      "low_vs_median": 0.19310415724699137,
      "published": true,
-     "ratio": 0.9861752839479555,
+     "ratio": 0.9728069043363956,
      "share_of_dollars": 0.04431817090246655,
-     "within_20": 0.3111111111111111
+     "within_20": 0.31666666666666665
     },
     "barrier_free_ramp": {
      "dollar_weighted": 0.16055102720689085,
-     "half_within": 0.16801391618800543,
+     "half_within": 0.1645293798520031,
      "label": "ADA curb ramps",
      "lettings": 92,
      "lines": 201,
@@ -96,7 +96,7 @@
      "published": true,
      "ratio": 0.9695253039526779,
      "share_of_dollars": 0.008022591985478587,
-     "within_20": 0.5422885572139303
+     "within_20": 0.5472636815920398
     },
     "borrow_backfill": {
      "dollar_weighted": 0.717503942207762,
@@ -208,7 +208,7 @@
     },
     "conc_pavement": {
      "dollar_weighted": 0.198357900183596,
-     "half_within": 0.2722483364696173,
+     "half_within": 0.2651390355447547,
      "label": "Concrete pavement",
      "lettings": 103,
      "lines": 198,
@@ -216,7 +216,7 @@
      "published": true,
      "ratio": 0.9910417375331174,
      "share_of_dollars": 0.12372641576621408,
-     "within_20": 0.3939393939393939
+     "within_20": 0.3888888888888889
     },
     "concrete_misc": {
      "dollar_weighted": 0.38969264647587987,
@@ -226,9 +226,9 @@
      "lines": 142,
      "low_vs_median": 0.2662788272852181,
      "published": true,
-     "ratio": 1.1236716596650151,
+     "ratio": 1.1300139879057707,
      "share_of_dollars": 0.011367126590907786,
-     "within_20": 0.19014084507042253
+     "within_20": 0.18309859154929578
     },
     "concrete_repair": {
      "dollar_weighted": 1.7884366900395783,
@@ -268,7 +268,7 @@
     },
     "contingency": {
      "dollar_weighted": 1.0179812615899615,
-     "half_within": 0.5564821423694333,
+     "half_within": 0.6811892538015343,
      "label": "Contingency / allowance lines",
      "lettings": 23,
      "lines": 78,
@@ -276,7 +276,7 @@
      "published": true,
      "ratio": 0.9383192285199407,
      "share_of_dollars": 0.005274885277630043,
-     "within_20": 0.28205128205128205
+     "within_20": 0.2692307692307692
     },
     "crash_cushion": {
      "dollar_weighted": 0.7939604265718183,
@@ -304,19 +304,19 @@
     },
     "demo_other": {
      "dollar_weighted": 0.6588101134591606,
-     "half_within": 0.5599940421854654,
+     "half_within": 0.5821845667929564,
      "label": "Other removals",
      "lettings": 85,
      "lines": 170,
      "low_vs_median": 0.3974867836520901,
      "published": true,
-     "ratio": 0.9501596312684888,
+     "ratio": 0.9445876594461098,
      "share_of_dollars": 0.005161377730063511,
-     "within_20": 0.24705882352941178
+     "within_20": 0.2411764705882353
     },
     "demo_pavement": {
      "dollar_weighted": 0.46604860550640015,
-     "half_within": 0.39228665375018035,
+     "half_within": 0.386490926986238,
      "label": "Pavement removal",
      "lettings": 94,
      "lines": 155,
@@ -324,7 +324,7 @@
      "published": true,
      "ratio": 0.883589934859504,
      "share_of_dollars": 0.01576966955138881,
-     "within_20": 0.2645161290322581
+     "within_20": 0.25161290322580643
     },
     "demo_sidewalk": {
      "dollar_weighted": 0.3421113986898363,
@@ -399,16 +399,16 @@
      "within_20": 0.5158730158730159
     },
     "electrical_lighting": {
-     "dollar_weighted": 0.6462903813667602,
-     "half_within": 0.4170812687722105,
+     "dollar_weighted": 0.6454833153997606,
+     "half_within": 0.41533910306411337,
      "label": "Electrical and lighting",
      "lettings": 46,
      "lines": 427,
      "low_vs_median": 0.1299999999999999,
      "published": true,
-     "ratio": 0.8547043754330714,
+     "ratio": 0.845066473828723,
      "share_of_dollars": 0.020183316008118613,
-     "within_20": 0.2857142857142857
+     "within_20": 0.2810304449648712
     },
     "embankment_fill": {
      "dollar_weighted": 0.48812045886057276,
@@ -424,15 +424,15 @@
     },
     "encasement": {
      "dollar_weighted": 1.6142107995762935,
-     "half_within": 0.47003002454572496,
+     "half_within": 0.4577068255804495,
      "label": "Casing / encasement",
      "lettings": 73,
      "lines": 160,
      "low_vs_median": 0.24928381909364106,
      "published": true,
-     "ratio": 0.89971819970267,
+     "ratio": 0.8890075921895972,
      "share_of_dollars": 0.027687628848364777,
-     "within_20": 0.26875
+     "within_20": 0.25625
     },
     "erosion_control": {
      "dollar_weighted": 0.8448141836782979,
@@ -580,7 +580,7 @@
     },
     "inlet_structure": {
      "dollar_weighted": 0.2408588092756767,
-     "half_within": 0.2341388274141174,
+     "half_within": 0.2371384635752265,
      "label": "Inlets",
      "lettings": 67,
      "lines": 271,
@@ -588,7 +588,7 @@
      "published": true,
      "ratio": 1.0019721350949364,
      "share_of_dollars": 0.01613435522130634,
-     "within_20": 0.46863468634686345
+     "within_20": 0.46494464944649444
     },
     "irrigation": {
      "dollar_weighted": 1.529959332435027,
@@ -676,7 +676,7 @@
     },
     "mobilization": {
      "dollar_weighted": 3.78620789605542,
-     "half_within": 1.50271087190852,
+     "half_within": 1.4763613199646888,
      "label": "Mobilization",
      "lettings": 194,
      "lines": 196,
@@ -711,14 +711,14 @@
      "within_20": 0.21428571428571427
     },
     "other": {
-     "dollar_weighted": 2.801857687088599,
-     "half_within": 1.0881108806430695,
+     "dollar_weighted": 2.7972914519354815,
+     "half_within": 1.0717255486697348,
      "label": "Unclassified lines",
      "lettings": 160,
      "lines": 781,
      "low_vs_median": 0.29200000000000004,
      "published": true,
-     "ratio": 0.953555554331684,
+     "ratio": 0.9547324457363412,
      "share_of_dollars": 0.03749233689402777,
      "within_20": 0.16005121638924455
     },
@@ -735,16 +735,16 @@
      "within_20": 0.2727272727272727
     },
     "pavement_marking": {
-     "dollar_weighted": 0.9070295083819089,
+     "dollar_weighted": 0.9066944301143345,
      "half_within": 0.5783066114903366,
      "label": "Pavement marking",
      "lettings": 88,
      "lines": 608,
      "low_vs_median": 0.21037484081338453,
      "published": true,
-     "ratio": 0.7933935929028445,
+     "ratio": 0.7949418296765228,
      "share_of_dollars": 0.0036060429371327363,
-     "within_20": 0.20065789473684212
+     "within_20": 0.19901315789473684
     },
     "pavement_milling": {
      "dollar_weighted": 0.30407374276022003,
@@ -796,7 +796,7 @@
     },
     "project_sign": {
      "dollar_weighted": 0.40793540148969387,
-     "half_within": 0.24831273664252929,
+     "half_within": 0.24820913331766148,
      "label": "Project signs",
      "lettings": 71,
      "lines": 77,
@@ -820,7 +820,7 @@
     },
     "relocate_reset": {
      "dollar_weighted": 1.0489341364191742,
-     "half_within": 0.6278817338662335,
+     "half_within": 0.610559914913317,
      "label": "Relocate / reset",
      "lettings": 79,
      "lines": 186,
@@ -916,7 +916,7 @@
     },
     "seeding_sod": {
      "dollar_weighted": 0.5620779536698082,
-     "half_within": 0.39440418346620754,
+     "half_within": 0.4031940475046316,
      "label": "Seeding and sod",
      "lettings": 178,
      "lines": 353,
@@ -952,15 +952,15 @@
     },
     "sidewalk": {
      "dollar_weighted": 0.22417122249420407,
-     "half_within": 0.2530469638900734,
+     "half_within": 0.2526758658890629,
      "label": "Sidewalk",
      "lettings": 127,
      "lines": 229,
      "low_vs_median": 0.2250000000000001,
      "published": true,
-     "ratio": 1.0553237066638241,
+     "ratio": 1.0596981363627813,
      "share_of_dollars": 0.03731207211753766,
-     "within_20": 0.4279475982532751
+     "within_20": 0.4366812227074236
     },
     "signing": {
      "dollar_weighted": 0.11331275677847397,
@@ -988,7 +988,7 @@
     },
     "storm_pipe": {
      "dollar_weighted": 0.2330759818225685,
-     "half_within": 0.28352729703484525,
+     "half_within": 0.2772882732321653,
      "label": "Storm pipe",
      "lettings": 81,
      "lines": 321,
@@ -996,11 +996,11 @@
      "published": true,
      "ratio": 0.9103253051377646,
      "share_of_dollars": 0.03021952591035712,
-     "within_20": 0.3707165109034268
+     "within_20": 0.37694704049844235
     },
     "subgrade_stab": {
      "dollar_weighted": 0.4010336113973263,
-     "half_within": 0.3660345877324602,
+     "half_within": 0.3706581499832333,
      "label": "Subgrade stabilization",
      "lettings": 64,
      "lines": 136,
@@ -1068,11 +1068,11 @@
      "published": true,
      "ratio": 0.9947525457716679,
      "share_of_dollars": 0.0074411804829279185,
-     "within_20": 0.408
+     "within_20": 0.404
     },
     "tree_install": {
      "dollar_weighted": 2.2188780775973185,
-     "half_within": 0.6617902565692513,
+     "half_within": 0.6562250300322574,
      "label": "Tree planting",
      "lettings": 46,
      "lines": 68,
@@ -1231,15 +1231,15 @@
   },
   "txdot": {
    "all": {
-    "dollar_weighted": 0.25510434099008616,
-    "half_within": 0.30507601692131514,
+    "dollar_weighted": 0.2551251455732191,
+    "half_within": 0.3049743556473372,
     "label": "All lines",
     "lettings": 807,
     "lines": 41159,
     "low_vs_median": 0.16181818181818186,
-    "ratio": 1.0040711503481032,
+    "ratio": 1.0038799801962075,
     "share_of_dollars": 1.0,
-    "within_20": 0.3656794382759542
+    "within_20": 0.36594669452610606
    },
    "groups": {
     "LS:swppp_erosion": {
@@ -1288,19 +1288,19 @@
      "published": true,
      "ratio": 0.9254648261405988,
      "share_of_dollars": 0.1153616613133658,
-     "within_20": 0.6190476190476191
+     "within_20": 0.6175115207373272
     },
     "barrier_free_ramp": {
      "dollar_weighted": 0.22260435270185708,
-     "half_within": 0.22260435270185708,
+     "half_within": 0.22081171557611468,
      "label": "ADA curb ramps",
      "lettings": 102,
      "lines": 397,
      "low_vs_median": 0.12881355932203387,
      "published": true,
-     "ratio": 0.9120552696983727,
+     "ratio": 0.9135578730336039,
      "share_of_dollars": 0.0015430174561788974,
-     "within_20": 0.473551637279597
+     "within_20": 0.47858942065491183
     },
     "borrow_backfill": {
      "dollar_weighted": 0.21499943642327168,
@@ -1406,19 +1406,19 @@
      "lines": 132,
      "low_vs_median": 0.11778493453886552,
      "published": true,
-     "ratio": 0.9279307087769328,
+     "ratio": 0.9245398851573515,
      "share_of_dollars": 0.0809454840104529,
      "within_20": 0.5151515151515151
     },
     "concrete_misc": {
-     "dollar_weighted": 0.4526450121539245,
-     "half_within": 0.38201354093280604,
+     "dollar_weighted": 0.4662462714515392,
+     "half_within": 0.37633038848786105,
      "label": "Miscellaneous concrete",
      "lettings": 141,
      "lines": 238,
      "low_vs_median": 0.24765008578809566,
      "published": true,
-     "ratio": 0.8522513291452514,
+     "ratio": 0.861190385476202,
      "share_of_dollars": 0.00824490703532393,
      "within_20": 0.2773109243697479
     },
@@ -1472,7 +1472,7 @@
     },
     "curb_gutter": {
      "dollar_weighted": 0.29708379246338956,
-     "half_within": 0.3280464789991995,
+     "half_within": 0.3296457908684731,
      "label": "Curb and gutter",
      "lettings": 160,
      "lines": 288,
@@ -1484,19 +1484,19 @@
     },
     "demo_other": {
      "dollar_weighted": 0.26518542497696673,
-     "half_within": 0.39641232004094906,
+     "half_within": 0.3970357566373093,
      "label": "Other removals",
      "lettings": 277,
      "lines": 674,
      "low_vs_median": 0.2556766013743128,
      "published": true,
-     "ratio": 0.9742064761243953,
+     "ratio": 0.9726084657159436,
      "share_of_dollars": 0.007442850126546956,
-     "within_20": 0.3026706231454006
+     "within_20": 0.30415430267062316
     },
     "demo_pavement": {
      "dollar_weighted": 0.3777337562375265,
-     "half_within": 0.3777337562375265,
+     "half_within": 0.37514397166569236,
      "label": "Pavement removal",
      "lettings": 218,
      "lines": 433,
@@ -1550,9 +1550,9 @@
      "lines": 574,
      "low_vs_median": 0.12529153629922352,
      "published": true,
-     "ratio": 0.8591176875100952,
+     "ratio": 0.8604392771667599,
      "share_of_dollars": 0.03623694580346731,
-     "within_20": 0.44773519163763065
+     "within_20": 0.44947735191637633
     },
     "driveway": {
      "dollar_weighted": 0.20838836675347028,
@@ -1568,7 +1568,7 @@
     },
     "electrical_lighting": {
      "dollar_weighted": 0.42028143278644925,
-     "half_within": 0.2501720859707546,
+     "half_within": 0.25113822555774434,
      "label": "Electrical and lighting",
      "lettings": 142,
      "lines": 2109,
@@ -1576,7 +1576,7 @@
      "published": true,
      "ratio": 0.8502756576734788,
      "share_of_dollars": 0.010927206609389999,
-     "within_20": 0.4144144144144144
+     "within_20": 0.41536273115220484
     },
     "embankment_fill": {
      "dollar_weighted": 0.35270351914631837,
@@ -1604,7 +1604,7 @@
     },
     "erosion_control": {
      "dollar_weighted": 0.2024048752118377,
-     "half_within": 0.23821629598540195,
+     "half_within": 0.23803942001007083,
      "label": "Erosion control (unit-priced)",
      "lettings": 412,
      "lines": 1717,
@@ -1831,16 +1831,16 @@
      "within_20": 0.0
     },
     "mobilization": {
-     "dollar_weighted": 0.3968091801484501,
-     "half_within": 0.5085936484394835,
+     "dollar_weighted": 0.3968075108751843,
+     "half_within": 0.5083620479137094,
      "label": "Mobilization",
      "lettings": 806,
      "lines": 913,
      "low_vs_median": 0.25,
      "published": true,
-     "ratio": 1.066034416618719,
+     "ratio": 1.0655403126493637,
      "share_of_dollars": 0.09756440320306183,
-     "within_20": 0.28039430449069
+     "within_20": 0.28148959474260676
     },
     "mowing_vegetation": {
      "dollar_weighted": 0.2068910333718017,
@@ -1856,7 +1856,7 @@
     },
     "other": {
      "dollar_weighted": 0.3097020310975591,
-     "half_within": 0.4409640971744986,
+     "half_within": 0.4419659851594788,
      "label": "Unclassified lines",
      "lettings": 551,
      "lines": 3758,
@@ -1864,7 +1864,7 @@
      "published": true,
      "ratio": 0.9998436840350997,
      "share_of_dollars": 0.101365652123792,
-     "within_20": 0.2847259180415114
+     "within_20": 0.2844598190526876
     },
     "painting": {
      "dollar_weighted": 2.6371091487651412,
@@ -1888,7 +1888,7 @@
      "published": true,
      "ratio": 1.133390329508104,
      "share_of_dollars": 0.01640644845355315,
-     "within_20": 0.31804984272925235
+     "within_20": 0.317928865231067
     },
     "pavement_milling": {
      "dollar_weighted": 0.20617867715838778,
@@ -2036,15 +2036,15 @@
     },
     "seeding_sod": {
      "dollar_weighted": 0.2261213246888747,
-     "half_within": 0.37994388315053707,
+     "half_within": 0.3742466461297431,
      "label": "Seeding and sod",
      "lettings": 299,
      "lines": 1052,
      "low_vs_median": 0.32292632458085757,
      "published": true,
-     "ratio": 1.0200626898959986,
+     "ratio": 1.02210124265705,
      "share_of_dollars": 0.00823952976578128,
-     "within_20": 0.30038022813688214
+     "within_20": 0.30133079847908745
     },
     "sewer_service": {
      "dollar_weighted": 7.134593521173079,
@@ -2072,7 +2072,7 @@
     },
     "sidewalk": {
      "dollar_weighted": 0.0876100209275632,
-     "half_within": 0.1617708476993185,
+     "half_within": 0.1549148726832148,
      "label": "Sidewalk",
      "lettings": 114,
      "lines": 161,
@@ -2080,7 +2080,7 @@
      "published": true,
      "ratio": 0.9651281546988895,
      "share_of_dollars": 0.006327429008721739,
-     "within_20": 0.5962732919254659
+     "within_20": 0.5900621118012422
     },
     "signing": {
      "dollar_weighted": 0.2724104415065558,
@@ -2107,14 +2107,14 @@
      "within_20": 0.09090909090909091
     },
     "storm_pipe": {
-     "dollar_weighted": 0.15919600495171293,
-     "half_within": 0.19247577168609276,
+     "dollar_weighted": 0.15678066858794493,
+     "half_within": 0.1925764314818934,
      "label": "Storm pipe",
      "lettings": 150,
      "lines": 634,
      "low_vs_median": 0.13584078880829997,
      "published": true,
-     "ratio": 1.0107383084136101,
+     "ratio": 1.0096901759168504,
      "share_of_dollars": 0.019395823286231836,
      "within_20": 0.5173501577287066
     },
@@ -2128,7 +2128,7 @@
      "published": true,
      "ratio": 0.8464688877564777,
      "share_of_dollars": 0.02311664427657787,
-     "within_20": 0.32011331444759206
+     "within_20": 0.32294617563739375
     },
     "surface_treatment": {
      "dollar_weighted": 0.32844487242124876,
@@ -2167,8 +2167,8 @@
      "within_20": 0.35714285714285715
     },
     "traffic_control": {
-     "dollar_weighted": 2.4089497925680026,
-     "half_within": 0.6470599469077964,
+     "dollar_weighted": 2.429337804669739,
+     "half_within": 0.6452690048231708,
      "label": "Traffic control (per month)",
      "lettings": 784,
      "lines": 2211,
@@ -2179,16 +2179,16 @@
      "within_20": 0.23202170963364993
     },
     "traffic_signal": {
-     "dollar_weighted": 0.27935600109837333,
-     "half_within": 0.20443043771610725,
+     "dollar_weighted": 0.27854850381548335,
+     "half_within": 0.20413598150091028,
      "label": "Traffic signals",
      "lettings": 116,
      "lines": 2257,
      "low_vs_median": 0.10402857142857136,
      "published": true,
-     "ratio": 0.8947725400905157,
+     "ratio": 0.8945261570248284,
      "share_of_dollars": 0.01453114510144648,
-     "within_20": 0.49003101462117854
+     "within_20": 0.49268941072219763
     },
     "tree_install": {
      "dollar_weighted": 0.0880204498327175,
@@ -2294,7 +2294,7 @@
      "lines": 293,
      "low_vs_median": 0.1432500000000001,
      "published": true,
-     "ratio": 0.9549367833991115,
+     "ratio": 0.9519556831516369,
      "share_of_dollars": 0.0029972767947867266,
      "within_20": 0.4129692832764505
     }
@@ -2305,11 +2305,11 @@
  "method": "Forward in time: every line of every scored letting priced from earlier lettings only, at market level (before the comparables blend and the competition discount), against the MEDIAN bidder's amount on the same line; lines with >= 3 bidders, not owner-set, not unpriced, not uncovered.",
  "source": {
   "estimator_md5": "1be60c94f3e4ac1e7ea8c1b23b81d87a",
-  "fwd_rec_json": "handoff/scratchpad/line_accuracy/out/fwd_rec_32.json",
-  "fwd_rec_json_md5": "d6d80d6340ff50d62be1deaf65710264",
-  "lines_csv": "handoff/scratchpad/line_accuracy/out/mob_lines_32.csv",
-  "lines_csv_md5": "c39284960d3b47b5bb3332355c3429af",
-  "master_panel_md5": "29681c9480c9df42243de068f67b0910"
+  "fwd_rec_json": "handoff/scratchpad/line_accuracy/out/fwd_rec_c6.json",
+  "fwd_rec_json_md5": "d74048ba3fa406555ff3f98871182a05",
+  "lines_csv": "handoff/scratchpad/line_accuracy/out/mob_lines_c6.csv",
+  "lines_csv_md5": "93ea3304801417749cb7d1b9f929a862",
+  "master_panel_md5": "9c3d167d3eb14dc8c14cce755e64dbd4"
  },
  "thresholds": {
   "min_lettings": 15,

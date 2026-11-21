@@ -77,14 +77,26 @@ FORBIDDEN_INPUTS = ("opcc", "opcc_total", "engineer_estimate",
 #: adopts an estimator change and re-scores.
 MARKET_ACCURACY = {
     "municipal": {"label": "City / municipal (DFW) lettings, 2024-26",
-                  "lettings": 224, "p50_median_error": 0.205,
-                  "p80_under": 0.143, "median_overshoot": 0.461,
-                  "as_of": "2026-11-21 (parser .32, 58 more city tabs)"},
+                  "lettings": 224, "p50_median_error": 0.202,
+                  "p80_under": 0.143, "median_overshoot": 0.463,
+                  "as_of": "2026-11-21 (parser .32, 63 more city tabs)"},
     "txdot": {"label": "TxDOT (DFW counties) lettings, 2023-26",
               "lettings": 807, "p50_median_error": 0.16,
               "p80_under": 0.16, "median_overshoot": 0.315,
               "as_of": "2026-11-21 (parser .32)"},
 }
+
+#: How often an OPCC set at m x P50 came in under the actual low bid, forward
+#: in time (the share of scored lettings with m x P50 < low), m = 0.80 .. 2.00.
+#: The page's contingency guide reads it. Source: the forward run behind
+#: MARKET_ACCURACY (handoff/scratchpad/contingency/under_curve.py); regenerate it
+#: with MARKET_ACCURACY after every data build.
+UNDER_CURVE = {
+    "municipal": [[0.8, 0.7009], [0.85, 0.6339], [0.9, 0.5714], [0.95, 0.5089], [1.0, 0.442], [1.05, 0.3616], [1.1, 0.3036], [1.15, 0.2411], [1.2, 0.192], [1.25, 0.1652], [1.3, 0.1429], [1.35, 0.1384], [1.4, 0.1116], [1.45, 0.0938], [1.5, 0.0714], [1.55, 0.0536], [1.6, 0.0536], [1.65, 0.0536], [1.7, 0.0491], [1.75, 0.0491], [1.8, 0.0491], [1.85, 0.0491], [1.9, 0.0491], [1.95, 0.0491], [2.0, 0.0402]],
+    "txdot": [[0.8, 0.7955], [0.85, 0.7261], [0.9, 0.6456], [0.95, 0.5725], [1.0, 0.4944], [1.05, 0.4362], [1.1, 0.3482], [1.15, 0.2639], [1.2, 0.2032], [1.25, 0.1512], [1.3, 0.1301], [1.35, 0.109], [1.4, 0.0805], [1.45, 0.0669], [1.5, 0.057], [1.55, 0.0496], [1.6, 0.0421], [1.65, 0.0372], [1.7, 0.0322], [1.75, 0.0285], [1.8, 0.0235], [1.85, 0.0198], [1.9, 0.0198], [1.95, 0.0186], [2.0, 0.0173]],
+}
+for _mk, _c in UNDER_CURVE.items():
+    MARKET_ACCURACY[_mk]["under_curve"] = _c
 
 COVERAGE_LABELS = {
     "pump_equipment": "Pumps / pump, lift or booster station",

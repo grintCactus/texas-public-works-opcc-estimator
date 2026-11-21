@@ -35,14 +35,15 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
    - The amounts of owner-set allowances; these are added at face value.
    - Vendor quotes for specialty items the tool does not price (pumps, generators, prefabricated bridges, …).
 3. **Read the estimate.**
-   - P50 (expected low bid) and P80 (a not-under OPCC), with their ranges and the market's track record.
+   - P50 (expected low bid) and P80 (a not-under OPCC), with their ranges, the market's track record and a plain explanation of what each means.
    - The items left out for a vendor quote, and the lump sums whose prices are uncertain.
 4. **Check the evidence.**
    - Click any line to see the earlier public bids behind its price: project, date, quantity, low and median bidders' unit prices.
    - Open a project to see its whole bid tabulation, the original document, its public source page, and its copy in the data repository.
    - The four most similar past projects are shown with their full bids.
 5. **Build your OPCC.**
-   - In the worksheet, keep the model's unit price or pick one from the references, line by line. Add notes and a contingency.
+   - In the worksheet, keep the model's unit price or pick one from the references, line by line. Add notes.
+   - Set a contingency: 10% by default, with 0 / 10 / 15 / 20% picks. It applies to your prices, not to owner-set allowances. The page shows how often an OPCC that high came in under the low bid on past jobs: in cities, P50 + 10% did on about 30% of jobs, and P80 on about 14%.
    - "Your OPCC" is shown next to the model's P50 and P80.
 6. **Export** the worksheet to Excel or CSV, with your prices, notes and a references appendix.
 
@@ -75,11 +76,11 @@ All figures are forward in time: each letting is priced from lettings dated befo
 |---|---|---|---|---|---|
 | **TxDOT** (DFW counties), 2023–26 | 807 | **16%** | 16% | 32% | **26% / 27% / 30%** |
 | TxDOT engineers' own estimates (same 451 lettings, official totals) | 451 | 21% | 14% | — | 19% / 22% / 23% |
-| **City / municipal** (DFW), 2024–26 | 224 | **21%** | 14% | 46% | **31% / 32% / 36%** |
+| **City / municipal** (DFW), 2024–26 | 224 | **20%** | 14% | 46% | **32% / 32% / 36%** |
 | Municipal engineers' own estimates | 140 | ~15% | 33% | — | 20% / 21% / 25% |
 | Locked public test set, municipal (last confirmation) | 56 | 14% | 20% | 31% | — |
 
-Municipal figures use the "covered" scope (see below). The discount uses each letting's actual number of bidders, which is not known when quoting. On the previous data build, a forecast bidder count from earlier lettings of the same market, work type and size cost TxDOT about 2 points of overshoot and left municipal unchanged. Figures are from the current data build: parser .32 (2026-11-21), plus 58 more public bid tabs from smaller DFW cities and counties, many found inside city council agenda packets. Parser rounds 10 and 11 made three changes:
+Municipal figures use the "covered" scope (see below). The discount uses each letting's actual number of bidders, which is not known when quoting. On the previous data build, a forecast bidder count from earlier lettings of the same market, work type and size cost TxDOT about 2 points of overshoot and left municipal unchanged. Figures are from the current data build: parser .32 (2026-11-21), plus 63 more public bid tabs from smaller DFW cities and counties, many found inside city council agenda packets. Parser rounds 10 and 11 made three changes:
 - they read more table layouts;
 - they tell an engineer's column from a bidder's;
 - they recover units printed in odd places, about 8,500 lines.
@@ -87,7 +88,7 @@ Municipal figures use the "covered" scope (see below). The discount uses each le
 Many of the newly scorable jobs are hard to estimate, with specialty items the model prices low. Since the parser .29 build:
 - overshoot rose from 42% to 46%;
 - the overshoot at a matched 80% not-under rate rose from 32% to 36%;
-- the median P50 error rose from 19% to 21%.
+- the median P50 error rose from 19% to 20%.
 
 On the lettings that both builds score, the change is within noise. That build corrected misread bid dates and labels, priced a few more item wordings correctly, and stopped scoring annual / as-needed unit-price contracts as projects: their bid totals are an evaluation formula over notional quantities, not the price of a project. Their unit prices stay in the price history. The locked-set row is from the last confirmation, before the latest data fixes and the scope change. For the engineer rows, "P80 under the low bid" means their single published estimate came in under the low bid.
 
@@ -99,7 +100,7 @@ On the lettings that both builds score, the change is within noise. That build c
   - On 806 DFW TxDOT lettings, the median P50 error is 16%.
   - On the 451 of them with an official engineer's estimate, our median error (17%) is lower than the engineers' (21%), whose estimates run about 20% high.
   - At an 80% not-under rate, the engineers still overshoot less: 23% vs our 31%.
-- **Standard items are priced close to the bidders' own spread.** On TxDOT, half of the asphalt, bridge concrete, concrete pavement, riprap, headwall, box culvert and storm pipe lines are within 14–20% of the median bid. In cities, the same holds for curb ramps, driveways and inlets (17–23%). See [Item-level accuracy](#item-level-accuracy).
+- **Standard items are priced close to the bidders' own spread.** On TxDOT, half of the asphalt, bridge concrete, concrete pavement, riprap, headwall, box culvert and storm pipe lines are within 14–20% of the median bid. In cities, the same holds for curb ramps, driveways and inlets (16–24%). See [Item-level accuracy](#item-level-accuracy).
 - **The evaluation is strict.**
   - Every figure is forward in time.
   - Decisions are registered before they are scored.
@@ -112,12 +113,12 @@ On the lettings that both builds score, the change is within noise. That build c
 **Limitations**
 
 - **City (municipal) estimates are less accurate.**
-  - The median P50 error is 21%, against about 15% for the engineers.
+  - The median P50 error is 20%, against about 15% for the engineers.
   - At an 80% not-under rate the overshoot is about 36%, against the engineers' 25%.
   - Almost all of this error comes from estimating the bidders' typical (median) price for the schedule. Very little comes from the step from the median bid to the low bid.
 - **Lump-sum items do not yet scale with job size.**
   - Mobilization, traffic control, site preparation and SWPPP / erosion-control lump sums are priced at about the same dollar amount on every job. Bidders price them as a share of the job (mobilization is typically about 5%).
-  - Small city jobs (low bid under $0.5M, 74 lettings) come out about 19% high (P50 error 24%).
+  - Small city jobs (low bid under $0.5M, 74 lettings) come out about 20% high (P50 error 24%).
   - Jobs over $2M come out about 4% low, and P80 is under the low bid on 25% of them.
   - Pricing them as a share of the job fixes the lump-sum lines themselves, but it did not make job totals more accurate (round 12, under "Tried and not adopted").
 - **Creek erosion and drainage** (42 lettings) is better than the city average: P50 error 18%, P80 under the low bid 2% of the time, median overshoot 41%. The recovered units brought in more recent creek and drainage prices. They raised this group's estimates by about 4%, so it now errs on the high side. Part of the drop in under-estimates (from 10%) is a relabelling, not better pricing: a lift station and an artificial-turf field that had been labelled drainage left this group.
@@ -208,76 +209,76 @@ How close the price of each kind of line item is, before the lines are added up.
   - water pipe (8% of city dollars, half within 46%);
   - mobilization (5%, runs 48% high);
   - asphalt (4%, half within 36%);
-  - unclassified lines (4%, half within 109%).
-  - Fire hydrants run 31% low, pavement marking 21% low, and miscellaneous concrete 12% high.
+  - unclassified lines (4%, half within 107%).
+  - Fire hydrants run 31% low, pavement marking 21% low, and miscellaneous concrete 13% high.
 
 #### City / municipal (DFW), 2024–26: 224 lettings, 9,991 lines
 
-Across all lines, half are within **46%** of the median bid (**41%** weighted by dollars); 28% are within ±20%. The low bidder is typically 24% from the median bidder on the same line.
+Across all lines, half are within **46%** of the median bid (**41%** weighted by dollars); 27% are within ±20%. The low bidder is typically 24% from the median bidder on the same line.
 
 | Item | Lines | Lettings | Share of dollars | Half of lines within | Dollar-weighted | Ours ÷ median bid | Lines within ±20% | Low bidder vs median bidder |
 |---|---|---|---|---|---|---|---|---|
-| ADA curb ramps | 201 | 92 | 0.8% | 17% | 16% | 0.97 | 54% | 22% |
+| ADA curb ramps | 201 | 92 | 0.8% | 16% | 16% | 0.97 | 55% | 22% |
 | Driveways | 126 | 83 | 1.5% | 19% | 15% | 0.97 | 52% | 21% |
-| Inlets | 271 | 67 | 1.6% | 23% | 24% | 1.00 | 47% | 17% |
+| Inlets | 271 | 67 | 1.6% | 24% | 24% | 1.00 | 46% | 17% |
 | Project signs | 77 | 71 | 0.0% | 25% | 41% | 1.04 | 40% | 29% |
-| Sidewalk | 229 | 127 | 3.7% | 25% | 22% | 1.06 | 43% | 23% |
+| Sidewalk | 229 | 127 | 3.7% | 25% | 22% | 1.06 | 44% | 23% |
 | Valves and hydrants | 184 | 79 | 1.9% | 26% | 47% | 0.88 | 42% | 15% |
 | Concrete pavement | 198 | 103 | 12.4% | 27% | 20% | 0.99 | 39% | 13% |
 | Signs | 82 | 51 | 0.1% | 27% | 11% | 1.00 | 40% | 20% |
+| Storm pipe | 321 | 81 | 3.0% | 28% | 23% | 0.91 | 38% | 19% |
 | Water services | 134 | 55 | 2.1% | 28% | 15% | 0.86 | 43% | 19% |
 | Box culverts | 67 | 31 | 1.5% | 28% | 22% | 0.94 | 40% | 16% |
-| Storm pipe | 321 | 81 | 3.0% | 28% | 23% | 0.91 | 37% | 19% |
 | Flexible base | 112 | 85 | 2.5% | 32% | 45% | 0.92 | 33% | 26% |
 | Embankment / fill | 62 | 51 | 0.7% | 32% | 49% | 1.13 | 31% | 55% |
 | Drilled shafts | 57 | 28 | 1.6% | 33% | 38% | 0.80 | 30% | 15% |
 | Stone riprap | 56 | 43 | 0.8% | 33% | 36% | 0.88 | 25% | 27% |
 | Concrete beams | 47 | 31 | 0.5% | 34% | 53% | 0.91 | 26% | 40% |
-| Asphalt pavement | 180 | 88 | 4.4% | 36% | 29% | 0.99 | 31% | 19% |
+| Asphalt pavement | 180 | 88 | 4.4% | 36% | 29% | 0.97 | 32% | 19% |
+| Traffic signals | 250 | 24 | 0.7% | 37% | 53% | 0.99 | 40% | 12% |
 | Subgrade stabilization | 136 | 64 | 2.7% | 37% | 40% | 0.81 | 29% | 19% |
-| Traffic signals | 250 | 24 | 0.7% | 37% | 53% | 0.99 | 41% | 12% |
 | Excavation | 143 | 105 | 2.7% | 37% | 33% | 0.94 | 28% | 35% |
+| Pavement removal | 155 | 94 | 1.6% | 39% | 47% | 0.88 | 25% | 30% |
 | Tree removal | 68 | 45 | 0.1% | 39% | 62% | 0.97 | 22% | 33% |
-| Pavement removal | 155 | 94 | 1.6% | 39% | 47% | 0.88 | 26% | 30% |
-| Seeding and sod | 353 | 178 | 1.9% | 39% | 56% | 0.91 | 33% | 23% |
+| Seeding and sod | 353 | 178 | 1.9% | 40% | 56% | 0.91 | 33% | 23% |
 | Testing and inspection | 71 | 42 | 0.3% | 41% | >1000% | 1.02 | 27% | 32% |
-| Electrical and lighting | 427 | 46 | 2.0% | 42% | 65% | 0.85 | 29% | 13% |
+| Electrical and lighting | 427 | 46 | 2.0% | 42% | 65% | 0.85 | 28% | 13% |
 | Erosion control (unit-priced) | 177 | 76 | 0.4% | 45% | 84% | 0.81 | 27% | 33% |
 | Fire hydrants | 64 | 58 | 0.5% | 46% | 38% | 0.69 | 28% | 17% |
+| Casing / encasement | 160 | 73 | 2.8% | 46% | 161% | 0.89 | 26% | 25% |
 | Water pipe | 284 | 71 | 7.7% | 46% | 40% | 0.95 | 27% | 27% |
 | Sidewalk removal | 111 | 64 | 0.2% | 46% | 34% | 1.04 | 25% | 31% |
-| Miscellaneous concrete | 142 | 80 | 1.1% | 46% | 39% | 1.12 | 19% | 27% |
+| Miscellaneous concrete | 142 | 80 | 1.1% | 46% | 39% | 1.13 | 18% | 27% |
 | Curb and gutter | 136 | 90 | 0.7% | 47% | 39% | 1.12 | 29% | 35% |
-| Casing / encasement | 160 | 73 | 2.8% | 47% | 161% | 0.90 | 27% | 25% |
-| Adjust to grade | 173 | 77 | 0.2% | 48% | 48% | 0.99 | 28% | 43% |
+| Adjust to grade | 173 | 77 | 0.2% | 48% | 48% | 1.01 | 27% | 43% |
 | Manholes | 175 | 69 | 2.0% | 48% | 71% | 0.93 | 29% | 21% |
 | Sanitary sewer pipe | 131 | 49 | 2.8% | 49% | 51% | 1.00 | 23% | 42% |
 | Utility removal / abandonment | 298 | 99 | 0.6% | 50% | 44% | 0.95 | 24% | 44% |
 | Traffic control (unit-priced) | 78 | 56 | 0.6% | 53% | 53% | 1.31 | 21% | 27% |
 | Guardrail | 60 | 26 | 0.1% | 54% | 59% | 0.70 | 27% | 22% |
-| Contingency / allowance lines | 78 | 23 | 0.5% | 56% | 102% | 0.94 | 28% | 21% |
-| Other removals | 170 | 85 | 0.5% | 56% | 66% | 0.95 | 25% | 40% |
 | Sewer services | 51 | 31 | 0.3% | 57% | 61% | 1.24 | 22% | 36% |
 | Pavement marking | 608 | 88 | 0.4% | 58% | 91% | 0.79 | 20% | 21% |
+| Other removals | 170 | 85 | 0.5% | 58% | 66% | 0.94 | 24% | 40% |
+| Relocate / reset | 186 | 79 | 0.2% | 61% | 105% | 0.88 | 22% | 41% |
 | Pipe fittings | 59 | 36 | 0.3% | 62% | 49% | 1.27 | 24% | 33% |
 | Retaining walls | 55 | 32 | 1.6% | 62% | 88% | 1.00 | 20% | 30% |
-| Relocate / reset | 186 | 79 | 0.2% | 63% | 105% | 0.88 | 22% | 41% |
 | Tree planting | 68 | 46 | 0.2% | 66% | 222% | 0.95 | 29% | 14% |
+| Contingency / allowance lines | 78 | 23 | 0.5% | 68% | 102% | 0.94 | 27% | 21% |
 | Trench safety | 120 | 81 | 0.2% | 69% | 94% | 0.89 | 20% | 67% |
 | Structure demolition | 90 | 54 | 0.1% | 72% | 244% | 0.88 | 16% | 33% |
 | Fence | 101 | 64 | 0.4% | 72% | 177% | 0.86 | 20% | 27% |
 | Headwalls | 58 | 40 | 0.4% | 80% | 434% | 0.73 | 9% | 48% |
 | Landscape planting | 103 | 23 | 0.2% | 100% | 94% | 1.61 | 17% | 11% |
 | SWPPP / temporary erosion control (lump sum) | 164 | 152 | 0.3% | 102% | 161% | 1.06 | 12% | 49% |
-| Unclassified lines | 781 | 160 | 3.7% | 109% | 280% | 0.95 | 16% | 29% |
+| Unclassified lines | 781 | 160 | 3.7% | 107% | 280% | 0.95 | 16% | 29% |
 | Traffic control (lump sum) | 146 | 137 | 0.9% | 119% | 292% | 1.45 | 9% | 59% |
 | Site preparation (lump sum) | 81 | 76 | 1.4% | 123% | 388% | 0.97 | 20% | 82% |
 | Irrigation | 74 | 43 | 0.6% | 136% | 153% | 1.14 | 4% | 18% |
-| Mobilization | 196 | 194 | 4.7% | 150% | 379% | 1.48 | 10% | 34% |
+| Mobilization | 196 | 194 | 4.7% | 148% | 379% | 1.48 | 10% | 34% |
 
 #### TxDOT (DFW counties), 2023–26: 807 lettings, 41,159 lines
 
-Across all lines, half are within **31%** of the median bid (**26%** weighted by dollars); 37% are within ±20%. The low bidder is typically 16% from the median bidder on the same line.
+Across all lines, half are within **30%** of the median bid (**26%** weighted by dollars); 37% are within ±20%. The low bidder is typically 16% from the median bidder on the same line.
 
 | Item | Lines | Lettings | Share of dollars | Half of lines within | Dollar-weighted | Ours ÷ median bid | Lines within ±20% | Low bidder vs median bidder |
 |---|---|---|---|---|---|---|---|---|
@@ -285,13 +286,13 @@ Across all lines, half are within **31%** of the median bid (**26%** weighted by
 | Asphalt pavement | 651 | 282 | 11.5% | 14% | 12% | 0.93 | 62% | 9% |
 | Bridge concrete | 426 | 75 | 5.1% | 14% | 11% | 0.93 | 62% | 15% |
 | Concrete mow strip | 189 | 183 | 0.5% | 15% | 16% | 1.06 | 64% | 11% |
-| Sidewalk | 161 | 114 | 0.6% | 16% | 9% | 0.97 | 60% | 12% |
+| Sidewalk | 161 | 114 | 0.6% | 15% | 9% | 0.97 | 59% | 12% |
 | Construction exit removal | 170 | 170 | 0.0% | 16% | 15% | 1.06 | 58% | 17% |
 | Headwalls | 218 | 78 | 0.1% | 17% | 15% | 0.99 | 57% | 9% |
 | Concrete riprap | 252 | 192 | 0.5% | 17% | 10% | 1.02 | 57% | 15% |
 | Stone riprap | 277 | 197 | 0.9% | 18% | 19% | 0.94 | 55% | 14% |
 | Flowable backfill | 192 | 161 | 0.3% | 19% | 21% | 0.92 | 53% | 17% |
-| Concrete pavement | 132 | 83 | 8.1% | 19% | 8% | 0.93 | 52% | 12% |
+| Concrete pavement | 132 | 83 | 8.1% | 19% | 8% | 0.92 | 52% | 12% |
 | Box culverts | 362 | 98 | 2.1% | 19% | 20% | 0.94 | 51% | 15% |
 | Concrete beams | 64 | 55 | 0.1% | 19% | 19% | 0.95 | 55% | 25% |
 | Storm pipe | 634 | 150 | 1.9% | 19% | 16% | 1.01 | 52% | 14% |
@@ -301,15 +302,15 @@ Across all lines, half are within **31%** of the median bid (**26%** weighted by
 | Traffic signals | 2257 | 116 | 1.5% | 20% | 28% | 0.89 | 49% | 10% |
 | Inlets | 543 | 75 | 1.1% | 21% | 25% | 0.86 | 48% | 16% |
 | Signs | 1392 | 262 | 0.7% | 21% | 27% | 1.04 | 48% | 9% |
+| ADA curb ramps | 397 | 102 | 0.2% | 22% | 22% | 0.91 | 48% | 13% |
 | Drilled shafts | 574 | 166 | 3.6% | 22% | 32% | 0.86 | 45% | 13% |
 | Driveways | 224 | 137 | 0.7% | 22% | 21% | 0.95 | 44% | 13% |
-| ADA curb ramps | 397 | 102 | 0.2% | 22% | 22% | 0.91 | 47% | 13% |
 | Flexible base | 127 | 109 | 1.4% | 23% | 17% | 0.91 | 46% | 11% |
 | Erosion control (unit-priced) | 1717 | 412 | 0.3% | 24% | 20% | 0.97 | 44% | 20% |
 | Wingwalls | 293 | 94 | 0.3% | 24% | 23% | 0.95 | 41% | 14% |
 | Borrow / backfill | 141 | 136 | 0.1% | 24% | 21% | 1.05 | 44% | 25% |
 | Pavement milling | 236 | 196 | 0.9% | 24% | 21% | 0.98 | 43% | 15% |
-| Electrical and lighting | 2109 | 142 | 1.1% | 25% | 42% | 0.85 | 41% | 12% |
+| Electrical and lighting | 2109 | 142 | 1.1% | 25% | 42% | 0.85 | 42% | 12% |
 | Safety end treatments | 516 | 125 | 0.2% | 25% | 23% | 0.92 | 42% | 17% |
 | Retaining walls | 65 | 51 | 2.6% | 26% | 23% | 0.89 | 35% | 23% |
 | Subgrade stabilization | 353 | 139 | 2.3% | 29% | 27% | 0.85 | 32% | 11% |
@@ -322,10 +323,10 @@ Across all lines, half are within **31%** of the median bid (**26%** weighted by
 | Embankment / fill | 291 | 229 | 3.0% | 35% | 35% | 1.04 | 31% | 29% |
 | Concrete repair | 304 | 128 | 0.7% | 35% | 34% | 1.16 | 30% | 27% |
 | Pavement marking | 8266 | 423 | 1.6% | 36% | 26% | 1.13 | 32% | 12% |
+| Seeding and sod | 1052 | 299 | 0.8% | 37% | 23% | 1.02 | 30% | 32% |
 | Testing and inspection | 98 | 44 | 0.0% | 37% | 17% | 1.11 | 36% | 19% |
 | Pavement removal | 433 | 218 | 0.8% | 38% | 38% | 0.89 | 27% | 20% |
-| Seeding and sod | 1052 | 299 | 0.8% | 38% | 23% | 1.02 | 30% | 32% |
-| Miscellaneous concrete | 238 | 141 | 0.8% | 38% | 45% | 0.85 | 28% | 25% |
+| Miscellaneous concrete | 238 | 141 | 0.8% | 38% | 47% | 0.86 | 28% | 25% |
 | Other removals | 674 | 277 | 0.7% | 40% | 27% | 0.97 | 30% | 26% |
 | Mowing | 451 | 193 | 0.8% | 41% | 21% | 1.22 | 29% | 23% |
 | Excavation | 348 | 223 | 1.8% | 42% | 66% | 0.97 | 28% | 32% |
@@ -340,7 +341,7 @@ Across all lines, half are within **31%** of the median bid (**26%** weighted by
 | Crash cushions | 500 | 124 | 0.5% | 55% | 58% | 1.32 | 19% | 27% |
 | Tree removal | 253 | 59 | 0.1% | 57% | 49% | 1.33 | 22% | 60% |
 | Cleaning / desilting | 150 | 104 | 0.2% | 59% | 58% | 0.81 | 22% | 28% |
-| Traffic control (per month) | 2211 | 784 | 3.9% | 65% | 241% | 1.24 | 23% | 63% |
+| Traffic control (per month) | 2211 | 784 | 3.9% | 65% | 243% | 1.24 | 23% | 63% |
 | Structure demolition | 119 | 73 | 0.1% | 65% | 531% | 0.81 | 23% | 38% |
 | Preparing right of way / clearing | 242 | 228 | 5.8% | 160% | >1000% | 1.24 | 9% | 71% |
 

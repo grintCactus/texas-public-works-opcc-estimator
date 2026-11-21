@@ -84,7 +84,10 @@ def totals(result: dict, ws: dict) -> dict:
                 not_covered += a
         rows.append((l, w, a))
     c = _f(ws.get("contingency_pct"))
-    cont = sub * c / 100.0 if c else 0.0
+    # contingency on your own pricing, not on owner-set allowances (an
+    # "Owner's Contingency Allowance" is already contingency) -- as the page
+    base = sub - owner_set
+    cont = base * c / 100.0 if c else 0.0
     yours = sub + cont
     h = result.get("headline") or {}
     p50, p80 = _f(h.get("p50")), _f(h.get("p80"))
@@ -218,7 +221,7 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
         ["  of which owner-set allowances", _m(t["owner_set"])],
         ["  of which vendor quotes", _m(t["quotes"])],
         ["Contingency %", "" if t["contingency_pct"] is None else t["contingency_pct"]],
-        ["Contingency", _m(t["contingency"])],
+        ["Contingency (on your line amounts, owner-set allowances excluded)", _m(t["contingency"])],
         ["YOUR OPCC", _m(t["your_opcc"])],
         [],
         ["Model P50 (expected low bid)", _m(t["p50"])],
