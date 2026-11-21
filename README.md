@@ -24,6 +24,7 @@ The model is trained **only on public bid tabulations**. Every number it reports
 Or start the app on your own machine with `.venv/bin/python ui/run.py`, then open http://127.0.0.1:8017/. Pricing is ready about 10 seconds after start.
 
 1. **Enter the takeoff.**
+   - No takeoff yet? Download the blank takeoff template (Excel) at the top of this step. Fill in one pay item per row (item no., description, unit, quantity; an owner-set amount only for an allowance the bid form prints). Then paste the rows with the header row, or upload the file.
    - Paste a bid schedule, or upload Excel, CSV, Word or PDF. Scanned PDFs are read with OCR.
    - Check each line's description, unit, quantity and the item type it was matched to. Change the type with the picker if it is wrong.
    - Lines the reader is unsure of are flagged, with the closest items from bid history to pick from. Corrections you make are remembered on your machine.

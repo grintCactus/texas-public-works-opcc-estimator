@@ -180,6 +180,28 @@ class PageInteractions(unittest.TestCase):
                 page.click("#modal-host .modal button.close")
                 self.assertEqual(errors, [])
 
+    def test_the_takeoff_template_downloads_from_the_first_step(self):
+        """2026-11-21 (user): the takeoff step starts with a blank Excel
+        template to download, fill in and paste back."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                browser = getattr(self.pw, engine).launch()
+                self.addCleanup(browser.close)
+                page = browser.new_page(accept_downloads=True)
+                errors = []
+                page.on("pageerror", lambda e: errors.append(str(e)))
+                page.goto(self.url + "/")
+                link = page.locator("#sec-input #template-bar a#btn-template")
+                self.assertTrue(link.is_visible())
+                self.assertIn("template", link.inner_text().lower())
+                with page.expect_download() as dl:
+                    link.click()
+                d = dl.value
+                self.assertEqual(d.suggested_filename, "takeoff_template.xlsx")
+                with open(d.path(), "rb") as fh:
+                    self.assertEqual(fh.read(2), b"PK")      # an .xlsx (zip)
+                self.assertEqual(errors, [])
+
     def test_a_contingency_line_is_a_share_picked_from_a_list(self):
         """2026-11-21 (user): a contingency is a percentage picked from a
         list. The line has no item type and no Change button; in the

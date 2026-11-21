@@ -335,6 +335,93 @@ def xlsx_available() -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# The blank takeoff template (user, 2026-11-21: download it, fill it in,
+# paste it back or upload it, then estimate)
+# ---------------------------------------------------------------------------
+# One sheet only: the takeoff reader (ingest/takeoff.py) reads the sheet with
+# the most items, so a second sheet of examples could win over a short
+# takeoff. Its header row is mapped by name (Item No. / Description / Unit /
+# Quantity / an amount column read for owner-set allowances only) and the
+# notes above the header are skipped, in a file and in a paste alike.
+
+TEMPLATE_HEADER = ["Item No.", "Description", "Unit", "Quantity",
+                   "Owner-set amount ($)"]
+TEMPLATE_NOTES = [
+    "Takeoff for the bid estimator",
+    "One pay item per row: the item number, the description as the bid form "
+    "words it, the unit and the quantity.",
+    "Owner-set amount: only for an allowance the bid form prints a dollar "
+    "amount for. Leave a contingency blank and pick its percentage on the "
+    "page.",
+    "Then copy the header row and your rows into the estimator's paste box, "
+    "or upload this file.",
+]
+#: The units offered in the Unit column's list (others can still be typed:
+#: the list only warns).
+TEMPLATE_UNITS = ["LS", "EA", "LF", "SY", "SF", "CY", "CF", "TON", "GAL",
+                  "AC", "MO", "DAY", "HR", "STA", "VF", "LB", "MI", "ALLOW"]
+TEMPLATE_ROWS = 300
+
+
+def takeoff_template_xlsx() -> bytes:
+    """The blank takeoff workbook: notes, a header row and TEMPLATE_ROWS
+    empty rows with a unit list and number checks."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Takeoff"
+    ws.cell(row=1, column=1, value=TEMPLATE_NOTES[0]).font = Font(
+        bold=True, size=14)
+    for i, text in enumerate(TEMPLATE_NOTES[1:], start=2):
+        ws.cell(row=i, column=1, value=text).font = Font(color="4B5563")
+    head = len(TEMPLATE_NOTES) + 2            # one blank row, then the header
+    first, last = head + 1, head + TEMPLATE_ROWS
+    line = Side(style="thin", color="9CA3AF")
+    for j, name in enumerate(TEMPLATE_HEADER, start=1):
+        c = ws.cell(row=head, column=j, value=name)
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor="DCE6F1")
+        c.border = Border(bottom=line)
+        c.alignment = Alignment(vertical="center")
+    for col, width in zip("ABCDE", (11, 64, 9, 13, 22)):
+        ws.column_dimensions[col].width = width
+    for r in range(first, last + 1):
+        ws.cell(row=r, column=4).number_format = "General"
+        ws.cell(row=r, column=5).number_format = "#,##0.00"
+    unit = DataValidation(
+        type="list", formula1='"%s"' % ",".join(TEMPLATE_UNITS),
+        allow_blank=True, showErrorMessage=True, errorStyle="warning",
+        errorTitle="Unit", error="Not one of the usual units. Keep it if "
+        "the bid form uses it.", showInputMessage=True, promptTitle="Unit",
+        prompt="As on the bid form: LS, EA, LF, SY, CY, TON ...")
+    qty = DataValidation(
+        type="decimal", operator="greaterThanOrEqual", formula1="0",
+        allow_blank=True, showErrorMessage=True, errorStyle="warning",
+        errorTitle="Quantity", error="A quantity is a number, such as 1 or "
+        "4,200.")
+    amt = DataValidation(
+        type="decimal", operator="greaterThanOrEqual", formula1="0",
+        allow_blank=True, showErrorMessage=True, errorStyle="warning",
+        errorTitle="Owner-set amount", error="An amount in dollars, only "
+        "for an allowance the bid form prints.")
+    for dv, col in ((unit, "C"), (qty, "D"), (amt, "E")):
+        ws.add_data_validation(dv)
+        dv.add("%s%d:%s%d" % (col, first, col, last))
+    ws.freeze_panes = "A%d" % first
+    ws.print_title_rows = "%d:%d" % (head, head)
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def to_xlsx(result: Dict[str, Any]) -> bytes:
     import openpyxl
     from openpyxl.styles import Font

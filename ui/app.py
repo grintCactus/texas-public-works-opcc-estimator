@@ -14,7 +14,9 @@ Routes (JSON in, JSON out unless noted):
   POST /api/takeoff/text      {text} -> parsed takeoff lines
   POST /api/takeoff/file      multipart field "file" (or a raw body with
                               ?name=) -> parsed takeoff lines
-  POST /api/classify          {market, lines: [{row_id, description, unit,
+  GET  /api/takeoff/template.xlsx  the blank takeoff workbook to fill in and
+                              paste back or upload (exporter.takeoff_template_xlsx)
+  POST /api/classify         {market, lines: [{row_id, description, unit,
                               family?, quantity?, confidence?, issues?,
                               keep_parser?}]} -> the parser's classification,
                               plus intake help per line: a remembered
@@ -704,6 +706,16 @@ def _worksheet_export(req, kind):
     return FileReply(worksheet.to_xlsx(result, ws, refs),
                      "application/vnd.openxmlformats-officedocument."
                      "spreadsheetml.sheet", "opcc_worksheet_%s.xlsx" % stamp)
+
+
+@route("GET", "/api/takeoff/template.xlsx")
+def r_takeoff_template(req):
+    """The blank takeoff workbook to fill in and paste back (or upload)."""
+    if not exporter.xlsx_available():
+        raise ApiError(501, "The Excel template needs openpyxl.")
+    return FileReply(exporter.takeoff_template_xlsx(),
+                     "application/vnd.openxmlformats-officedocument."
+                     "spreadsheetml.sheet", "takeoff_template.xlsx")
 
 
 @route("POST", "/api/worksheet/export/csv")

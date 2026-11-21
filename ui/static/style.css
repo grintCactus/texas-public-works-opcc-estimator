@@ -804,6 +804,10 @@ html[data-public="1"] .local-only { display: none !important; }
 /* a bidder's whole name in a bid table header, wrapped */
 table.btgrid th .bname { white-space: normal; overflow-wrap: anywhere; min-width: 90px; max-width: 160px;
   margin-left: auto; }
+/* the blank takeoff template, at the top of the takeoff step */
+.tplbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 10px; }
+a.btn { display: inline-block; text-decoration: none; }
+a.btn:hover { text-decoration: none; }
 /* contingency: picked from a list (a contingency line, the worksheet's own),
    and the "how often under the low bid" guide */
 select.cpct { width: 100%; padding: 3px 6px; font-size: 12.5px; }
