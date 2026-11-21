@@ -75,7 +75,7 @@ The estimate is meant to be used as an OPCC, where underestimating is the costly
 2. **Score:** within that floor, P80 should overshoot the low bid **as little as possible** (13% is the aspiration).
 3. **Yardstick:** at the same not-under rate, the overshoot is compared with engineers' own estimates. Engineer estimates are never an input.
 
-## Where it stands (2026-11-20)
+## Where it stands (2026-11-21)
 
 All figures are forward in time: each letting is priced from lettings dated before it, and the model had not seen the letting.
 
@@ -83,11 +83,11 @@ All figures are forward in time: each letting is priced from lettings dated befo
 |---|---|---|---|---|---|
 | **TxDOT** (DFW counties), 2023–26 | 807 | **16%** | 16% | 32% | **26% / 27% / 30%** |
 | TxDOT engineers' own estimates (same 451 lettings, official totals) | 451 | 21% | 14% | — | 19% / 22% / 23% |
-| **City / municipal** (DFW), 2024–26 | 224 | **20%** | 14% | 46% | **32% / 33% / 34%** |
+| **City / municipal** (DFW), 2024–26 | 234 | **20%** | 14% | 45% | **30% / 32% / 33%** |
 | Municipal engineers' own estimates | 140 | ~15% | 33% | — | 20% / 21% / 25% |
 | Locked public test set, municipal (last confirmation) | 56 | 14% | 20% | 31% | — |
 
-Municipal figures use the "covered" scope (see below). The discount uses each letting's actual number of bidders, which is not known when quoting. On the previous data build, a forecast bidder count from earlier lettings of the same market, work type and size cost TxDOT about 2 points of overshoot and left municipal unchanged. Figures are from the current data build: parser .33 (2026-11-21), on top of 63 more public bid tabs from smaller DFW cities and counties, many found inside city council agenda packets. Parser round 12 (.33) moved 637 lines to the right item type: trail excavation and grading out of sidewalk (a 400 CY "Excavation (Trail)" had been priced like concrete sidewalk), "Earthwork" to excavation, and pipe abandonment, plugs and grout fill to utility removal work. On the same 224 city jobs, overshoot went from 46.3% to 45.8%; nothing else moved. Parser rounds 10 and 11 made three changes:
+Municipal figures use the "covered" scope (see below). The discount uses each letting's actual number of bidders, which is not known when quoting. On the previous data build, a forecast bidder count from earlier lettings of the same market, work type and size cost TxDOT about 2 points of overshoot and left municipal unchanged. Figures are from the current data build: parser .33 (2026-11-21), on top of 63 more public bid tabs from smaller DFW cities and counties, many found inside city council agenda packets. Parser round 12 (.33) moved 637 lines to the right item type: trail excavation and grading out of sidewalk (a 400 CY "Excavation (Trail)" had been priced like concrete sidewalk), "Earthwork" to excavation, and pipe abandonment, plugs and grout fill to utility removal work. On the same 224 city jobs, overshoot went from 46.3% to 45.8%; nothing else moved. Round 18 (installed 2026-11-21) added two pricing rules. A bidder count above the discount table's top bin is now priced off the top bin, so 10 city jobs with 16–21 bidders get an estimate. Abandon, plug and grout-fill lines are priced only from abandonment history, never from new or removed pipe. On the same 224 city jobs, overshoot went from 45.8% to 45.5% and the P50 error from 20.2% to 19.9%; the P80 under rate did not change, and TxDOT did not move. Parser rounds 10 and 11 made three changes:
 - they read more table layouts;
 - they tell an engineer's column from a bidder's;
 - they recover units printed in odd places, about 8,500 lines.
@@ -209,79 +209,80 @@ How close the price of each kind of line item is, before the lines are added up.
 - **Lump sums and other general-condition items are the weakest in both markets.**
   - In cities, mobilization, traffic control, site preparation and SWPPP lump sums are priced at about the same dollar amount on every job, while bidders price them as a share of the job. A share-of-job rule makes these lines much closer to the bids (round 12) but did not improve job totals, so it is not in use yet.
   - On TxDOT, mobilization is already priced as a share of the job.
-- **Many items are 8–9 points more accurate on TxDOT than in cities:** sidewalk, concrete pavement, storm pipe and box culverts.
+- **Many items are 6–9 points more accurate on TxDOT than in cities:** sidewalk, concrete pavement, storm pipe and box culverts.
   - TxDOT's standard item codes keep descriptions uniform and history deep. City wording varies, and city data is thinner.
   - Curb ramps, driveways and inlets are about as accurate in cities as on TxDOT.
 - **The city items with the most money still to gain:**
-  - water pipe (8% of city dollars, half within 46%);
-  - mobilization (5%, runs 48% high);
+  - water pipe (8% of city dollars, half within 44%);
+  - mobilization (5%, runs 46% high);
   - asphalt (4%, half within 36%);
-  - unclassified lines (4%, half within 107%).
+  - unclassified lines (4%, half within 109%).
   - Fire hydrants run 31% low, pavement marking 21% low, and miscellaneous concrete 13% high.
 
-#### City / municipal (DFW), 2024–26: 224 lettings, 9,991 lines
+#### City / municipal (DFW), 2024–26: 234 lettings, 10,245 lines
 
-Across all lines, half are within **46%** of the median bid (**41%** weighted by dollars); 27% are within ±20%. The low bidder is typically 24% from the median bidder on the same line.
+Across all lines, half are within **46%** of the median bid (**40%** weighted by dollars); 28% are within ±20%. The low bidder is typically 25% from the median bidder on the same line.
 
 | Item | Lines | Lettings | Share of dollars | Half of lines within | Dollar-weighted | Ours ÷ median bid | Lines within ±20% | Low bidder vs median bidder |
 |---|---|---|---|---|---|---|---|---|
-| ADA curb ramps | 201 | 92 | 0.8% | 16% | 16% | 0.97 | 55% | 22% |
-| Driveways | 126 | 83 | 1.5% | 19% | 15% | 0.97 | 52% | 21% |
-| Inlets | 271 | 67 | 1.6% | 24% | 24% | 1.00 | 46% | 17% |
-| Project signs | 77 | 71 | 0.0% | 25% | 41% | 1.04 | 40% | 29% |
-| Sidewalk | 229 | 127 | 3.7% | 25% | 22% | 1.06 | 44% | 23% |
-| Valves and hydrants | 184 | 79 | 1.9% | 26% | 47% | 0.88 | 42% | 15% |
-| Concrete pavement | 198 | 103 | 12.4% | 27% | 20% | 0.99 | 39% | 13% |
+| ADA curb ramps | 209 | 98 | 0.8% | 16% | 16% | 0.98 | 56% | 23% |
+| Driveways | 133 | 89 | 1.5% | 18% | 14% | 0.98 | 53% | 20% |
+| Valves and hydrants | 192 | 82 | 2.0% | 22% | 37% | 0.91 | 46% | 16% |
+| Inlets | 278 | 70 | 1.6% | 23% | 24% | 1.00 | 47% | 18% |
+| Sidewalk | 226 | 133 | 3.6% | 23% | 19% | 1.07 | 46% | 21% |
+| Project signs | 79 | 73 | 0.0% | 24% | 35% | 1.03 | 42% | 33% |
+| Concrete pavement | 209 | 110 | 12.5% | 25% | 20% | 1.01 | 41% | 14% |
 | Signs | 82 | 51 | 0.1% | 27% | 11% | 1.00 | 40% | 20% |
-| Storm pipe | 321 | 81 | 3.0% | 28% | 23% | 0.91 | 38% | 19% |
-| Water services | 134 | 55 | 2.1% | 28% | 15% | 0.86 | 43% | 19% |
-| Box culverts | 67 | 31 | 1.5% | 28% | 22% | 0.94 | 40% | 16% |
-| Flexible base | 112 | 85 | 2.5% | 32% | 45% | 0.92 | 33% | 26% |
-| Embankment / fill | 62 | 51 | 0.7% | 32% | 49% | 1.13 | 31% | 55% |
+| Box culverts | 68 | 32 | 1.5% | 27% | 22% | 0.92 | 41% | 17% |
+| Storm pipe | 329 | 85 | 3.0% | 28% | 23% | 0.91 | 37% | 20% |
+| Water services | 147 | 58 | 2.1% | 28% | 15% | 0.87 | 41% | 23% |
+| Flexible base | 116 | 89 | 2.5% | 31% | 45% | 0.94 | 35% | 27% |
 | Drilled shafts | 57 | 28 | 1.6% | 33% | 38% | 0.80 | 30% | 15% |
-| Stone riprap | 56 | 43 | 0.8% | 33% | 36% | 0.88 | 25% | 27% |
+| Embankment / fill | 66 | 53 | 0.7% | 34% | 49% | 1.15 | 29% | 57% |
 | Concrete beams | 47 | 31 | 0.5% | 34% | 53% | 0.91 | 26% | 40% |
-| Asphalt pavement | 180 | 88 | 4.4% | 36% | 29% | 0.97 | 32% | 19% |
+| Stone riprap | 59 | 45 | 0.8% | 36% | 36% | 0.88 | 25% | 29% |
+| Asphalt pavement | 181 | 89 | 4.4% | 36% | 29% | 0.98 | 31% | 19% |
+| Subgrade stabilization | 138 | 65 | 2.7% | 37% | 40% | 0.82 | 30% | 18% |
 | Traffic signals | 250 | 24 | 0.7% | 37% | 53% | 0.99 | 40% | 12% |
-| Subgrade stabilization | 136 | 64 | 2.7% | 37% | 40% | 0.81 | 29% | 19% |
-| Excavation | 143 | 105 | 2.7% | 37% | 33% | 0.94 | 28% | 35% |
-| Pavement removal | 155 | 94 | 1.6% | 39% | 47% | 0.88 | 25% | 30% |
-| Tree removal | 68 | 45 | 0.1% | 39% | 62% | 0.97 | 22% | 33% |
-| Seeding and sod | 353 | 178 | 1.9% | 40% | 56% | 0.91 | 33% | 23% |
+| Seeding and sod | 373 | 188 | 1.9% | 39% | 56% | 0.92 | 32% | 25% |
+| Pavement removal | 157 | 95 | 1.6% | 40% | 47% | 0.88 | 25% | 30% |
+| Excavation | 153 | 114 | 2.7% | 40% | 37% | 0.94 | 25% | 40% |
+| Tree removal | 69 | 46 | 0.1% | 40% | 62% | 0.95 | 22% | 32% |
 | Testing and inspection | 71 | 42 | 0.3% | 41% | >1000% | 1.02 | 27% | 32% |
 | Electrical and lighting | 427 | 46 | 2.0% | 42% | 65% | 0.85 | 28% | 13% |
-| Erosion control (unit-priced) | 177 | 76 | 0.4% | 45% | 84% | 0.81 | 27% | 33% |
-| Fire hydrants | 64 | 58 | 0.5% | 46% | 38% | 0.69 | 28% | 17% |
-| Casing / encasement | 160 | 73 | 2.8% | 46% | 161% | 0.89 | 26% | 25% |
-| Water pipe | 284 | 71 | 7.7% | 46% | 40% | 0.95 | 27% | 27% |
-| Sidewalk removal | 111 | 64 | 0.2% | 46% | 34% | 1.04 | 25% | 31% |
-| Miscellaneous concrete | 142 | 80 | 1.1% | 46% | 39% | 1.13 | 18% | 27% |
-| Curb and gutter | 136 | 90 | 0.7% | 47% | 39% | 1.12 | 29% | 35% |
-| Adjust to grade | 173 | 77 | 0.2% | 48% | 48% | 1.01 | 27% | 43% |
-| Manholes | 175 | 69 | 2.0% | 48% | 71% | 0.93 | 29% | 21% |
-| Sanitary sewer pipe | 131 | 49 | 2.8% | 49% | 51% | 1.00 | 23% | 42% |
-| Utility removal / abandonment | 298 | 99 | 0.6% | 50% | 44% | 0.95 | 24% | 44% |
-| Traffic control (unit-priced) | 78 | 56 | 0.6% | 53% | 53% | 1.31 | 21% | 27% |
+| Water pipe | 298 | 74 | 7.8% | 44% | 40% | 0.98 | 29% | 26% |
+| Erosion control (unit-priced) | 183 | 81 | 0.4% | 44% | 84% | 0.82 | 26% | 33% |
+| Manholes | 175 | 69 | 2.0% | 45% | 69% | 0.93 | 30% | 21% |
+| Fire hydrants | 67 | 61 | 0.5% | 46% | 33% | 0.69 | 28% | 16% |
+| Casing / encasement | 166 | 75 | 2.8% | 46% | 161% | 0.88 | 25% | 25% |
+| Miscellaneous concrete | 147 | 83 | 1.1% | 46% | 39% | 1.13 | 19% | 27% |
+| Sidewalk removal | 112 | 65 | 0.2% | 46% | 34% | 1.04 | 25% | 30% |
+| Adjust to grade | 179 | 80 | 0.2% | 48% | 48% | 1.07 | 28% | 43% |
+| Curb and gutter | 144 | 98 | 0.7% | 48% | 39% | 1.09 | 28% | 36% |
+| Utility removal / abandonment | 313 | 103 | 0.6% | 49% | 44% | 0.94 | 23% | 45% |
+| Sanitary sewer pipe | 131 | 50 | 2.8% | 49% | 51% | 1.00 | 22% | 41% |
+| Traffic control (unit-priced) | 80 | 58 | 0.6% | 52% | 53% | 1.31 | 20% | 29% |
+| Pipe fittings | 65 | 39 | 0.3% | 52% | 49% | 1.18 | 28% | 31% |
 | Guardrail | 60 | 26 | 0.1% | 54% | 59% | 0.70 | 27% | 22% |
-| Sewer services | 51 | 31 | 0.3% | 57% | 61% | 1.24 | 22% | 36% |
-| Pavement marking | 608 | 88 | 0.4% | 58% | 91% | 0.79 | 20% | 21% |
-| Other removals | 170 | 85 | 0.5% | 58% | 66% | 0.94 | 24% | 40% |
-| Relocate / reset | 186 | 79 | 0.2% | 61% | 105% | 0.88 | 22% | 41% |
-| Pipe fittings | 59 | 36 | 0.3% | 62% | 49% | 1.27 | 24% | 33% |
-| Retaining walls | 55 | 32 | 1.6% | 62% | 88% | 1.00 | 20% | 30% |
-| Tree planting | 68 | 46 | 0.2% | 66% | 222% | 0.95 | 29% | 14% |
+| Sewer services | 51 | 32 | 0.3% | 55% | 61% | 1.24 | 20% | 36% |
+| Pavement marking | 609 | 89 | 0.4% | 58% | 91% | 0.79 | 20% | 21% |
+| Relocate / reset | 190 | 81 | 0.2% | 58% | 96% | 0.87 | 23% | 41% |
+| Other removals | 173 | 88 | 0.5% | 59% | 66% | 0.94 | 24% | 39% |
+| Retaining walls | 58 | 34 | 1.6% | 59% | 62% | 1.00 | 19% | 30% |
+| Trench safety | 127 | 85 | 0.2% | 65% | 80% | 0.89 | 20% | 69% |
+| Tree planting | 71 | 47 | 0.2% | 65% | 222% | 0.94 | 30% | 14% |
 | Contingency / allowance lines | 78 | 23 | 0.5% | 68% | 102% | 0.94 | 27% | 21% |
-| Trench safety | 120 | 81 | 0.2% | 69% | 94% | 0.89 | 20% | 67% |
-| Structure demolition | 90 | 54 | 0.1% | 72% | 244% | 0.88 | 16% | 33% |
-| Fence | 101 | 64 | 0.4% | 72% | 177% | 0.86 | 20% | 27% |
-| Headwalls | 58 | 40 | 0.4% | 80% | 434% | 0.73 | 9% | 48% |
+| Fence | 103 | 65 | 0.4% | 72% | 177% | 0.86 | 19% | 27% |
+| Structure demolition | 94 | 58 | 0.1% | 74% | 244% | 0.89 | 15% | 34% |
+| Headwalls | 60 | 42 | 0.4% | 83% | 309% | 0.73 | 8% | 46% |
+| SWPPP / temporary erosion control (lump sum) | 170 | 157 | 0.3% | 98% | 161% | 1.11 | 12% | 49% |
 | Landscape planting | 103 | 23 | 0.2% | 100% | 94% | 1.61 | 17% | 11% |
-| SWPPP / temporary erosion control (lump sum) | 164 | 152 | 0.3% | 102% | 161% | 1.06 | 12% | 49% |
-| Unclassified lines | 781 | 160 | 3.7% | 107% | 280% | 0.95 | 16% | 29% |
-| Traffic control (lump sum) | 146 | 137 | 0.9% | 119% | 292% | 1.45 | 9% | 59% |
-| Site preparation (lump sum) | 81 | 76 | 1.4% | 123% | 388% | 0.97 | 20% | 82% |
-| Irrigation | 74 | 43 | 0.6% | 136% | 153% | 1.14 | 4% | 18% |
-| Mobilization | 196 | 194 | 4.7% | 148% | 379% | 1.48 | 10% | 34% |
+| Unclassified lines | 789 | 165 | 3.7% | 109% | 282% | 0.95 | 16% | 29% |
+| Traffic control (lump sum) | 151 | 141 | 0.9% | 119% | 242% | 1.40 | 10% | 59% |
+| Site preparation (lump sum) | 82 | 77 | 1.3% | 128% | 388% | 0.97 | 20% | 84% |
+| Irrigation | 75 | 44 | 0.6% | 136% | 153% | 1.21 | 4% | 17% |
+| Mobilization | 205 | 203 | 4.7% | 142% | 379% | 1.46 | 11% | 35% |
+| Site preparation / clearing | 47 | 32 | 1.0% | 168% | 789% | 1.16 | 13% | 100% |
 
 #### TxDOT (DFW counties), 2023–26: 807 lettings, 41,159 lines
 
@@ -293,7 +294,7 @@ Across all lines, half are within **30%** of the median bid (**26%** weighted by
 | Asphalt pavement | 651 | 282 | 11.5% | 14% | 12% | 0.93 | 62% | 9% |
 | Bridge concrete | 426 | 75 | 5.1% | 14% | 11% | 0.93 | 62% | 15% |
 | Concrete mow strip | 189 | 183 | 0.5% | 15% | 16% | 1.06 | 64% | 11% |
-| Sidewalk | 161 | 114 | 0.6% | 15% | 9% | 0.97 | 59% | 12% |
+| Sidewalk | 160 | 113 | 0.6% | 15% | 9% | 0.97 | 59% | 12% |
 | Construction exit removal | 170 | 170 | 0.0% | 16% | 15% | 1.06 | 58% | 17% |
 | Headwalls | 218 | 78 | 0.1% | 17% | 15% | 0.99 | 57% | 9% |
 | Concrete riprap | 252 | 192 | 0.5% | 17% | 10% | 1.02 | 57% | 15% |
@@ -338,7 +339,7 @@ Across all lines, half are within **30%** of the median bid (**26%** weighted by
 | Mowing | 451 | 193 | 0.8% | 41% | 21% | 1.22 | 29% | 23% |
 | Excavation | 348 | 223 | 1.8% | 42% | 66% | 0.97 | 28% | 32% |
 | Fence | 277 | 122 | 0.3% | 43% | 49% | 1.04 | 31% | 25% |
-| Utility removal / abandonment | 621 | 188 | 0.9% | 43% | 271% | 0.91 | 29% | 41% |
+| Utility removal / abandonment | 622 | 188 | 0.9% | 44% | 271% | 0.91 | 28% | 41% |
 | Unclassified lines | 3758 | 551 | 10.1% | 44% | 31% | 1.00 | 28% | 17% |
 | Sidewalk removal | 252 | 151 | 0.1% | 47% | 57% | 0.96 | 24% | 22% |
 | Mobilization | 913 | 806 | 9.8% | 51% | 40% | 1.07 | 28% | 25% |

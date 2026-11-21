@@ -68,6 +68,54 @@ def removal_only(desc):
     d = (desc or "").lower()
     return bool(_RM.search(d)) and not _RP.search(d)
 
+
+# ABANDONMENT IDENTITY (p50fix round 17, handoff/scratchpad/p50fix/
+# PREREGISTRATION_ROUND17.md).  For pipes, "remove" and "abandon" are
+# different work: removal digs the pipe up and hauls it away; abandonment
+# leaves it in place, plugs the ends or fills it with grout / flowable fill.
+# The removal flag above covers remove-words only, so an abandon line used to
+# match NEW installation in the token path ("abandon existing 8 in sanitary
+# sewer pipe in place" priced from two new 8 in SDR-26 pipe cells).  An
+# abandon-only description carries AB_FLAG, and similar() refuses a pair whose
+# abandon flags differ -- RM_FLAG's mechanics.  ABANDON_FAMILY_KEY (AB2) also
+# keys such rows apart in the band and family tables (family + "#ab",
+# estimate_low_bid.family_key, build_master, train_test_guard).  Both OFF:
+# production; estimate_low_bid.pricing_rule(round17_ab=True) /
+# (round17_ab2=True) turn them on.
+ABANDON_IDENTITY = True            # AB: ON in production since round 18
+ABANDON_FAMILY_KEY = False         # AB2 (with ABANDON_IDENTITY): OFF
+AB_FLAG = "zzabandon"
+_AB = re.compile(r"\bab[ao]ndon\w*")            # abandon*, and the misspelling abondon*
+_AB_FILL = re.compile(r"\b(?:plug\w*|grout\w*|flowable)\b")
+_AB_EXIST = re.compile(r"\b(?:ex|ext|exis\w*|exiting)\b")
+_AB_CUTPLUG = re.compile(r"\bcut\w*\s+(?:and\s+)?plug\w*")   # an existing line is cut
+_AB_OBJ = re.compile(r"\b(?:pipe\w*|lines?|waterlines?|mains?|manholes?|mh|"
+                     r"structures?|sewers?|services?|culverts?|rcp|cmp|"
+                     r"box(?:es)?|inlets?|cleanouts?|vaults?|drains?|wl|ss|sd|"
+                     r"w\s+l|s\s+s)\b")
+_AB_NOT = re.compile(r"\b(?:plug\s*valves?|rip\s*rap\w*|riprap\w*|"
+                     r"obliterat\w*|(?:re)?connect\w*)\b")
+
+
+def abandon_only(desc):
+    """A line that abandons existing work in place and builds nothing back:
+    not removal-only (a removal-only line keeps F2's flag; the two never
+    meet), no replace / reconstruct / install / reset / relocate / new /
+    rebuild / reinstall word, no plug valve, riprap, obliteration or
+    (re)connection word; and either an abandon word (abandon*, abondon*) or
+    plug / grout / flowable-fill wording about an EXISTING pipe, line, main,
+    manhole, structure, sewer, service, culvert, box, inlet, cleanout, vault
+    or drain ("existing" / "ex" / "ext" / "exis*" / "exiting", or "cut (and)
+    plug", which cuts an existing line)."""
+    d = (desc or "").lower()
+    if removal_only(d) or _RP.search(d) or _AB_NOT.search(d):
+        return False
+    if _AB.search(d):
+        return True
+    return bool(_AB_FILL.search(d)
+                and (_AB_EXIST.search(d) or _AB_CUTPLUG.search(d))
+                and _AB_OBJ.search(d))
+
 # Words that appear on every other bid item and so carry no identity.  Units
 # are in here too: the unit is matched exactly and separately, so repeating it
 # in the token set would inflate every Jaccard score by the same amount.
@@ -117,7 +165,9 @@ def tokens(desc, removal=None):
     `removal` (default: REMOVAL_IDENTITY) adds RM_FLAG to a removal-only
     description.  The comparables method (comparables.py) matches lines on
     the identity it was registered with, which has no removal flag, so it
-    passes removal=False.
+    passes removal=False.  AB_FLAG (an abandon-only description) follows
+    ABANDON_IDENTITY by default; removal=False gives no abandon flag either,
+    removal=True gives it when ABANDON_IDENTITY is on.
 
     Numbers are kept -- they are the dimensions, and 18-inch pipe is not
     24-inch pipe.  `3.0` folds to `3`, and a glued dimension is split at the
@@ -153,6 +203,9 @@ def tokens(desc, removal=None):
     if (REMOVAL_IDENTITY if removal is None else removal) and out \
             and removal_only(desc):
         out.add(RM_FLAG)
+    if ABANDON_IDENTITY and (removal is None or removal) and out \
+            and abandon_only(desc):
+        out.add(AB_FLAG)
     return frozenset(out)
 
 
@@ -188,6 +241,8 @@ def similar(a, b, thresh=THRESHOLD):
     if na and nb and not (na & nb):
         return 0.0
     if REMOVAL_IDENTITY and ((RM_FLAG in a) != (RM_FLAG in b)):
+        return 0.0
+    if ABANDON_IDENTITY and ((AB_FLAG in a) != (AB_FLAG in b)):
         return 0.0
     return jaccard(a, b) if jaccard(a, b) >= thresh else 0.0
 
@@ -268,6 +323,80 @@ def _selftest():
     chk("10 removal=False gives the flag-free identity (comparables)",
         RM_FLAG in tokens("remove existing sanitary sewer pipe", removal=False),
         False)
+
+    # 11 abandonment identity (round 17): the rule on the data's own wordings
+    # (desc_norm of the external price pool; round17/prereg_explore), then the
+    # flag and the refusal.  ABANDON_IDENTITY is switched on here and restored.
+    global ABANDON_IDENTITY
+    old11 = ABANDON_IDENTITY
+    pos11 = ("abandon existing manhole", "cut plug abandon existing water line",
+             "abandon existing 8 in water line", "grout abandonment of ex 6 in s s",
+             "8 in sanitary sewer abandonment plug", "16 in water abandonment plug",
+             "abandon existing sanitary sewer pipe", "cut plug existing water line",
+             "cut and plug existing 12 in water line", "cut plug ex 12 in w l",
+             "cut plug ex 8 in s s", "plug existing rcp all sizes",
+             "grout existing 8 in pvc sanitary sewer main",
+             "grout existing junction box",
+             "f i flowable fill in existing 6 in force main",
+             "cap and plug existing 6 in sewer service fully grout",
+             "plug existing 15 in sd line", "cut and plug water main",
+             "grouting sewer main to be abondoned cip",
+             "site preparation abandon existing water lines cut plug and grout "
+             "fill 10 in",
+             # the brief's lines (raw wording)
+             "Abandon existing 8 inch sanitary sewer pipe in place",
+             "Grout fill and abandon existing 8 inch water line",
+             "Plug existing 8 inch pipe")
+    neg11 = ("obliterating abandoned road", "riprap stone common grout 12 in",
+             "18 in grouted rock riprap", "12 in plug", "24 in pressure plug",
+             "36 in rcp plug for future connection", "furnish install 12 in plug",
+             "plug proposed 8 in water line", "flowable fill", "flowable backfill",
+             "12 in pvc water pipe with fittings and modified flowable fill as "
+             "backfill open cut",
+             "12 in dia pvc water carrier pipe with fittings and annular grout",
+             "water line grouting", "remove existing sanitary sewer pipe",
+             "abandon/remove existing 24 in water line",
+             "install 1 in domestic water service poly by open cut abandon ex",
+             "furnish labor material to connect to existing force main and "
+             "abandoned existing force main in place",
+             "abandon backfill wastewater manhole install standard 4 foot "
+             "diameter manhole 8 ft deep",
+             "8 in pvc sdr 26 sanitary sewer pipe by open cut",
+             "class g concrete cap for existing 12 in water main",
+             "cut plug ex 6 in 8 in water",
+             # the brief: a plug valve is new work (no such wording in the pool)
+             '8" Plug Valve', "8 in plug valve")
+    chk("11 abandon-only: the %d positive wordings" % len(pos11),
+        [d for d in pos11 if not abandon_only(d)], [])
+    chk("11 not abandon-only: the %d negative wordings" % len(neg11),
+        [d for d in neg11 if abandon_only(d)], [])
+    ABANDON_IDENTITY = False
+    try:
+        off11 = AB_FLAG in tokens(
+            "abandon existing 8 in sanitary sewer pipe in place")
+    finally:
+        ABANDON_IDENTITY = old11
+    chk("11 off: no abandon flag", off11, False)
+    ABANDON_IDENTITY = True
+    try:
+        ab11 = tokens("abandon existing 8 in sanitary sewer pipe in place")
+        nw11 = tokens("8 in pvc sdr 26 sanitary sewer pipe by open cut")
+        chk("11 on: the abandon line carries the flag, new pipe does not",
+            (AB_FLAG in ab11, AB_FLAG in nw11), (True, False))
+        chk("11 on: abandon price refused for new pipe and back (was 0.4)",
+            (similar(ab11, nw11), similar(nw11, ab11)), (0.0, 0.0))
+        chk("11 on: two abandon wordings still match", similar(
+            ab11, tokens("abandon existing sanitary sewer line")) > 0, True)
+        chk("11 on: a removal-only line keeps RM, never AB", (
+            RM_FLAG in tokens("abandon/remove existing 24 in water line"),
+            AB_FLAG in tokens("abandon/remove existing 24 in water line")),
+            (True, False))
+        chk("11 on: removal=False (comparables) has no abandon flag",
+            AB_FLAG in tokens("abandon existing manhole", removal=False), False)
+        chk("11 on: 'abandon existing' = the word abandon + the flag",
+            tokens("abandon existing"), frozenset({"abandon", AB_FLAG}))
+    finally:
+        ABANDON_IDENTITY = old11
 
     print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
     return ok

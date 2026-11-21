@@ -460,7 +460,10 @@ class GarbageInput(unittest.TestCase):
         rows = [r.strip().strip(",").strip("'").replace("\\t", "\t").replace("\\'", "'")
                 for r in js[i:js.index("].join", i)].splitlines()[1:]]
         p = takeoff.from_text("\n".join(r for r in rows if r))
-        self.assertEqual(len(p.lines), 10)
+        # nine items, no contingency line: the worksheet adds yours (user,
+        # 2026-11-21: a sample contingency would be counted twice)
+        self.assertEqual(len(p.lines), 9)
+        self.assertFalse([l for l in p.lines if "contingency" in l.description.lower()])
         self.assertEqual(p.unread, [])
 
 

@@ -21,6 +21,7 @@ Nothing is downloaded, saved on the server or sent anywhere.
 from __future__ import annotations
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -86,7 +87,7 @@ class PageInteractions(unittest.TestCase):
             cls.proc.terminate()
             cls.proc.wait(timeout=30)
 
-    def estimate_page(self, engine, width=1280, height=900):
+    def estimate_page(self, engine, width=1280, height=900, extra=()):
         browser = getattr(self.pw, engine).launch()
         self.addCleanup(browser.close)
         page = browser.new_page(viewport={"width": width, "height": height})
@@ -95,8 +96,11 @@ class PageInteractions(unittest.TestCase):
         page.goto(self.url + "/")
         page.wait_for_function(SAMPLE_READY, timeout=60000)
         page.click("#btn-sample")
+        if extra:          # lines added after the sample's nine
+            page.evaluate("t => { const a = document.querySelector('#paste-text'); a.value += '\\n' + t; }",
+                          "\n".join(extra))
         page.click("#btn-parse-text")
-        page.wait_for_function("() => S.lines.length === 10 && S.lines.every(l => l.cls)")
+        page.wait_for_function("n => S.lines.length === n && S.lines.every(l => l.cls)", arg=9 + len(extra))
         page.click("#btn-estimate")
         page.wait_for_function("() => S.result && S.ws.refs", timeout=30000)
         # no smooth scrolling under test: boxes are measured right away
@@ -174,8 +178,8 @@ class PageInteractions(unittest.TestCase):
                 # round numbers: the model's price, rounded up by default
                 for k in ("r3", "r4", "r7"):
                     got = float(page.input_value('tr[data-line="%s"] input.yourp' % k))
-                    want = page.evaluate("k => nicePrice(S.result.lines.find(l => l.row_id === k)"
-                                         ".unit_price_p50, 'up')", k)
+                    want = page.evaluate("k => nicePrice(modelUnit(S.result.lines.find(l => l.row_id === k)),"
+                                         " 'up')", k)
                     self.assertAlmostEqual(got, want, places=2)
                     self.assertEqual(got, page.evaluate("v => nicePrice(v, 'up')", got))
                 self.assertEqual(page.evaluate("() => [nicePrice(48, 'up'), nicePrice(137.2, 'up'), "
@@ -186,7 +190,7 @@ class PageInteractions(unittest.TestCase):
                 page.wait_for_timeout(300)
                 exact = float(page.input_value('tr[data-line="r3"] input.yourp'))
                 self.assertAlmostEqual(exact, page.evaluate(
-                    "() => S.result.lines.find(l => l.row_id === 'r3').unit_price_p50"), places=2)
+                    "() => modelUnit(S.result.lines.find(l => l.row_id === 'r3'))"), places=2)
                 # mobilization (r1) and temporary erosion control (r2): blank
                 for k in ("r1", "r2"):
                     self.assertEqual(page.input_value('tr[data-line="%s"] input.yourp' % k), "")
@@ -221,8 +225,141 @@ class PageInteractions(unittest.TestCase):
                 page.wait_for_timeout(400)
                 self.assertEqual(page.locator("#r-headline .covnote").count(), 0)
                 self.assertNotIn("no bid history", page.inner_text("#r-warnings"))
-                self.assertIn("yours $90,000", page.inner_text("#r-notcovered"))
+                self.assertIn("$90,000", page.inner_text("#r-notcovered"))
                 self.assertEqual(page.evaluate("k => wsJudgment(S.result.lines.find(l => l.row_id === k))", k), [])
+                self.assertEqual(errors, [])
+
+    def test_a_not_covered_line_has_one_number(self):
+        """2026-11-21 (user): the vendor quote under Project details, the
+        line's amount cell in the takeoff and its price on the worksheet are
+        one number: typing in any of them changes the others, with no new
+        estimate (P50 / P80 leave the line out)."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                k = page.evaluate("() => S.result.lines.find(l => l.status === 'not_covered').row_id")
+                q = page.evaluate("k => S.result.lines.find(l => l.row_id === k).quantity", k)
+                ws_in = 'tr[data-line="%s"] input.yourp' % k
+                pd_in = '#quotes-box input[data-fk="q:%s"]' % k
+                tk_in = '#review-table input[data-fk="g:%s:quote"]' % k
+                num = lambda sel: float(page.input_value(sel).replace(",", "") or "nan")
+                # the worksheet price (per unit) sets the quote everywhere
+                page.fill(ws_in, "45000")
+                page.press(ws_in, "Tab")
+                page.wait_for_timeout(400)
+                self.assertEqual(page.evaluate("k => S.lines.find(l => l.row_id === k).quote", k), 45000 * q)
+                self.assertEqual(num(pd_in), 45000 * q)
+                self.assertEqual(num(tk_in), 45000 * q)
+                # the quote under Project details sets the worksheet price
+                page.fill(pd_in, "120,000")
+                page.press(pd_in, "Tab")
+                page.wait_for_timeout(400)
+                self.assertAlmostEqual(num(ws_in), 120000 / q, places=2)
+                self.assertEqual(num(tk_in), 120000)
+                # and the takeoff's amount cell sets both
+                page.fill(tk_in, "90,000")
+                page.press(tk_in, "Tab")
+                page.wait_for_timeout(400)
+                self.assertEqual(num(pd_in), 90000)
+                self.assertAlmostEqual(num(ws_in), 90000 / q, places=2)
+                self.assertIn("$90,000", page.inner_text("#r-notcovered"))
+                self.assertFalse(page.evaluate("() => S.stale"))
+                self.assertEqual(errors, [])
+
+    def test_prices_start_from_p80_or_p50_at_a_click(self):
+        """2026-11-21 (user): P50 or P80 is the estimator's choice. The
+        worksheet starts from the model's P80; one click switches every
+        model price to P50, one click switches back, and a switch replaces
+        the prices changed meanwhile (after a confirmation)."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                price = lambda k: float(page.input_value('tr[data-line="%s"] input.yourp' % k).replace(",", ""))
+                p50 = lambda k: page.evaluate("k => S.result.lines.find(l => l.row_id === k).unit_price_p50", k)
+                m = page.evaluate("() => S.result.headline.p80_multiplier")
+                self.assertGreater(m, 1.0)
+                self.assertEqual(page.get_attribute('#ws-totals .basis .seg[data-basis="p80"]', "aria-pressed"), "true")
+                self.assertEqual(price("r3"), page.evaluate("v => nicePrice(v, 'up')", p50("r3") * m))
+                self.assertIn("P80", page.inner_text("#th-model"))
+                big80 = page.inner_text("#ws-totals .yours .big")
+                page.click('#ws-totals .basis .seg[data-basis="p50"]')
+                page.wait_for_timeout(400)
+                self.assertEqual(page.get_attribute('#ws-totals .basis .seg[data-basis="p50"]', "aria-pressed"), "true")
+                self.assertEqual(price("r3"), page.evaluate("v => nicePrice(v, 'up')", p50("r3")))
+                self.assertIn("P50", page.inner_text("#th-model"))
+                self.assertNotEqual(page.inner_text("#ws-totals .yours .big"), big80)
+                # a price you typed is replaced by the switch, once you confirm
+                inp = 'tr[data-line="r4"] input.yourp'
+                page.fill(inp, "123")
+                page.press(inp, "Tab")
+                page.wait_for_timeout(300)
+                asked = []
+                page.once("dialog", lambda d: (asked.append(d.message), d.accept()))
+                page.click('#ws-totals .basis .seg[data-basis="p80"]')
+                page.wait_for_timeout(400)
+                self.assertTrue(asked and "1 price you changed" in asked[0])
+                self.assertEqual(price("r4"), page.evaluate("v => nicePrice(v, 'up')", p50("r4") * m))
+                self.assertEqual(page.inner_text("#ws-totals .yours .big"), big80)
+                # the headline's P50 / P80 cards switch it too, and show which one is in use
+                self.assertIn("chosen", page.get_attribute('#r-headline .bigcard[data-basis="p80"]', "class"))
+                page.click('#r-headline .bigcard[data-basis="p50"] .cap')
+                page.wait_for_timeout(400)
+                self.assertEqual(page.evaluate("() => S.ws.basis"), "p50")
+                self.assertIn("chosen", page.get_attribute('#r-headline .bigcard[data-basis="p50"]', "class"))
+                self.assertIn("uses these prices", page.inner_text('#r-headline .bigcard[data-basis="p50"]'))
+                self.assertEqual(page.get_attribute('#ws-totals .basis .seg[data-basis="p50"]', "aria-pressed"), "true")
+                self.assertEqual(price("r3"), page.evaluate("v => nicePrice(v, 'up')", p50("r3")))
+                self.assertEqual(errors, [])
+
+    def test_the_contingency_changes_numbers_not_the_layout(self):
+        """2026-11-21 (user): picking 0%, 5% or 10% changes the numbers
+        only; nothing on the page moves, and an open table stays open."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                sel = '#ws-totals select[data-fk="ws:contingency"]'
+                page.locator(sel).scroll_into_view_if_needed()
+                page.click("#ws-totals .cguide details.fold summary")
+                boxes = lambda: page.evaluate("""() => [
+                    '#ws-totals select[data-fk="ws:contingency"]', '#ws-totals .wstot .cmp',
+                    '#ws-totals .wstot .yours', '#ws-meta', '#result-table'].map(q => {
+                      const b = document.querySelector(q).getBoundingClientRect();
+                      return [Math.round(b.x), Math.round(b.y + window.scrollY)]; })""")
+                page.select_option(sel, "10")
+                page.wait_for_timeout(300)
+                ref = boxes()
+                for v in ("0", "5", "10", "0"):
+                    page.select_option(sel, v)
+                    page.wait_for_timeout(300)
+                    self.assertEqual(boxes(), ref, v)
+                    self.assertTrue(page.evaluate(
+                        "() => document.querySelector('#ws-totals .cguide details.fold').open"))
+                    self.assertEqual(page.locator("#result-foot tr.wscont").count(), 1)
+                self.assertIn("(0% of the subtotal)", page.inner_text("#result-foot tr.wscont"))
+                self.assertIn("$0", page.inner_text("#result-foot tr.wscont"))
+                self.assertIn("construction contingency 0% $0", page.inner_text("#ws-totals .yours"))
+                self.assertEqual(errors, [])
+
+    def test_one_export_in_its_own_step(self):
+        """2026-11-21 (user): one export, in the Export step, as Excel only --
+        no worksheet toolbar, no CSV or JSON, no other download button. It
+        is the OPCC workbook."""
+        import zipfile
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                for gone in ("#ws-tools", "#ws-filter", "#ws-save", "#ws-open", "#ws-xlsx",
+                             "#ws-csv", "#ws-json", "#btn-export-csv"):
+                    self.assertEqual(page.locator(gone).count(), 0, gone)
+                body = page.inner_text("body")
+                for word in ("Download CSV", "Download JSON", "only lines that need your judgment"):
+                    self.assertNotIn(word, body)
+                with page.expect_download() as dl:
+                    page.click("#btn-export-xlsx")
+                self.assertTrue(dl.value.suggested_filename.endswith(".xlsx"))
+                with zipfile.ZipFile(dl.value.path()) as z:
+                    names = re.findall(r'<sheet name="([^"]+)"', z.read("xl/workbook.xml").decode())
+                self.assertEqual(names, ["OPCC", "Summary", "Lines", "References"])
                 self.assertEqual(errors, [])
 
     def test_warnings_are_short_and_tick_to_gray(self):
@@ -249,7 +386,7 @@ class PageInteractions(unittest.TestCase):
                 page.evaluate("() => renderWarnings(S.result)")
                 self.assertIn("acked", page.locator("#r-warnings .notice.ack").nth(0).get_attribute("class"))
                 # nothing blocked: the export still works
-                self.assertTrue(page.is_enabled("#ws-xlsx"))
+                self.assertTrue(page.is_enabled("#btn-export-xlsx"))
                 self.assertEqual(errors, [])
 
     def test_change_opens_on_our_reading(self):
@@ -299,7 +436,7 @@ class PageInteractions(unittest.TestCase):
         references; the worksheet's own contingency is a list too."""
         for engine in self.engines:
             with self.subTest(engine=engine):
-                page, errors = self.estimate_page(engine)
+                page, errors = self.estimate_page(engine, extra=["110\tOwner's Contingency Allowance\tLS\t1"])
                 k = page.evaluate("() => S.lines.find(l => /contingency/i.test(l.description)).row_id")
                 row = 'tr[data-row="%s"]' % k
                 self.assertEqual(page.locator(row).get_by_role("button", name="Change", exact=True).count(), 0)
@@ -311,7 +448,7 @@ class PageInteractions(unittest.TestCase):
                 wrow = 'tr[data-line="%s"]' % k
                 self.assertEqual(page.locator("#result-body " + wrow).count(), 0)
                 foot = page.eval_on_selector_all("#result-foot tr", "t => t.map(r => r.className)")
-                self.assertEqual([c.split()[0] for c in foot], ["wssub", "controw", "wstotal"])
+                self.assertEqual([c.split()[0] for c in foot], ["wssub", "controw", "wscont", "wstotal"])
                 self.assertEqual(page.locator(wrow + " .chev").count(), 0)
                 self.assertEqual(page.locator(wrow + " select.pick").count(), 0)
                 share = page.evaluate("k => { const l = S.result.lines.find(x => x.row_id === k);"
@@ -485,10 +622,10 @@ class PageInteractions(unittest.TestCase):
                 # takeoff grid: the last line, by its classification cell, up
                 # to just under the second line
                 r2 = page.locator('tr[data-row="r2"]').bounding_box()
-                self.drag(page, 'tr[data-row="r10"] .clscell', r2["y"] + r2["height"] * 0.75,
+                self.drag(page, 'tr[data-row="r9"] .clscell', r2["y"] + r2["height"] * 0.75,
                           release=False)
                 # live: the rows it passed have slid down already
-                moved = page.evaluate("() => ['r3', 'r9'].map(k => document.querySelector("
+                moved = page.evaluate("() => ['r3', 'r8'].map(k => document.querySelector("
                                       "'tr[data-row=\"' + k + '\"]').style.transform)")
                 self.assertTrue(all("translateY" in m for m in moved), moved)
                 page.mouse.up()

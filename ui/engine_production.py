@@ -71,19 +71,19 @@ FORBIDDEN_INPUTS = ("opcc", "opcc_total", "engineer_estimate",
                     "target_price", "budget")
 
 #: The forward accuracy quoted in the result's context line. Source: the
-#: project README, "Where it stands (2026-11-20)", rows "City / municipal
+#: project README, "Where it stands (2026-11-21)", rows "City / municipal
 #: (DFW), 2024-26" and "TxDOT (DFW counties), 2023-26" (bidder count as
 #: bid). Update these together with that table whenever the main session
 #: adopts an estimator change and re-scores.
 MARKET_ACCURACY = {
     "municipal": {"label": "City / municipal (DFW) lettings, 2024-26",
-                  "lettings": 224, "p50_median_error": 0.202,
-                  "p80_under": 0.143, "median_overshoot": 0.458,
-                  "as_of": "2026-11-21 (parser .33)"},
+                  "lettings": 234, "p50_median_error": 0.197,
+                  "p80_under": 0.137, "median_overshoot": 0.452,
+                  "as_of": "2026-11-21 (round 18)"},
     "txdot": {"label": "TxDOT (DFW counties) lettings, 2023-26",
-              "lettings": 807, "p50_median_error": 0.16,
-              "p80_under": 0.16, "median_overshoot": 0.315,
-              "as_of": "2026-11-21 (parser .33)"},
+              "lettings": 807, "p50_median_error": 0.162,
+              "p80_under": 0.156, "median_overshoot": 0.315,
+              "as_of": "2026-11-21 (round 18)"},
 }
 
 #: How often an OPCC set at m x P50 came in under the actual low bid, forward
@@ -92,8 +92,8 @@ MARKET_ACCURACY = {
 #: MARKET_ACCURACY (handoff/scratchpad/contingency/under_curve.py); regenerate it
 #: with MARKET_ACCURACY after every data build.
 UNDER_CURVE = {
-    "municipal": [[0.8, 0.7009], [0.85, 0.6339], [0.9, 0.5759], [0.95, 0.5134], [1.0, 0.4375], [1.05, 0.3616], [1.1, 0.3036], [1.15, 0.2366], [1.2, 0.1875], [1.25, 0.1652], [1.3, 0.1384], [1.35, 0.1384], [1.4, 0.1116], [1.45, 0.0982], [1.5, 0.0759], [1.55, 0.058], [1.6, 0.0536], [1.65, 0.0536], [1.7, 0.0491], [1.75, 0.0491], [1.8, 0.0491], [1.85, 0.0491], [1.9, 0.0491], [1.95, 0.0491], [2.0, 0.0402]],
-    "txdot": [[0.8, 0.7955], [0.85, 0.7261], [0.9, 0.6456], [0.95, 0.5725], [1.0, 0.4944], [1.05, 0.4362], [1.1, 0.3482], [1.15, 0.2639], [1.2, 0.2032], [1.25, 0.1512], [1.3, 0.1301], [1.35, 0.109], [1.4, 0.0805], [1.45, 0.0669], [1.5, 0.057], [1.55, 0.0496], [1.6, 0.0421], [1.65, 0.0372], [1.7, 0.0322], [1.75, 0.0285], [1.8, 0.0235], [1.85, 0.0198], [1.9, 0.0198], [1.95, 0.0186], [2.0, 0.0173]],
+    "municipal": [[0.8, 0.7051], [0.85, 0.6453], [0.9, 0.5812], [0.95, 0.5128], [1.0, 0.4274], [1.05, 0.359], [1.1, 0.2991], [1.15, 0.2308], [1.2, 0.1838], [1.25, 0.1581], [1.3, 0.1368], [1.35, 0.1282], [1.4, 0.1068], [1.45, 0.094], [1.5, 0.0726], [1.55, 0.0556], [1.6, 0.0513], [1.65, 0.0513], [1.7, 0.047], [1.75, 0.047], [1.8, 0.047], [1.85, 0.047], [1.9, 0.047], [1.95, 0.047], [2.0, 0.0385]],
+    "txdot": [[0.8, 0.7955], [0.85, 0.7274], [0.9, 0.6444], [0.95, 0.5725], [1.0, 0.4944], [1.05, 0.4349], [1.1, 0.3507], [1.15, 0.2615], [1.2, 0.2045], [1.25, 0.1537], [1.3, 0.1289], [1.35, 0.1078], [1.4, 0.0805], [1.45, 0.0682], [1.5, 0.057], [1.55, 0.0496], [1.6, 0.0421], [1.65, 0.0372], [1.7, 0.0322], [1.75, 0.0285], [1.8, 0.0235], [1.85, 0.0198], [1.9, 0.0198], [1.95, 0.0186], [2.0, 0.0173]],
 }
 for _mk, _c in UNDER_CURVE.items():
     MARKET_ACCURACY[_mk]["under_curve"] = _c
@@ -908,8 +908,10 @@ class ReferenceIndex:
 def _cell_label(kind, key):
     if kind == "tok":
         return ("item words {%s}, %s, quantity band %s"
-                % (", ".join(sorted(w for w in key[0] if w != "zzremoval")),
-                   key[1], key[2]))
+                % (", ".join(sorted(w for w in key[0]
+                                    if w not in ("zzremoval", "zzabandon"))),
+                   key[1], key[2])
+                + (" (abandon only)" if "zzabandon" in key[0] else ""))
     fk = key[0]
     rm = " (removal only)" if fk.endswith("#rm") else ""
     fam = family_label(fk.split("#")[0]) + rm
@@ -1232,6 +1234,12 @@ class ProductionEngine:
             "IDENTICAL_BID_OWNER_SET": E.IDENTICAL_BID_OWNER_SET,
             "CMP_MUNI_REMOVAL_IDENTITY":
                 upstream.comparables.MUNI_REMOVAL_IDENTITY,
+            # round 18 (2026-11-21): bidder counts above the top bin, the
+            # abandonment identity, P80 divisor from production B
+            "CLAMP_ABOVE_TOP_BIN": bool(getattr(E, "CLAMP_ABOVE_TOP_BIN", False)),
+            "ABANDON_IDENTITY": bool(getattr(upstream.estimator.item_tokens,
+                                             "ABANDON_IDENTITY", False)),
+            "P80_FROM_B": bool(getattr(E, "P80_FROM_B", False)),
         }
         rule = []
         if sw["SIZE_FALLBACK"] and sw["COMPARABLES_BLEND"] \
@@ -1241,6 +1249,8 @@ class ProductionEngine:
             rule.append("T1 on TxDOT")
         if sw["COVERAGE_SCOPE"]:
             rule.append("coverage scope")
+        if sw["CLAMP_ABOVE_TOP_BIN"] and sw["ABANDON_IDENTITY"] and sw["P80_FROM_B"]:
+            rule.append("round 18 (top-bin clamp, abandonment, B80)")
         extra = [k for k in ("MUNI_CELLS", "F1_PIPE_ONLY", "FAMILY_CELL_T2",
                              "IDENTICAL_BID_OWNER_SET",
                              "CMP_MUNI_REMOVAL_IDENTITY") if sw[k]]
@@ -1298,6 +1308,7 @@ class ProductionEngine:
             "units": sorted(upstream.KNOWN_UNITS),
             "discount": disc,
             "max_bin_distance": E.MAX_BIN_DISTANCE,
+            "clamp_above_top_bin": bool(getattr(E, "CLAMP_ABOVE_TOP_BIN", False)),
             "market_accuracy": MARKET_ACCURACY,
             "item_accuracy": self.accuracy.meta(),
             "coverage_labels": COVERAGE_LABELS,
@@ -2577,6 +2588,14 @@ class ProductionEngine:
                             "mean_esc": (rf["mean_unit"] * f)
                             if (f and rf.get("mean_unit")) else rf.get("mean_unit"),
                             "word_match": rf.get("word_match"),
+                            # the past project's own item: its words, unit
+                            # and quantity, and how many bid it (user,
+                            # 2026-11-21: the export shows what each price
+                            # came from)
+                            "item": rf.get("item"),
+                            "unit": ((rf.get("match") or [{}])[0].get("unit")),
+                            "quantity": rf.get("quantity"),
+                            "n_bids": rf.get("n_bids"),
                             "source": rf.get("source")}
                 w = x.get("warning") or ""
                 out.append({

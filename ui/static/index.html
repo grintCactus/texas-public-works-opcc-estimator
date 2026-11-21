@@ -272,17 +272,6 @@
             <option value="off">off (exact)</option>
           </select></label>
       </div>
-      <div class="row-actions wstools" id="ws-tools">
-        <label class="chk"><input type="checkbox" id="ws-filter"> only lines that need your judgment
-          <span id="ws-filter-n"></span></label>
-        <span class="spacer"></span>
-        <button class="btn sm" id="ws-save" type="button">Save</button>
-        <button class="btn sm" id="ws-open" type="button">Open&hellip;</button>
-        <button class="btn sm" id="ws-xlsx" type="button">Worksheet (.xlsx)</button>
-        <button class="btn sm" id="ws-csv" type="button">CSV</button>
-        <button class="btn sm ghost" id="ws-json" type="button">Download JSON</button>
-        <input type="file" id="ws-upload" hidden accept=".json,application/json">
-      </div>
       <div class="hintline" id="ws-hint" role="note" hidden>
         <span>Click a line to see the past bids behind its price.</span>
         <button type="button" class="btn ghost sm x" id="ws-hint-close" aria-label="Dismiss this hint" title="Dismiss">&#10005;</button>
@@ -296,7 +285,7 @@
             <th>Description</th>
             <th style="width:76px" class="num">Qty</th>
             <th style="width:46px">Unit</th>
-            <th style="width:96px" class="num" title="The model&rsquo;s unit price at the P50 level">Model $/unit</th>
+            <th style="width:96px" class="num" id="th-model" title="The model&rsquo;s unit price at the level picked above the table (P50 or P80)">Model $/unit<br><span class="dim">P80</span></th>
             <th style="width:150px" class="num" title="Low &ndash; median &ndash; high of this line&rsquo;s reference projects&rsquo; median-bidder unit prices, escalated to the bid year">Reference range</th>
             <th style="width:104px">Accuracy</th>
             <th style="width:200px">Your $/unit</th>
@@ -331,12 +320,10 @@
 <section class="panel" id="sec-export" hidden>
   <h2><span class="secnum">4</span>Export</h2>
   <div class="body row-actions">
-    <button class="btn" id="btn-export-csv">Download CSV</button>
-    <button class="btn" id="btn-export-xlsx">Download Excel (.xlsx)</button>
-    <span class="muted-note">Everything above &mdash; project details, the expected low bid
-      and the recommended OPCC with their ranges, how accurate this has been, alerts,
-      not-covered and low-confidence lines, the line table, competition and the similar
-      past projects with their matched lines.</span>
+    <button class="btn" id="btn-export-xlsx">Download the OPCC (Excel)</button>
+    <span class="muted-note">Your OPCC in the usual layout (items, Sub-Total, contingency,
+      Project Total), then a summary next to the model&rsquo;s P50 / P80, every line, and the
+      past projects behind each price: their item as bid, its quantity and prices.</span>
   </div>
 </section>
 

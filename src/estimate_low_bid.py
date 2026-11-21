@@ -144,6 +144,16 @@ MUNICIPAL_SOURCES = {"city_bidtab"}
 # discount flattens above ~8 bidders, so extrapolating two bins is tolerable
 # and extrapolating five is not.
 MAX_BIN_DISTANCE = 2
+# ROUND 16 (handoff/scratchpad/p50fix/PREREGISTRATION_ROUND16.md, queue
+# M155): a bidder count ABOVE the table's highest bin is priced off that bin
+# (marked extrapolated) instead of refused.  The discount is flat at the
+# many-bidder end, and the refusal gave a 17-bidder city letting no estimate
+# at all.  The n <= 1 rule and every other refusal -- below the lowest bin,
+# a gap of more than MAX_BIN_DISTANCE inside the table, no table -- are
+# unchanged.  OFF is production; pricing_rule(clamp_high_bidders=True) or
+# its preset round16_c (holdout_eval --compare-switch round16_c) turns it on.
+CLAMP_ABOVE_TOP_BIN = True         # C: ON in production since round 18
+ROUND16_C = ("clamp_high_bidders",)  # the preset pricing_rule(round16_c=True)
 
 # A letting is scored only when its schedule has at least this many items.  A
 # one-line tab is a total-only or lump-sum award, not an item schedule, and the
@@ -223,6 +233,12 @@ def owner_fixed_amount(item):
 # 0.435 -> 0.420 (90% interval -0.028 to -0.003); TxDOT 2023-26 51.3% ->
 # 48.8%, 16.3% -> 16.1%, 0.370 -> 0.362.
 REMOVAL_SUFFIX = "#rm"
+# ABANDONMENT IDENTITY, AB2 (round 17; item_tokens.ABANDON_FAMILY_KEY with
+# ABANDON_IDENTITY, both OFF by default): an abandon-only row is filed under
+# family + "#ab", so abandonment and the same family's new work never share a
+# band or family cell; a line with no "#ab" cell of its own gets the typical
+# line amount, as a removal-only one does.
+ABANDON_SUFFIX = "#ab"
 
 
 def family_key(family, description=""):
@@ -230,6 +246,9 @@ def family_key(family, description=""):
     if item_tokens.REMOVAL_IDENTITY and item_tokens.removal_only(
             description or ""):
         return (family or "") + REMOVAL_SUFFIX
+    if item_tokens.ABANDON_IDENTITY and item_tokens.ABANDON_FAMILY_KEY and \
+            item_tokens.abandon_only(description or ""):
+        return (family or "") + ABANDON_SUFFIX
     return family
 
 
@@ -501,6 +520,40 @@ LEVEL_MIN_EACH = 3                 # both-market cell: >= 3 lettings per market
 LEVEL_MIN_CELLS_FAM = 3            # a family's own ratio: >= 3 such cells
 LEVEL_MIN_CELLS_ALL = 10           # the all-family ratio: >= 10 such cells
 ROUND13_L = ("muni_txdot_level",)  # the preset pricing_rule(round13_l=True)
+# ROUND 17 (handoff/scratchpad/p50fix/PREREGISTRATION_ROUND17.md): the
+# abandonment identity, both markets (item_tokens.ABANDON_IDENTITY: the token
+# flag and similar()'s refusal; item_tokens.ABANDON_FAMILY_KEY: also "#ab" in
+# the band and family tables).  OFF is production; the presets
+# pricing_rule(round17_ab=True) / (round17_ab2=True) turn them on
+# (holdout_eval --compare-switch round17_ab / round17_ab2).  Switching either
+# on in production needs the reference tables rebuilt (build_master), as F2's
+# removal identity did.
+ROUND17_AB = ("abandon_identity",)
+ROUND17_AB2 = ("abandon_identity", "abandon_family_key")
+# B80 (rounds 13-17's machinery; round 18 merges rounds 16 and 17): the P80
+# divisor and the guard's level come from production B at each date
+# (production_b(): every round-10/11/13/16/17 switch off, so B is production
+# WITHOUT the clamp and the abandonment identity); the P50 and its centring
+# stay this pass's own.  OFF is production; pricing_rule(p80_from_b=True), or
+# a _b80 preset (round16_c_b80, round17_ab_b80, round18_x1_b80), turns it on.
+P80_FROM_B = True                  # B80: ON in production since round 18
+# what production_b() turns off (with comparables.MUNI_REMOVAL_IDENTITY and
+# item_tokens.ABANDON_IDENTITY / ABANDON_FAMILY_KEY)
+B_RULE_SWITCHES = ("MUNI_CELLS", "F1_PIPE_ONLY", "FAMILY_CELL_T2",
+                   "IDENTICAL_BID_OWNER_SET", "MUNI_TXDOT_LEVEL",
+                   "CLAMP_ABOVE_TOP_BIN", "P80_FROM_B")
+ROUND17_AB_B80 = ("abandon_identity", "p80_from_b")
+ROUND17_AB2_B80 = ("abandon_identity", "abandon_family_key", "p80_from_b")
+# ROUND 18 (handoff/scratchpad/p50fix/PREREGISTRATION_ROUND18.md): rounds 16
+# and 17 merged and re-scored on parser .33 data; the chosen arm X1/B80 =
+# round 16's clamp + round 17's abandonment flag (AB) + B80 (P80_FROM_B).  AB
+# needs the reference tables rebuilt (build_master: under AB only
+# price_reference_tokens.csv changes); the clamp fits nothing.
+ROUND16_C_B80 = ("clamp_high_bidders", "p80_from_b")  # round16_c_b80=True
+ROUND18_PRESETS = {
+    "round18_x1": ("clamp_high_bidders", "abandon_identity"),
+    "round18_x1_b80": ("clamp_high_bidders", "abandon_identity",
+                       "p80_from_b")}
 
 
 def _municipal(market):
@@ -623,7 +676,14 @@ def pricing_rule(size_fallback=True, removal_identity=True, comparables=True,
                  cmp_removal_identity=False, f1_pipe_only=False,
                  family_cell_t2=False, identical_bid_owner_set=False,
                  round10_core=False, round11_core_not2=False,
-                 muni_txdot_level=False, round13_l=False):
+                 muni_txdot_level=False, round13_l=False,
+                 abandon_identity=True, abandon_family_key=False,
+                 round17_ab=False, round17_ab2=False,
+                 p80_from_b=True, round17_ab_b80=False,
+                 round17_ab2_b80=False,
+                 clamp_high_bidders=True, round16_c=False,
+                 round16_c_b80=False,
+                 round18_x1=False, round18_x1_b80=False):
     """Run a block under another combination of the switches; the defaults
     are production's.
     coverage_scope=False: the full-total scope before 2026-11-20 (every line
@@ -635,7 +695,24 @@ def pricing_rule(size_fallback=True, removal_identity=True, comparables=True,
     round11_core_not2=True: round 11's selected arm, the same without
     family_cell_t2 (ROUND11_CORE_NOT2).
     muni_txdot_level: round 13's P_L (default OFF); round13_l=True is its
-    preset (ROUND13_L) -- holdout_eval --compare-switch round13_l."""
+    preset (ROUND13_L) -- holdout_eval --compare-switch round13_l.
+    abandon_identity, abandon_family_key: round 17's AB flag and AB2's "#ab"
+    family key (item_tokens.ABANDON_IDENTITY / ABANDON_FAMILY_KEY, default
+    OFF; the family key acts only with the flag); presets round17_ab
+    (ROUND17_AB) and round17_ab2 (ROUND17_AB2).
+    p80_from_b: B80, the P80 divisor and guard level from production B
+    (production_b(), the nested pass in calibrate_forward; default OFF);
+    round17_ab_b80=True turns on the abandonment flag and B80 together
+    (ROUND17_AB_B80, round 17's chosen change); round17_ab2_b80 the same
+    with the family key (ROUND17_AB2_B80).
+    clamp_high_bidders: round 16's C, a bidder count above the discount
+    table's top bin priced off that bin (default OFF); presets round16_c
+    (ROUND16_C) and round16_c_b80 (the clamp and B80, ROUND16_C_B80).
+    round18_x1 / round18_x1_b80: round 18's chosen arm (ROUND18_PRESETS):
+    the clamp + the abandonment flag, and the same with p80_from_b (THE
+    CHANGE: round18_x1_b80).  Since round 18's install the defaults of
+    clamp_high_bidders, abandon_identity and p80_from_b are True (production);
+    name one False to turn it off."""
     g = globals()
     cmp_mod = g["comparables"]          # the module (the argument shadows it)
     old = (g["SIZE_FALLBACK"], item_tokens.REMOVAL_IDENTITY,
@@ -643,6 +720,14 @@ def pricing_rule(size_fallback=True, removal_identity=True, comparables=True,
            g["MUNI_CELLS"], cmp_mod.MUNI_REMOVAL_IDENTITY, g["F1_PIPE_ONLY"],
            g["FAMILY_CELL_T2"], g["IDENTICAL_BID_OWNER_SET"])
     old13 = g["MUNI_TXDOT_LEVEL"]
+    old17 = (item_tokens.ABANDON_IDENTITY, item_tokens.ABANDON_FAMILY_KEY,
+             g["P80_FROM_B"])
+    old18 = g["CLAMP_ABOVE_TOP_BIN"]
+    pre = set()                         # the switches the presets name
+    for nm, on in (("round18_x1", round18_x1),
+                   ("round18_x1_b80", round18_x1_b80)):
+        if on:
+            pre.update(ROUND18_PRESETS[nm])
     core = bool(round10_core)
     c11 = bool(round11_core_not2)       # round 11: round10_core without T2
     g["SIZE_FALLBACK"], g["COMPARABLES_BLEND"] = size_fallback, comparables
@@ -655,6 +740,20 @@ def pricing_rule(size_fallback=True, removal_identity=True, comparables=True,
     g["IDENTICAL_BID_OWNER_SET"] = bool(identical_bid_owner_set) or core or c11
     g["MUNI_TXDOT_LEVEL"] = bool(muni_txdot_level) or bool(round13_l)
     item_tokens.REMOVAL_IDENTITY = removal_identity
+    item_tokens.ABANDON_IDENTITY = (bool(abandon_identity) or bool(round17_ab)
+                                    or bool(round17_ab2)
+                                    or bool(round17_ab_b80)
+                                    or bool(round17_ab2_b80)
+                                    or "abandon_identity" in pre)
+    item_tokens.ABANDON_FAMILY_KEY = (bool(abandon_family_key)
+                                      or bool(round17_ab2)
+                                      or bool(round17_ab2_b80))
+    g["P80_FROM_B"] = (bool(p80_from_b) or bool(round17_ab_b80)
+                       or bool(round17_ab2_b80) or bool(round16_c_b80)
+                       or "p80_from_b" in pre)
+    g["CLAMP_ABOVE_TOP_BIN"] = (bool(clamp_high_bidders) or bool(round16_c)
+                                or bool(round16_c_b80)
+                                or "clamp_high_bidders" in pre)
     try:
         yield
     finally:
@@ -664,6 +763,9 @@ def pricing_rule(size_fallback=True, removal_identity=True, comparables=True,
             g["F1_PIPE_ONLY"], g["FAMILY_CELL_T2"], \
             g["IDENTICAL_BID_OWNER_SET"] = old
         g["MUNI_TXDOT_LEVEL"] = old13
+        item_tokens.ABANDON_IDENTITY, item_tokens.ABANDON_FAMILY_KEY, \
+            g["P80_FROM_B"] = old17
+        g["CLAMP_ABOVE_TOP_BIN"] = old18
 
 
 class SizeCells:
@@ -1259,6 +1361,81 @@ def _centre(trip):
     return math.sqrt(lo * hi)
 
 
+@contextlib.contextmanager
+def production_b():
+    """B80: production B -- every round-10/11/13/16/17 switch off (MC, E, F1P,
+    T2, D, P_L, round 16's clamp, round 17's abandonment identity and family
+    key, and P80_FROM_B itself), every other switch as it stands.  (Rounds
+    13-17's, with the merged list of round 18.)"""
+    g = globals()
+    cmp_mod = g["comparables"]
+    old = tuple(g[n] for n in B_RULE_SWITCHES)
+    old_e = cmp_mod.MUNI_REMOVAL_IDENTITY
+    old_ab = (item_tokens.ABANDON_IDENTITY, item_tokens.ABANDON_FAMILY_KEY)
+    for n in B_RULE_SWITCHES:
+        g[n] = False
+    cmp_mod.MUNI_REMOVAL_IDENTITY = False
+    item_tokens.ABANDON_IDENTITY = item_tokens.ABANDON_FAMILY_KEY = False
+    try:
+        yield
+    finally:
+        for n, v in zip(B_RULE_SWITCHES, old):
+            g[n] = v
+        cmp_mod.MUNI_REMOVAL_IDENTITY = old_e
+        item_tokens.ABANDON_IDENTITY, item_tokens.ABANDON_FAMILY_KEY = old_ab
+
+
+class GuardPath:
+    """B80: the constants a letting dated D gets from one market's forward
+    records (production B's): centring and the P80 divisor from the records
+    dated strictly before D (>= FORWARD_MIN_PRIOR of them), the divisor at the
+    guard's level as it stood when D opened -- forward_scores()' walk under
+    production's rule, remembered per date.  at(D) -> (alpha, divisor,
+    centring) or None.  (Round 11-16's GuardPath, unchanged.)"""
+
+    def __init__(self, recs, gamma, guard=True):
+        self.trip = sorted((r["date"], r["bid_part"], r["owner_fixed"],
+                            r["actual_low"], r["project_key"]) for r in recs)
+        self.dates = [t[0] for t in self.trip]
+        self.gdates, self.galpha = [], []
+        alpha, i, trip = GUARD_TARGET, 0, self.trip
+        while i < len(trip):
+            D = trip[i][0]
+            j = i
+            while j < len(trip) and trip[j][0] == D:
+                j += 1
+            self.gdates.append(D)
+            self.galpha.append(alpha)
+            if i >= FORWARD_MIN_PRIOR:
+                prior = [(c, fx, w) for _, c, fx, w, _ in trip[:i]]
+                lc = _centre(prior)
+                rs = sorted((c * lc + fx) / w for c, fx, w in prior)
+                a = alpha if guard else GUARD_TARGET
+                p = rs[int(a * (len(rs) - 1))]
+                errs = [(c * lc + fx) / w / p < 1.0
+                        for _, c, fx, w, _ in trip[i:j]]
+                if guard:
+                    alpha = _guard_step(alpha, errs, gamma, GUARD_TARGET)
+            i = j
+        self.final_alpha, self.guard, self._memo = alpha, guard, {}
+
+    def at(self, D):
+        if D in self._memo:
+            return self._memo[D]
+        i = bisect.bisect_left(self.dates, D)
+        out = None
+        if i >= FORWARD_MIN_PRIOR:
+            g = bisect.bisect_left(self.gdates, D)
+            alpha = self.galpha[g] if g < len(self.gdates) else self.final_alpha
+            a = alpha if self.guard else GUARD_TARGET
+            prior = [(c, fx, w) for _, c, fx, w, _ in self.trip[:i]]
+            lc = _centre(prior)
+            rs = sorted((c * lc + fx) / w for c, fx, w in prior)
+            out = (a, rs[int(a * (len(rs) - 1))], lc)
+        self._memo[D] = out
+        return out
+
+
 def _f(v, default=None):
     try:
         x = float(v)
@@ -1496,7 +1673,9 @@ def discount(tab, n_bidders, market):
                 "note": "single bid: no competition, no discount"}
     k = min(table, key=lambda x: abs(x - n_bidders))
     if abs(k - n_bidders) > MAX_BIN_DISTANCE:
-        return None
+        if not (CLAMP_ABOVE_TOP_BIN and n_bidders > max(table)):
+            return None
+        k = max(table)          # C: above the top bin -> the top bin
     row = table[k]
     return {"f": row["f"], "p25": row["p25"], "p75": row["p75"],
             "bin": k, "table": which, "lettings": row["lettings"],
@@ -1879,6 +2058,8 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
                               "found nothing")
             if fk != family and tab.ref.get((fk, unit, "")) is None:
                 out["removal_no_cell"] = True
+                if fk.endswith(ABANDON_SUFFIX):
+                    out["abandon_no_cell"] = True        # AB2 (round 17)
             return out
         c = min(cands)
         _k13 = c[3]
@@ -1935,6 +2116,8 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
             # a removal-only line with no removal cell: estimate() gives it
             # the schedule's typical line, never a new-work price
             out["removal_no_cell"] = True
+            if fk.endswith(ABANDON_SUFFIX):
+                out["abandon_no_cell"] = True            # AB2 (round 17)
         return out
     out["price_key"] = "f1_nearest_size" if f1 else "family+unit+size"
     if row.get("cell_market") == "municipal":
@@ -2136,9 +2319,12 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
                 t["price"] = a / t["quantity"]
                 t["typical_line_imputed"] = True
                 t["price_key"] = "removal_typical_line"
-                t["why"].append("removal-only line with no removal reference "
+                t["why"].append("%s line with no %s reference "
                                 "cell: priced at this schedule's typical line "
-                                "amount %.2f" % a)
+                                "amount %.2f" % ((
+                                    ("abandon-only", "abandonment")
+                                    if t.get("abandon_no_cell") else
+                                    ("removal-only", "removal")) + (a,)))
                 priced += 1
                 unpriced -= 1
             total = 0.0
@@ -3853,8 +4039,25 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
                                             if mk == "all" else unc_mk[mk]),
                 "lettings_not_covered": (sum(nc_mk.values())
                                          if mk == "all" else nc_mk[mk])})
+    b_pl = None
+    if P80_FROM_B:
+        # B80: production B's own forward pass gives the P80 divisor and the
+        # guard's level (per date for the records; its final ones for the
+        # file); the centring stays this pass's
+        b_pl = []
+        with production_b():
+            b_rows, _ = calibrate_forward(write=False, per_letting=b_pl)
+        bmk = {r["market"]: r for r in b_rows}
+        for row in rows_out:
+            br = bmk.get(row["market"])
+            if br is None:
+                continue
+            for f_ in ("p_not_under", "not_under_level", "not_under_rule",
+                       "guard_gamma", "guard_scored", "guard_under_share"):
+                row[f_] = br[f_]
+            row["p80_rule"] = "p80_from_b"
     if per_letting is not None:
-        forward_scores(per_letting)
+        forward_scores(per_letting, b_records=b_pl)
     if write and t1 is not None:
         t1.write(os.path.join(CLEAN, T1_FILE))
     if write and rows_out:
@@ -3897,7 +4100,7 @@ def comparables_pools(pool, avail, markets=("municipal", "txdot")):
     return {mk: comparables.Pool(pool, avail, mk, CLEAN, me) for mk in markets}
 
 
-def forward_scores(per_letting, guard=True):
+def forward_scores(per_letting, guard=True, b_records=None):
     """Each forward-scored letting's P50 and P80 as ratios to its low bid,
     with the constants a NEW letting dated D gets: centring and the P80
     divisor fitted on the same market's lettings dated before D (at least
@@ -3905,8 +4108,16 @@ def forward_scores(per_letting, guard=True):
     when D opened.  The replay every forward score of the project uses
     (handoff/scratchpad/fwd/mac_recheck/score_new_data.py replay(), same
     order).  Adds p50, p80, alpha, centring, divisor and n_prior to each
-    record that has constants; returns {market: [records with them]}."""
+    record that has constants; returns {market: [records with them]}.
+    b_records (B80): production B's records -- the divisor and the guard's
+    level at D are B's (GuardPath), the centring stays these records'."""
     out = {}
+    bpath = None
+    if b_records is not None:
+        bpath = {mk: GuardPath([r for r in b_records if r["market"] == mk],
+                               GUARD_GAMMA.get(mk, GUARD_GAMMA["municipal"]),
+                               guard)
+                 for mk in {r["market"] for r in b_records}}
     for market in sorted({r["market"] for r in per_letting}):
         by = {r["project_key"]: r for r in per_letting if r["market"] == market}
         trip = sorted((r["date"], r["bid_part"], r["owner_fixed"],
@@ -3924,11 +4135,21 @@ def forward_scores(per_letting, guard=True):
                 rs = sorted((c * lc + fx) / w for c, fx, w in prior)
                 a = alpha if guard else GUARD_TARGET
                 p = rs[int(a * (len(rs) - 1))]
+                bc = None
+                if bpath is not None:
+                    bp_ = bpath.get(market)
+                    bc = bp_.at(D) if bp_ is not None else None
+                    if bc is None:          # B80: B has no constants at D
+                        i = j
+                        continue
+                    a, p = bc[0], bc[1]
                 errs = []
                 for d, c, fx, w, k in trip[i:j]:
                     p50 = (c * lc + fx) / w
                     by[k].update({"p50": p50, "p80": p50 / p, "alpha": a,
                                   "centring": lc, "divisor": p, "n_prior": i})
+                    if bc is not None:
+                        by[k]["p80_from_b"] = True
                     got.append(by[k])
                     errs.append(p50 / p < 1.0)
                 if guard:
@@ -4018,7 +4239,9 @@ def _selftest():
         discount(t, 4, "txdot")["table"], "pooled")
 
     # 2 a bidder count far from any bin is refused, not extrapolated
-    chk("2 refuses distant bidder count", discount(t, 12, "municipal"), None)
+    with pricing_rule(clamp_high_bidders=False):
+        d2 = discount(t, 12, "municipal")
+    chk("2 refuses distant bidder count (clamp off)", d2, None)
     chk("2 allows 2 bins out", discount(t, 6, "municipal")["bin"], 4)
 
     # 3 escalation is market-specific, and says when it is borrowed
@@ -5066,6 +5289,216 @@ def _selftest():
         on29 = MUNI_TXDOT_LEVEL
     chk("29 preset round13_l sets / restores", (on29, MUNI_TXDOT_LEVEL),
         (True, False))
+
+    # 34 round 17: the abandonment identity (AB token flag; AB2 "#ab" key).
+    # The token cells of the brief's case: the abandon line's own words and
+    # two NEW 8 in sanitary pipe cells (the production pick was a new pipe)
+    def t34_tab():
+        t = Tables.__new__(Tables)
+        t.missing, t.notes = [], []
+        t.ref, t.ref_band, t.shape, t.borrow_sigma = {}, {}, {}, {}
+        t.index, t.calib, t.D, t.size_cells = {}, {}, None, None
+        t.ref_tok = {}
+        t.tok_inv = collections.defaultdict(
+            lambda: collections.defaultdict(list))
+        for d, p in (("abandon existing sanitary sewer line", "22.5"),
+                     ("8 in sanitary sewer pvc pipe sdr 26 by open cut",
+                      "132.35"),
+                     ("8 in pvc sdr 26 astm 3034 sanitary sewer pipe", "142.5")):
+            k = (item_tokens.tokens(d), "LF", "200-1000")
+            t.ref_tok[k] = {"price_median": p, "n_projects": "2",
+                            "usable": "no", "vintage_year": "2024",
+                            "tok": " ".join(sorted(k[0]))}
+            for w in k[0]:
+                t.tok_inv["LF"][w].append(k)
+        return t
+    ab34 = "Abandon existing 8 inch sanitary sewer pipe in place"
+    nw34 = "8 in pvc sdr 26 sanitary sewer pipe by open cut"
+    with pricing_rule(abandon_identity=False):
+        p34 = item_market_price(t34_tab(), "demo_utility", "LF", 500.0,
+                                "6-9 in", None, "municipal", ab34, 8.0)
+    chk("34 off: the abandon line takes a new-pipe cell",
+        (p34["price"], p34["price_key"]), (132.35, "token_jaccard"))
+    with pricing_rule(round17_ab=True):
+        p34a = item_market_price(t34_tab(), "demo_utility", "LF", 500.0,
+                                 "6-9 in", None, "municipal", ab34, 8.0)
+        p34n = item_market_price(t34_tab(), "sanitary_pipe", "LF", 500.0,
+                                 "6-9 in", None, "municipal", nw34, 8.0)
+        on34 = (item_tokens.ABANDON_IDENTITY, item_tokens.ABANDON_FAMILY_KEY,
+                family_key("water_pipe", "abandon existing 8 in water line"))
+    chk("34 AB: only the abandon cell (22.5); new pipe never the abandon cell",
+        (p34a["price"], p34a["token_candidates"], p34n["price"] > 100),
+        (22.5, 1, True))
+    chk("34 preset round17_ab: the flag only, no family key; restored",
+        (on34, item_tokens.ABANDON_IDENTITY, item_tokens.ABANDON_FAMILY_KEY),
+        ((True, False, "water_pipe"), True, False))
+    with pricing_rule(round17_ab2=True):
+        on34b = (item_tokens.ABANDON_IDENTITY, item_tokens.ABANDON_FAMILY_KEY,
+                 family_key("water_pipe", "abandon existing 8 in water line"),
+                 family_key("water_pipe", "remove existing 8 in water line"),
+                 family_key("water_pipe", "8 in water line"))
+        t34b = Tables.__new__(Tables)
+        t34b.__dict__.update({k: v for k, v in t20.__dict__.items()})
+        items34 = [dict(x) for x in items20[:2]] + [
+            {"family": "water_pipe", "unit": "LF", "quantity": 50.0,
+             "description": "abandon existing water line"}]
+        r34b = estimate(t34b, items34, 4, "municipal")
+    chk("34 preset round17_ab2: flag + #ab key (#rm first); restored",
+        (on34b, item_tokens.ABANDON_IDENTITY, item_tokens.ABANDON_FAMILY_KEY),
+        ((True, True, "water_pipe#ab", "water_pipe#rm", "water_pipe"),
+         True, False))
+    chk("34 AB2: an abandon line with no #ab cell gets the typical line",
+        (r34b["trace"][2]["price_key"],
+         round(r34b["trace"][2]["price"] * 50, 6),
+         r34b["trace"][2]["why"][-1].startswith("abandon-only line")),
+        ("removal_typical_line", round(statistics.median([4500.0, 13500.0]), 6),
+         True))
+    with pricing_rule(abandon_identity=False):
+        r34o = estimate(t34b, items34, 4, "municipal")
+    chk("34 off: the same line priced from the family's new-work cell",
+        (r34o["trace"][2]["price_key"], r34o["trace"][2]["price"]),
+        ("family+unit+size", 45.0))
+
+    # 35. round 17 B80 (synthetic; round 16's group 33 without the clamp):
+    # forward_scores(b_records) takes the divisor and the guard's level from
+    # B's records at each date and the P50 (and its centring) from its own;
+    # production_b() and the presets.
+    import random as _rnd35
+    r35 = _rnd35.Random(33)
+    pl35 = []
+    for k in range(70):
+        pl35.append({"project_key": "m%03d" % k, "market": "municipal",
+                     "date": "%04d-%02d-%02d" % (2021 + k // 24,
+                                                 1 + (k % 24) // 2,
+                                                 1 + (k % 2) * 14),
+                     "bid_part": r35.uniform(0.6, 1.6) * 1e6,
+                     "owner_fixed": (r35.uniform(0, 5e4) if k % 5 == 0
+                                     else 0.0),
+                     "actual_low": 1e6})
+    b35 = [dict(r) for r in pl35]
+    forward_scores(b35)
+    v35 = [dict(r, bid_part=r["bid_part"] * (1.1 if k % 3 == 0 else 1.0))
+           for k, r in enumerate(pl35)]
+    own35 = [dict(r) for r in v35]
+    forward_scores(own35)
+    x35 = [dict(r) for r in v35]
+    forward_scores(x35, b_records=b35)
+    sc35 = [(a, b, c) for a, b, c in zip(b35, own35, x35) if "p50" in a]
+    chk("35 B80: P50 and centring its own, divisor and alpha B's, P80 = own "
+        "P50 / B's divisor, flagged",
+        (len(sc35) > 0, all(c["p50"] == b["p50"] and
+                            c["centring"] == b["centring"] and
+                            c["divisor"] == a["divisor"] and
+                            c["alpha"] == a["alpha"] and
+                            c["p80"] == c["p50"] / a["divisor"] and
+                            c.get("p80_from_b") for a, b, c in sc35),
+         any(b["divisor"] != a["divisor"] for a, b, _ in sc35)),
+        (True, True, True))
+    with pricing_rule(round17_ab_b80=True):
+        on35 = (item_tokens.ABANDON_IDENTITY, item_tokens.ABANDON_FAMILY_KEY,
+                P80_FROM_B)
+        with production_b():
+            pb35 = (item_tokens.ABANDON_IDENTITY,
+                    item_tokens.ABANDON_FAMILY_KEY, P80_FROM_B,
+                    MUNI_TXDOT_LEVEL)
+        back35 = (item_tokens.ABANDON_IDENTITY, P80_FROM_B)
+    with pricing_rule(round17_ab2_b80=True):
+        on35b = (item_tokens.ABANDON_IDENTITY, item_tokens.ABANDON_FAMILY_KEY,
+                 P80_FROM_B)
+    chk("35 presets round17_ab_b80 / _ab2_b80; production_b clears them; "
+        "restored",
+        (on35, pb35, back35, on35b, (item_tokens.ABANDON_IDENTITY,
+                                     item_tokens.ABANDON_FAMILY_KEY,
+                                     P80_FROM_B)),
+        ((True, False, True), (False, False, False, False), (True, True),
+         (True, True, True), (True, False, True)))
+
+    # 32. round 16 C (synthetic): a bidder count above the table's top bin
+    # is priced off that bin, marked extrapolated; every other refusal and
+    # the n <= 1 rule are production's; the switch and its preset.
+    t32 = Tables.__new__(Tables)
+    t32.disc = {2: {"f": 0.93, "p25": 0.84, "p75": 0.97, "lettings": 50},
+                3: {"f": 0.90, "p25": 0.82, "p75": 0.96, "lettings": 40},
+                10: {"f": 0.83, "p25": 0.78, "p75": 0.87, "lettings": 12}}
+    t32.disc_muni = {}
+    t32b = Tables.__new__(Tables)
+    t32b.disc = {6: {"f": 0.84, "p25": 0.78, "p75": 0.90, "lettings": 30},
+                 7: {"f": 0.83, "p25": 0.76, "p75": 0.89, "lettings": 20}}
+    t32b.disc_muni = {6: {"f": 0.80, "p25": 0.75, "p75": 0.86, "lettings": 30},
+                      7: {"f": 0.81, "p25": 0.74, "p75": 0.87, "lettings": 20}}
+    with pricing_rule(clamp_high_bidders=False):
+        off32 = (discount(t32, 17, "txdot"), discount(t32b, 12, "municipal"))
+    with pricing_rule(clamp_high_bidders=True):
+        hi32 = discount(t32, 17, "txdot")
+        in32 = discount(t32, 12, "txdot")
+        gap32 = discount(t32, 6, "txdot")
+        low32 = discount(t32b, 2, "municipal")
+        one32 = discount(t32b, 1, "municipal")
+        mu32 = discount(t32b, 12, "municipal")
+    chk("32 C: above the top bin -> the top bin, marked extrapolated",
+        (hi32["bin"], hi32["f"], hi32["p25"], hi32["extrapolated"],
+         hi32["table"], hi32["lettings"]),
+        (10, 0.83, 0.78, True, "pooled", 12))
+    chk("32 C: the municipal table's own top bin",
+        (mu32["bin"], mu32["f"], mu32["table"], mu32["extrapolated"]),
+        (7, 0.81, "municipal", True))
+    chk("32 C: within 2 bins as production; a gap > 2 inside the table and "
+        "below the lowest bin still refused; n <= 1 not discounted",
+        (in32["bin"], in32["extrapolated"], gap32, low32, one32["f"],
+         one32["extrapolated"]),
+        (10, True, None, None, 1.0, False))
+    chk("32 C off: above the top bin is refused", off32,
+        (None, None))
+    it32 = [{"family": "gabion_wall", "unit": "CY", "quantity": 245}]
+    with pricing_rule(clamp_high_bidders=False):
+        r32o = estimate(t, it32, 12, "municipal", "2026")
+    with pricing_rule(clamp_high_bidders=True):
+        r32 = estimate(t, it32, 12, "municipal", "2026")
+        r32n = estimate(t, it32, 4, "municipal", "2026")
+    chk("32 C: estimate() prices 12 bidders off the 4-bidder bin (= the "
+        "4-bidder estimate), says so, no refusal; off refuses",
+        (r32.get("expected_low") == r32n.get("expected_low") is not None,
+         r32["discount"]["bin"], r32["discount"]["extrapolated"],
+         any("priced off the 4-bidder bin" in w for w in r32["warnings"]),
+         any("refusing" in w for w in r32["warnings"]),
+         r32o.get("expected_low"),
+         any("refusing" in w for w in r32o["warnings"])),
+        (True, 4, True, True, False, None, True))
+    with pricing_rule(round16_c=True):
+        on32 = CLAMP_ABOVE_TOP_BIN
+    chk("32 preset round16_c sets / restores", (on32, CLAMP_ABOVE_TOP_BIN),
+        (True, True))
+    with pricing_rule(round16_c_b80=True):
+        on32b = (CLAMP_ABOVE_TOP_BIN, P80_FROM_B)
+        with production_b():
+            pb32 = (CLAMP_ABOVE_TOP_BIN, P80_FROM_B)
+    chk("32 preset round16_c_b80 sets both; production_b clears them; "
+        "restored", (on32b, pb32, (CLAMP_ABOVE_TOP_BIN, P80_FROM_B)),
+        ((True, True), (False, False), (True, True)))
+
+    # 36. round 18: the X1 presets set exactly their switches;
+    # production_b() clears every non-production switch; all restored.
+    def sw36():
+        return (CLAMP_ABOVE_TOP_BIN, item_tokens.ABANDON_IDENTITY,
+                item_tokens.ABANDON_FAMILY_KEY, P80_FROM_B)
+    got36, pb36 = {}, {}
+    for nm in ("round18_x1", "round18_x1_b80"):
+        with pricing_rule(**{nm: True}):
+            got36[nm] = sw36()
+            with production_b():
+                pb36[nm] = sw36() + (MUNI_TXDOT_LEVEL, MUNI_CELLS,
+                                     comparables.MUNI_REMOVAL_IDENTITY)
+    chk("36 round 18 presets set exactly their switches",
+        got36, {"round18_x1": (True, True, False, True),
+                "round18_x1_b80": (True, True, False, True)})
+    chk("36 production_b clears every one of them",
+        set(pb36.values()), {(False,) * 7})
+    chk("36 restored (production: ON)", sw36(), (True, True, False, True))
+    with pricing_rule(clamp_high_bidders=False, abandon_identity=False,
+                      p80_from_b=False):
+        off36 = sw36()
+    chk("36 the three named False = production before round 18", off36,
+        (False,) * 4)
 
     print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
     return ok

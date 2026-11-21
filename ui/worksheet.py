@@ -286,10 +286,16 @@ def _below_label(l: dict) -> str:
                         else "owner's fixed amount")
 
 
+def show_extra(t: dict) -> bool:
+    """Your own contingency always gets its row, 0% included (shown as 0%,
+    $0), as on the page: the percentage changes numbers, not the layout."""
+    return True
+
+
 def _extra_label(t: dict) -> str:
     return "%s (%g%%)" % ("Additional Construction Contingency" if t["below"]
                           else "Construction Contingency",
-                          t["contingency_pct"])
+                          t["contingency_pct"] or 0)
 
 
 def opcc_rows(t: dict, ws: dict) -> list:
@@ -307,8 +313,8 @@ def opcc_rows(t: dict, ws: dict) -> list:
     for l, w, a in t["below"]:
         rows.append([_txt(l.get("item_no"), 20), _below_label(l), "", "", "",
                      _m(a), "", _txt(w.get("note"))])
-    if t["contingency"]:
-        rows.append(["", _extra_label(t), "", "", "", _m(t["contingency"]),
+    if show_extra(t):
+        rows.append(["", _extra_label(t), "", "", "", _m(t["contingency"] or 0.0),
                      "", ""])
     rows.append(["", "Project Total", "", "", "", _m(t["your_opcc"]), "", ""])
     return rows
@@ -320,6 +326,17 @@ def _keep_border(c, **sides):
     b = c.border
     c.border = Border(left=sides.get("left", b.left), right=sides.get("right", b.right),
                       top=sides.get("top", b.top), bottom=sides.get("bottom", b.bottom))
+
+
+def _grid(sh, r1: int, r2: int, c1: int, c2: int, color: str = "000000"):
+    """Thin lines on every side of every cell in the block: rows AND columns
+    (user, 2026-11-21: "only horizontal lines is not good"), in any viewer
+    and on paper (gridlines do not print, and are off on these sheets)."""
+    from openpyxl.styles import Border, Side
+    t = Side(style="thin", color=color)
+    for r in range(r1, r2 + 1):
+        for c in range(c1, c2 + 1):
+            sh.cell(row=r, column=c).border = Border(left=t, right=t, top=t, bottom=t)
 
 
 #: Arial / Helvetica advance widths (1/1000 em), to size wrapped rows.
@@ -382,6 +399,7 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     med = Side(style="medium", color="000000")
     thin = Side(style="thin", color="000000")
     hair = Side(style="thin", color="D9D9D9")
+    sh.sheet_view.showGridLines = False      # it draws its own lines
     widths = dict(zip("ABCDEFGH", (7, 62, 8, 11, 12, 14, 10, 60)))
     for col, wd in widths.items():
         sh.column_dimensions[col].width = wd
@@ -491,10 +509,11 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
             sh.cell(row=r, column=8, value=note).font = F(9, color="595959")
         conts.append(r)
         r += 1
-    if t["contingency"]:
+    if show_extra(t):
         total_row(r, _extra_label(t))
-        v = sub_value * t["contingency_pct"] / 100.0
-        formulas.append(("F%d" % r, "=F%d*%r" % (sub, t["contingency_pct"] / 100.0), v))
+        pct = t["contingency_pct"] or 0.0
+        v = sub_value * pct / 100.0
+        formulas.append(("F%d" % r, "=F%d*%r" % (sub, pct / 100.0), v))
         total_value += v
         conts.append(r)
         r += 1
@@ -503,6 +522,11 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     _keep_border(sh.cell(row=tot, column=6), top=thin, bottom=Side(style="double", color="000000"))
     formulas.append(("F%d" % tot, "=" + "+".join("F%d" % k for k in [sub] + conts),
                      total_value))
+    # the table: a line on every side of every cell, header to Project Total
+    # (A-F), and the working notes beside it (G-H) in a lighter one
+    _grid(sh, head, tot, 1, 6)
+    _grid(sh, head, last, 7, 8, "BFBFBF")
+    _keep_border(sh.cell(row=tot, column=6), bottom=Side(style="double", color="000000"))
     # a blank interim-review box: the standard wording, no names
     box = tot + 3
     lines = ("INTERIM REVIEW ONLY",
@@ -545,30 +569,155 @@ def _arial(sh, first_row: int = 1):
     sh.cell(row=1, column=1).font = Font(name="Arial", size=12, bold=True)
 
 
-def _summary_sheet(sh):
-    """The Summary sheet (label, value, share): money in dollars, the
-    contingency as a percent, the note on one line."""
-    from openpyxl.styles import Alignment
-    _arial(sh)
-    sh.column_dimensions["A"].width = 52
-    sh.column_dimensions["B"].width = 16
-    sh.column_dimensions["C"].width = 10
-    for row in sh.iter_rows(min_row=2):
-        lab, val = row[0].value, row[1].value if len(row) > 1 else None
-        if not isinstance(val, (int, float)) or isinstance(val, bool):
-            continue
-        lab = str(lab or "")
-        if lab.endswith(" %"):
-            # a true percent (0.10 shown as 10%): a literal "%" in the format
-            # reads as 1000% in Apple's previews
-            row[1].value = float(val) / 100.0
-            row[1].number_format = "0%" if float(val).is_integer() else "0.0%"
-        elif lab.startswith("Lines without"):
-            row[1].number_format = "#,##0"
-        else:
-            row[1].number_format = '"$"#,##0'
-        if len(row) > 2:
-            row[2].alignment = Alignment(horizontal="right")
+def _summary_page(sh, result: dict, ws: dict, t: dict):
+    """The Summary sheet: one page in the OPCC sheet's style (user,
+    2026-11-21: a plain list read as unusable in Google Sheets) -- the
+    project, your OPCC (Sub-Total, contingency, Project Total) and how it
+    compares with the model's P50 / P80. Arial, no gridlines, dollars, one
+    frame. The CSV keeps the plain list (sections())."""
+    from openpyxl.styles import Alignment, Border, Font, Side
+    def F(size=10, bold=False, color=None, italic=False):
+        return Font(name="Arial", size=size, bold=bold, color=color, italic=italic)
+    med = Side(style="medium", color="000000")
+    thin = Side(style="thin", color="000000")
+    hair = Side(style="thin", color="D9D9D9")
+    sh.sheet_view.showGridLines = False
+    widths = {"A": 46, "B": 17, "C": 17, "D": 11}
+    for col, wd in widths.items():
+        sh.column_dimensions[col].width = wd
+    inp = result.get("inputs") or {}
+    sh.merge_cells("A1:D1")
+    sh["A1"] = "OPCC SUMMARY"
+    sh["A1"].font = F(14, True)
+    sh["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    sh.row_dimensions[1].height = 24
+    for col in range(1, 5):
+        _keep_border(sh.cell(row=1, column=col), bottom=med)
+    r = 3
+
+    def kv(label, value, fmt=None):
+        nonlocal r
+        sh.cell(row=r, column=1, value=label).font = F(10, True)
+        sh.merge_cells(start_row=r, start_column=2, end_row=r, end_column=4)
+        c = sh.cell(row=r, column=2, value=value if value not in ("", None) else None)
+        c.font = F(10)
+        c.alignment = Alignment(horizontal="left")
+        if fmt:
+            c.number_format = fmt
+        r += 1
+
+    kv_first = r
+    kv("Project", _txt(ws.get("project_name"), 160))
+    kv("Owner", inp.get("owner_label") or "")
+    kv("Work type", inp.get("work_type_label") or "")
+    kv("Market", inp.get("market_label") or inp.get("market") or "")
+    kv("Bid date", inp.get("bid_date") or "")
+    kv("Prepared", _dt.date.today(), "mm/dd/yyyy")
+    kv("Prepared by", _txt(ws.get("prepared_by"), 60))
+    kv("Project no.", _txt(ws.get("project_no"), 60))
+    m = _f(ws.get("basis_multiplier"))
+    kv("Prices start from", "the model's P50 (expected low bid)" if ws.get("basis") == "p50"
+       else "the model's P80 (recommended OPCC%s)" % (", P50 x %.2f" % m if m and m > 1 else ""))
+    blocks = [(kv_first, r - 1)]
+    r += 1
+
+    def head(text, cols=None):
+        nonlocal r
+        for j in range(1, 5):
+            c = sh.cell(row=r, column=j, value=(cols or {}).get(j))
+            c.font = F(10, True)
+            c.border = Border(bottom=thin)
+            if j > 1:
+                c.alignment = Alignment(horizontal="right")
+        sh.cell(row=r, column=1, value=text)
+        r += 1
+
+    money = '"$"#,##0'
+    signed = '+"$"#,##0;-"$"#,##0;"$"0'
+
+    def row(label, v, bold=False, indent=0, total=False, vs=None):
+        nonlocal r
+        a = sh.cell(row=r, column=1, value=label)
+        a.font = F(10, bold)
+        a.alignment = Alignment(indent=indent)
+        b = sh.cell(row=r, column=2, value=v)
+        b.font = F(10, bold)
+        b.number_format = money
+        b.alignment = Alignment(horizontal="right")
+        if vs:
+            c = sh.cell(row=r, column=3, value=vs["amount"])
+            c.font = F(10)
+            c.number_format = signed
+            d = sh.cell(row=r, column=4, value=vs["ratio"])
+            d.font = F(10)
+            d.number_format = "+0.0%;-0.0%;0.0%"
+        for j in range(1, 5):
+            _keep_border(sh.cell(row=r, column=j), bottom=hair)
+        if total:
+            _keep_border(b, top=thin, bottom=Side(style="double", color="000000"))
+        r += 1
+
+    def note(text, italic=False):
+        nonlocal r
+        sh.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+        c = sh.cell(row=r, column=1, value=text)
+        c.font = F(9, color="595959", italic=italic)
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+        n = text_lines(text, sum(widths.values()), 9)
+        if n > 1:
+            sh.row_dimensions[r].height = 11.5 * n + 3
+        r += 1
+
+    head("YOUR OPCC")
+    b1 = r - 1
+    row("Sub-Total (your line amounts)", t["subtotal"], bold=True)
+    if t["owner_set"]:
+        row("of which owner-set allowances", t["owner_set"], indent=2)
+    if t["quotes"]:
+        row("of which vendor quotes", t["quotes"], indent=2)
+    for l, w, a in t["below"]:
+        row(_below_label(l), a)
+    if show_extra(t):
+        row(_extra_label(t), t["contingency"] or 0.0)
+    row("Project Total", t["your_opcc"], bold=True, total=True)
+    total_row = r - 1
+    blocks.append((b1, total_row))
+    if t["missing"]:
+        n = len(t["missing"])
+        note("%d line%s no price of yours and %s not in this total."
+             % (n, " has" if n == 1 else "s have", "is" if n == 1 else "are"))
+    r += 1
+    head("COMPARED WITH THE MODEL", {2: "Amount", 3: "Your OPCC vs it", 4: ""})
+    b2 = r - 1
+    nc = " + not-covered lines" if t["not_covered"] else ""
+    row("Expected low bid (P50)" + nc, t["model_p50"], vs=t["vs_p50"])
+    row("Recommended OPCC (P80)" + nc, t["model_p80"], vs=t["vs_p80"])
+    blocks.append((b2, r - 1))
+    if t["not_covered"]:
+        note("P50 and P80 leave the not-covered lines out; your amounts for them "
+             "(%s) are added to both here." % ("$" + format(round(t["not_covered"]), ",")))
+    r += 1
+    head("NOTES")
+    note("P50 is the expected low bid: as likely to come in under it as over. P80 is "
+         "the cautious figure: on past jobs like this the low bid came in at or under "
+         "it about 4 times in 5.")
+    note("Your prices and notes are output only: they never feed back into the "
+         "estimator, its tables, training or calibration.", italic=True)
+    end = r
+    for a, b in blocks:
+        _grid(sh, a, b, 1, 4)
+    _keep_border(sh.cell(row=total_row, column=2), bottom=Side(style="double", color="000000"))
+    for rr in range(1, end + 1):
+        _keep_border(sh.cell(row=rr, column=1), left=med)
+        _keep_border(sh.cell(row=rr, column=4), right=med)
+    for col in range(1, 5):
+        _keep_border(sh.cell(row=1, column=col), top=med)
+        _keep_border(sh.cell(row=end, column=col), bottom=med)
+    sh.print_area = "A1:D%d" % end
+    sh.page_setup.orientation = "portrait"
+    sh.page_setup.fitToWidth = 1
+    sh.page_setup.fitToHeight = 0
+    sh.sheet_properties.pageSetUpPr.fitToPage = True
 
 
 def _tidy_sheet(sh, title_row=1, header_row=2):
@@ -606,7 +755,7 @@ def _tidy_sheet(sh, title_row=1, header_row=2):
         sh.column_dimensions[letter].width = width
         widths[col] = width
         h = heads.get(col, "")
-        mid = h in ("item", "unit", "rank", "references", "letting date")
+        mid = h in ("item", "unit", "rank", "references", "letting date", "their unit", "bids")
         for c in cells:
             v = c.value
             wrap = False
@@ -635,6 +784,20 @@ def _tidy_sheet(sh, title_row=1, header_row=2):
                  if isinstance(c.value, str) and c.alignment.wrap_text), default=1)
         if n > 1:
             sh.row_dimensions[r].height = 12.75 * n + 2
+
+
+def _group_rule(sh, first_row: int):
+    """A rule above each line's first reference, so the projects behind one
+    line read as a group."""
+    from openpyxl.styles import Side
+    rule = Side(style="thin", color="7F7F7F")
+    prev = object()
+    for r in range(first_row, sh.max_row + 1):
+        key = (sh.cell(row=r, column=1).value, sh.cell(row=r, column=2).value)
+        if key != prev and r > first_row:
+            for c in sh[r]:
+                _keep_border(c, top=rule)
+        prev = key
 
 
 def _cache_values(xlsx: bytes, sheet_path: str, values: dict) -> bytes:
@@ -755,11 +918,11 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
                  else "owner's fixed amount")
         r[0], r[4], r[14] = l.get("item_no") or "", ("%g%%" % pct) if pct is not None else "", w.get("note") or ""
         rows.append(r)
-    if t["contingency"]:
+    if show_extra(t):
         rows.append(foot("%s (%g%% of the subtotal)" % (
             "Additional construction contingency" if t["below"]
-            else "Construction contingency", t["contingency_pct"]), None,
-            t["contingency"], "yours only: not in P50 / P80"))
+            else "Construction contingency", t["contingency_pct"] or 0), None,
+            t["contingency"] or 0.0, "yours only: not in P50 / P80"))
     rows.append(foot("PROJECT TOTAL", t["p50"], t["your_opcc"]))
     out.append(("OPCC lines",
                 ["Item", "Description", "Qty", "Unit", "Model $/unit (P50)",
@@ -768,21 +931,29 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
                  "References", "Typical accuracy", "Your $/unit",
                  "Your amount", "Your price from", "Note",
                  "Needs your judgment"], rows))
+    # each line's reference projects: the project, and its own item as it
+    # was bid -- the words, unit, quantity and prices (user, 2026-11-21)
     rows = []
     for l, w, a in t["rows"]:
         x = rmap.get(l.get("row_id")) or {}
         for k, pk in enumerate(x.get("picks") or [], 1):
             src = pk.get("source") or {}
+            q = _f(pk.get("quantity"))
             rows.append([l.get("item_no"), l.get("description"), k,
                          pk.get("project"), pk.get("owner"), pk.get("date"),
-                         _m(pk.get("median_unit")), _m(pk.get("low_unit")),
-                         _m(pk.get("median_esc")), src.get("document") or "",
+                         pk.get("item") or "", pk.get("unit") or "",
+                         q if q is not None else "",
+                         _m(pk.get("low_unit")), _m(pk.get("mean_unit")),
+                         _m(pk.get("median_unit")), _m(pk.get("median_esc")),
+                         pk.get("n_bids") or "", src.get("document") or "",
                          src.get("url") or "", src.get("mirror_url") or ""])
     out.append(("References appendix",
                 ["Item", "Description", "Rank", "Project", "Owner",
-                 "Letting date", "Median bid $/unit", "Low bid $/unit",
+                 "Letting date", "Their item (as bid)", "Their unit",
+                 "Their quantity", "Low bid $/unit", "Average bid $/unit",
+                 "Median bid $/unit",
                  "Median bid in %s $" % ((refs or {}).get("to_year") or "bid-year"),
-                 "Source document", "source_url", "mirror_url"],
+                 "Bids", "Source document", "source_url", "mirror_url"],
                 rows or [["(none)"]]))
     return out
 
@@ -822,6 +993,9 @@ def to_xlsx(result, ws, refs) -> bytes:
         if title == "OPCC estimate":
             formulas = _opcc_sheet(sh, totals(result, ws), ws)
             continue
+        if title == "OPCC worksheet":
+            _summary_page(sh, result, ws, totals(result, ws))
+            continue
         sh.append([title])
         if head:
             sh.append(head)
@@ -831,10 +1005,9 @@ def to_xlsx(result, ws, refs) -> bytes:
                     "Sub-Total", "Project Total", "SUBTOTAL", "PROJECT TOTAL"))):
                 for c in sh[sh.max_row]:
                     c.font = bold
-        if title == "OPCC worksheet":
-            _summary_sheet(sh)
-        else:
-            _tidy_sheet(sh, 1, 2 if head else 0)
+        _tidy_sheet(sh, 1, 2 if head else 0)
+        if title == "References appendix":
+            _group_rule(sh, 3)
     from exporter import xlsx_text_only    # "=..." notes stay text
     xlsx_text_only(wb)
     # then the OPCC's own totals, as live formulas (written by this module,
