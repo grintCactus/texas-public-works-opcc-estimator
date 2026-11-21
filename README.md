@@ -155,6 +155,13 @@ What happened:
   - On large jobs, the misses come from weakly matched main items, not from mobilization.
 - **Status:** not adopted; production is unchanged.
 
+**Converting between units (registered before scoring).** Takeoffs come in mixed units: CY or CF, SY or SF or acres, tons or pounds. Two ways of converting between units of the same kind were tested.
+- **Pooling all bids into one unit per kind** makes a takeoff price the same in any unit, to the cent.
+  - Today, rewriting the units of 188 city takeoffs changes P50 by more than 20% on 79 of them, and leaves 624 lines unpriced.
+  - It was still not adopted, because line accuracy got worse. A rarer unit often marks a different product: seeding by the acre costs about a quarter of sod by the square yard, and sidewalk bid by the square foot runs 1.5 times the square-yard price. Converting thousand-gallon watering into gallons also pushed every quantity into the top quantity class.
+- **Converting only lines whose own unit has fewer than 5 earlier lettings** cut the unpriced lines from 624 to 42. The few converted lines were often different products or misclassified, so it did not pass either.
+- **Status:** not used for P50/P80. The worksheet will show a converted reference price as a hint ("only 2 earlier lettings in SF; 140 in SY, about $X/SF"), for the estimator to accept or not.
+
 ## Item-level accuracy
 
 How close the price of each kind of line item is, before the lines are added up. Job totals are more accurate than single lines, because line errors partly cancel.
