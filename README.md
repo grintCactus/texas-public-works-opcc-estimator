@@ -19,7 +19,9 @@ The model is trained **only on public bid tabulations**. Every number it reports
 
 ## Using it
 
-Start the app on your own machine with `.venv/bin/python ui/run.py`, then open http://127.0.0.1:8017/. Pricing is ready about 10 seconds after start. A hosted demo will be linked here once it is up.
+**Try it online:** https://129-146-109-44.sslip.io (a demo on a free cloud server; files you upload are processed and not stored, so do not upload confidential documents).
+
+Or start the app on your own machine with `.venv/bin/python ui/run.py`, then open http://127.0.0.1:8017/. Pricing is ready about 10 seconds after start.
 
 1. **Enter the takeoff.**
    - Paste a bid schedule, or upload Excel, CSV, Word or PDF. Scanned PDFs are read with OCR.
