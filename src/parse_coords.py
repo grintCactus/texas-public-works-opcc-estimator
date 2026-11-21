@@ -84,6 +84,17 @@ GROUP_LABEL_RE = re.compile(
     r":\s*$|^(?:bid\s+)?(?:schedule|section|part|phase|division|group|alternates?|alt\.?|"
     r"base\s+bid|additive|deductive|add\s+alt)\b", re.I)
 
+# (round 10, .31) a SECTION banner standing alone on its line, in any case and anywhere on it.  Celina's
+# Public Works Renovation Phase 2 tab (13 bidders, a page 2,555 pt wide) centres 'Alternates' over the
+# money columns between its base bid's total line and items 2.1-2.4, so the banner sat in no item or
+# description cell and the four alternate items were read as base bid; its Ownsby Parkway tab prints
+# 'Alternate 1' ... 'Alternate 7' in mixed case at the left margin, which only an all-capitals banner
+# used to open.  The whole line must be the banner: the section word, optionally numbered or
+# lettered, optionally a title after ':' or '-'.
+SECTION_BANNER_RE = re.compile(
+    r"^\W*(?:base\s+bid(?:\s+items?)?|(?:bid\s+|add(?:itive)?\s+|deduct(?:ive)?\s+)?alternates?"
+    r"(?:\s+bid)?(?:\s*(?:#|no\.?)?\s*(?:\d{1,2}|[a-z]|[ivx]{1,4})\b)?(?:\s*[:\-].{0,60})?)\W*$", re.I)
+
 
 DASHES = {"‐": "-", "‑": "-", "–": "-", "—": "-",
           "−": "-", " ": " "}
@@ -382,6 +393,10 @@ def find_header(line):
         "unit_x": uom_x(),
         "price_x": unit_price_x,
         "total_x": total_x[:len(unit_price_x)],
+        # (round 10) the caption words left of the money block, for a layout whose description
+        # column stands right of the quantity / unit columns (build_ranges)
+        "caption_words": [(w["x0"], w["x1"], txts[k]) for k, w in enumerate(ws)
+                          if w["x0"] < unit_price_x[0] - MARGIN],
     }
 
 
@@ -579,6 +594,9 @@ def build_ranges(hdr, page_width):
     if hdr.get("item_hi_x") is not None:
         item_hi = min(desc_lo, hdr["item_hi_x"] - MARGIN)
         glued = (item_hi, hdr["desc_x"] - 1.0)
+    if (hdr.get("caption_words") and hdr["desc_x"] is not None and hdr["item_x"] is None
+            and any(hdr[k] is not None and hdr[k] < hdr["desc_x"] for k in ("qty_x", "unit_x"))):
+        return reordered_ranges(hdr, blocks, left)
     if hdr["unit_x"] and hdr["qty_x"] and hdr["unit_x"] < hdr["qty_x"]:
         # 'UNIT | QTY' -- the unit printed LEFT of the quantity (Southlake's
         # tabs).  The ranges below assume QTY first, which made the quantity
@@ -601,6 +619,109 @@ def build_ranges(hdr, page_width):
         "left_edge": left,
         "glued": glued,
     }
+
+
+# ---- (round 10, .31) the description column RIGHT of the quantity and unit columns ----------------
+# Celina's Ownsby Parkway tab (Bonfire export, 9 pages, 5 bidders, $11.5M) heads its columns 'Pkg Line # |
+# Pkg Line Type | Qty | UoM | Description | Note to Bidder | Unit Price | Extended Price ...'.  The
+# ranges above assume the description comes first, so the description range came out inverted
+# (empty) and the unit range ran from the UoM caption to the money -- 'LS MOBILIZATION (5% MAX)
+# REFER TO CITY OF CELINA STANDARD SPECIFICATIONS' -- 79% of units failed read_pdf_best's unit gate
+# and all 1,230 priced cells (arithmetic 1,225 / 1,225) were thrown away.  With no item caption and
+# the description right of the quantity / unit captions: the item column ends before the first
+# caption word of the header line (its own caption sits on the band line above: 'Pkg Line / #'),
+# the quantity and unit columns each run to the next caption, and the description region runs from
+# the unit column to the money.  A caption that is no field ('Pkg Line Type', 'Note to Bidder')
+# names a column read as nothing: words of the description region are taken in runs (split at a
+# column gap), and a run goes to the description only when its centre is nearer the description
+# caption's centre than any other caption's (the centred notes 'REFER TO ... SPECIFICATIONS').
+_FIELD_WORDS = frozenset("""item items no no. # description desc qty qty. quantity quantities unit units uom
+est est. estimated approx approximate of measure bid""".split())
+
+
+def reordered_ranges(hdr, blocks, left):
+    anchors = sorted((x, k) for k, x in (("qty", hdr["qty_x"]), ("unit", hdr["unit_x"]),
+                                         ("desc", hdr["desc_x"])) if x is not None)
+    words = hdr["caption_words"]
+    foreign = [(x0, x1) for x0, x1, t in words if t.lower() not in _FIELD_WORDS]
+    first = min([anchors[0][0]] + [x0 for x0, _ in foreign if x0 < anchors[0][0]])
+    out = {"item": (0.0, first - MARGIN), "blocks": blocks, "left_edge": left, "glued": None,
+           "reordered": True}
+    for j, (x, k) in enumerate(anchors):
+        nxt = anchors[j + 1][0] if j + 1 < len(anchors) else left + MARGIN
+        if k != "desc":
+            stop = min([nxt] + [x0 for x0, _ in foreign if x < x0 < nxt])
+            out[k] = (x - MARGIN, stop - MARGIN)
+    for k in ("qty", "unit"):
+        out.setdefault(k, (left, left))
+    lo = max(out["qty"][1], out["unit"][1])
+    out["desc"] = (lo, left)
+    dw = [(x0, x1) for x0, x1, t in words if t.lower() in ("description", "desc", "items")]
+    out["desc_center"] = (dw[0][0] + dw[0][1]) / 2.0
+    # captions right of the description's: the centre of each run of caption words
+    others, run = [], []
+    for x0, x1 in sorted(f for f in foreign if f[0] > dw[0][1]):
+        if run and x0 - run[-1][1] > 2 * MARGIN:
+            others.append((run[0][0] + run[-1][1]) / 2.0)
+            run = []
+        run.append((x0, x1))
+    if run:
+        others.append((run[0][0] + run[-1][1]) / 2.0)
+    out["other_centers"] = others
+    WORD_STATS["description_right_of_quantity"] += 1
+    return out
+
+
+def _gutter(lines, top, a, b):
+    """The middle of the widest x-interval inside [a, b] that no word of a line below `top` covers
+    (3 pt or wider), or None."""
+    spans = sorted((w["x0"], w["x1"]) for l in lines if l["top"] > top + LINE_TOL
+                   for w in l["words"] if w["x1"] > a and w["x0"] < b)
+    best, x = None, a
+    for x0, x1 in spans + [(b, b)]:
+        if x0 > x and (best is None or x0 - x > best[1] - best[0]):
+            best = (x, min(x0, b))
+        x = max(x, x1)
+    if best is None or best[1] - best[0] < 3.0:
+        return None
+    return (best[0] + best[1]) / 2.0
+
+
+def refine_reordered(lines, top, ranges):
+    """Move the quantity / unit / description boundaries of a reordered layout (reordered_ranges)
+    to the gutters the rows leave between the captions' columns."""
+    order = sorted((ranges[k][0], k) for k in ("qty", "unit") if ranges[k][1] > ranges[k][0])
+    cols = [k for _, k in order] + ["desc"]
+    for k1, k2 in zip(cols, cols[1:]):
+        a = ranges[k1][0] + MARGIN
+        b = (ranges["desc_center"] if k2 == "desc" else ranges[k2][0] + MARGIN)
+        g = _gutter(lines, top, a, b)
+        if g is not None:
+            ranges[k1] = (ranges[k1][0], g)
+            ranges[k2] = (g, ranges[k2][1])
+            WORD_STATS["reordered_column_gutters"] += 1
+
+
+def desc_words(line, ranges):
+    """The description words of a line: words_in the description range, less the runs nearer
+    another caption (reordered_ranges)."""
+    d = words_in(line, ranges["desc"])
+    if not d or not ranges.get("other_centers"):
+        return d
+    gap = 1.5 * (_height(d) or 6.0)
+    runs, cur = [], [d[0]]
+    for w in d[1:]:
+        if w["x0"] - cur[-1]["x1"] > gap:
+            runs.append(cur)
+            cur = []
+        cur.append(w)
+    runs.append(cur)
+    keep = []
+    for r in runs:
+        c = (r[0]["x0"] + r[-1]["x1"]) / 2.0
+        if abs(c - ranges["desc_center"]) <= min(abs(c - o) for o in ranges["other_centers"]):
+            keep.extend(r)
+    return keep
 
 
 def refine_description_start(lines, top, ranges):
@@ -724,7 +845,7 @@ def desc_and_qty(line, ranges):
     word of letters run into digits ('in1', 'wit747': the description cut
     by its cell and printed against the quantity, Little Elm 2023-05) is
     left where it was."""
-    d = words_in(line, ranges["desc"])
+    d = desc_words(line, ranges)
     q = words_in(line, ranges["qty"])
     if d and q and ranges["desc"][1] == ranges["qty"][0]:
         gap = 0.6 * (_height(d) or 6.0)
@@ -1045,7 +1166,11 @@ def parse_pdf_by_coords(path):
                 # its extended prices to the page box.
                 ranges = build_ranges(hdr0, max([float(page.width)]
                                                 + [w["x1"] + 1.0 for w in words]))
-                if not refine_description_start(lines, hdr0["top"], ranges):
+                if ranges.get("reordered"):
+                    # (round 10) its item / description columns are not adjacent; its centred
+                    # columns are split where the rows leave a gutter
+                    refine_reordered(lines, hdr0["top"], ranges)
+                elif not refine_description_start(lines, hdr0["top"], ranges):
                     ranges = refine_item_column(lines, ranges, hdr0["top"])
                 prev_ranges, prev_shape = ranges, shape
                 header_tops = [t for _, h in headers for t in h.get("band", [h["top"]])]
@@ -1092,6 +1217,7 @@ def parse_pdf_by_coords(path):
             numbered_rows = sum(1 for l in lines if ITEM_RE.match(spaced(l, ranges["item"]))
                                 and any(p for p, _ in (money_cells(l, b) for b in ranges["blocks"])))
             numbered = None     # (line, item number, description) of an unpriced item line
+            consumed = set()    # (round 10) lines given to the priced line above (number_from_line_below)
             for li, l in enumerate(lines):
                 pending, numbered = numbered, None
                 if header_tops and any(abs(l["top"] - ht) <= LINE_TOL
@@ -1118,6 +1244,17 @@ def parse_pdf_by_coords(path):
                 if AGG_RE.search(item_no) or AGG_RE.search(desc):
                     events.append(("stop", l))
                     continue
+                if li in consumed:
+                    continue                  # (round 10) a number line given to the priced line above
+                whole = " ".join(w["text"] for w in l["words"]).strip()
+                if (not above_header and not qty_s and not unit_s and whole
+                        and SECTION_BANNER_RE.match(whole)):
+                    # (round 10) a banner anywhere on its line -- over the money columns, where
+                    # money_cells reads any text as a cell -- and in any case (SECTION_BANNER_RE)
+                    section = whole[:60].upper()
+                    WORD_STATS["section_banners_any_case_or_column"] += 1
+                    events.append(("stop", l))
+                    continue
                 if not has_money:
                     if above_header:
                         # Title block / bidder-name band, not a banner.
@@ -1139,18 +1276,27 @@ def parse_pdf_by_coords(path):
                         numbered = (l, pending[1], (pending[2] + " " + desc).strip())
                         continue
                     letters = re.sub(r"[^A-Za-z]", "", txt_left)
+                    # (round 10) in a reordered layout (reordered_ranges) the centred description
+                    # wraps above and below its prices in capitals: a line opens a section only
+                    # from the item column, as its 'Base Bid' / 'Alternate 1' banners do
                     if (letters and letters.upper() == letters and len(txt_left) > 4
-                            and not qty_s):
+                            and not qty_s and not (ranges.get("reordered") and not item_no)):
                         section = txt_left[:60].upper()
                         events.append(("stop", l))
                     elif desc:
                         # a wrapped description line -- which item it belongs to
                         # is decided once the page is read (attach_wrapped_lines)
                         events.append(("wrap", l, desc,
-                                       words_in(l, ranges["desc"])[0]["x0"]))
+                                       desc_words(l, ranges)[0]["x0"]))
                     continue
                 item_no, desc = number_from_line_above(pending, l, item_no, desc,
                                                        qty_s or unit_s, h_page, numbered_rows)
+                if not item_no and not desc:
+                    nb = number_from_line_below(lines, li, ranges, qty_s or unit_s, h_page,
+                                                numbered_rows)
+                    if nb is not None:
+                        item_no, desc = nb
+                        consumed.add(li + 1)
                 if not ITEM_RE.match(item_no) and not desc:
                     # a priced line that is no item: a total under another caption
                     events.append(("stop", l))
@@ -1173,10 +1319,10 @@ def parse_pdf_by_coords(path):
                         "extended_raw": t,
                     })
                 page_recs.extend(group)
-                dw = words_in(l, ranges["desc"])
+                dw = desc_words(l, ranges)
                 events.append(("row", l, group, dw[0]["x0"] if dw else None)
                               if group else ("stop", l))
-            attach_wrapped_lines(events, lines)
+            attach_wrapped_lines(events, lines, centred=bool(ranges.get("reordered")))
             if inherited and not item_rows(page_recs) and not repeats_price_captions(lines, ranges):
                 WORD_STATS["inherited_pages_refused"] += bool(page_recs)
                 prev_ranges = None
@@ -1220,6 +1366,35 @@ def number_from_line_above(pending, l, item_no, desc, has_qty_or_unit, h, number
         WORD_STATS["item_number_from_line_above"] += 1
         return pending[1], pending[2]
     return item_no, desc
+
+
+def number_from_line_below(lines, li, ranges, has_qty_or_unit, h, numbered_rows):
+    """(round 10, .31) (item number, description) for the priced line lines[li] that has neither, from
+    the unpriced line just BELOW it: an item whose description wraps around its prices, the number
+    printed with the description's LAST line.  Celina's Public Works Renovation Phase 2 tab prints
+    item 1.38 as 'Reinforced Concrete Slab for Storage' / '1 LS $125,000.00 ...' / '1.38 Building';
+    the priced line was dropped as a total and its first line went to item 1.37, so every one of the
+    13 bidders lost $125,000 from the base bid.  The line below must be within two line heights,
+    carry no money and an item number; the line after it must not be a priced line without a number
+    (that one would take the number: number_from_line_above); and, as there, the page must have
+    numbered priced lines of its own (numbered_rows, 2 or more)."""
+    if not has_qty_or_unit or numbered_rows < 2 or li + 1 >= len(lines):
+        return None
+    l, nxt = lines[li], lines[li + 1]
+    if not 0 < nxt["top"] - l["top"] <= 2.0 * h:
+        return None
+    if any(p for p, _ in (money_cells(nxt, b) for b in ranges["blocks"])):
+        return None
+    item = spaced(nxt, ranges["item"])
+    if not ITEM_RE.match(item):
+        return None
+    d2, q2 = desc_and_qty(nxt, ranges)
+    if q2 or spaced(nxt, ranges["unit"]):
+        return None
+    if li + 2 < len(lines) and adoptable_priced_line(lines[li + 2], nxt, ranges, h):
+        return None
+    WORD_STATS["item_number_from_line_below"] += 1
+    return item, d2
 
 
 def adoptable_priced_line(l2, l, ranges, h):
@@ -1318,7 +1493,7 @@ def merge_split_rows(lines, ranges, header_tops, top_limit):
     return [l for i, l in enumerate(out) if i not in gone]
 
 
-def attach_wrapped_lines(events, lines):
+def attach_wrapped_lines(events, lines, centred=False):
     """Give each wrapped description line to the item it belongs to.
 
     It used to go to the item ABOVE it.  Spreadsheet tabs centre single-line
@@ -1366,8 +1541,11 @@ def attach_wrapped_lines(events, lines):
             for e in run[:split]:
                 for g in above[2]:
                     g["description"] = (g["description"] + " " + e[2]).strip()
+        # (round 10) centred: a description column centred under its caption (reordered_ranges)
+        # starts each line where its width puts it, so the start is not asked of it
         fwd = [e[2] for e in run[split:]
-               if below is not None and ref is not None and abs(e[3] - ref) <= max(8.0, h)
+               if below is not None and ref is not None
+               and (centred or abs(e[3] - ref) <= max(8.0, h))
                and not GROUP_LABEL_RE.search(e[2])]
         if fwd:
             WORD_STATS["wrapped_lines_to_item_below"] += len(fwd)
@@ -1656,4 +1834,59 @@ def selftest_checks():
            number_from_line_above(above, {"top": 308.0}, "", "", True, 6.0, 0)],
           [("9", "CEMENT TREATED (NEW BASE WITH LIQUID"), ("", ""), ("", ""), ("10", ""),
            ("", ""), ("", "")])
+
+    # 13. (round 10) a section banner of any case, standing alone on its line
+    check("section banners of any case",
+          [bool(SECTION_BANNER_RE.match(t)) for t in (
+              "Alternates", "Alternate 1", "Base Bid", "Add Alternate #2", "ALTERNATE NO. 3: LANDSCAPING",
+              "Alternate pavement repair at five locations", "Base Bid Total", "1.38 Building",
+              "Alternative Energy Services")],
+          [True, True, True, True, True, False, False, False, False])
+
+    # 14. (round 10) the item number on the line BELOW its prices (Celina Public Works Renovation 1.38)
+    hb = {"price_x": [300.0], "total_x": [360.0], "unit_x": 200.0, "qty_x": 170.0, "desc_x": 40.0,
+          "item_x": 6.0}
+    rb = build_ranges(hb, 612.0)
+    lb = group_lines([_sw("1.37", 6, 100), _sw("Truss", 40, 100), _sw("Building", 64, 100),
+                      _sw("1", 172, 100), _sw("LS", 202, 100), _sw("$161,353.21", 300, 100),
+                      _sw("$161,353.21", 360, 100),
+                      _sw("Reinforced", 40, 110), _sw("Slab", 82, 110),
+                      _sw("1", 172, 116), _sw("LS", 202, 116), _sw("$125,000.00", 300, 116),
+                      _sw("$125,000.00", 360, 116),
+                      _sw("1.38", 6, 122), _sw("Building", 40, 122),
+                      _sw("1.39", 6, 132), _sw("Bin", 40, 132), _sw("Blocks", 56, 132),
+                      _sw("1", 172, 132), _sw("LS", 202, 132), _sw("$54,928.75", 300, 132),
+                      _sw("$54,928.75", 360, 132)])
+    ib = [i for i, l in enumerate(lb) if abs(l["top"] - 116) < 1][0]
+    check("item number from the line below its prices",
+          [number_from_line_below(lb, ib, rb, True, 8.0, 3),
+           number_from_line_below(lb, ib, rb, True, 8.0, 0),
+           number_from_line_below(lb, ib, rb, False, 8.0, 3)],
+          [("1.38", "Building"), None, None])
+    # ... never when the line after the number is a priced line wanting it (number_from_line_above)
+    lb2 = group_lines([_sw("1", 172, 116), _sw("LS", 202, 116), _sw("$9.00", 300, 116),
+                       _sw("$9.00", 360, 116), _sw("7", 6, 122), _sw("Fence", 40, 122),
+                       _sw("10", 172, 128), _sw("LF", 202, 128), _sw("$5.00", 300, 128),
+                       _sw("$50.00", 360, 128)])
+    check("a number line the next priced line wants stays with it",
+          number_from_line_below(lb2, 0, rb, True, 8.0, 3), None)
+
+    # 15. (round 10) the description column right of the quantity and unit columns (Celina Ownsby
+    #     Parkway): 'Pkg Line Type | Qty | UoM | Description | Note to Bidder | Unit Price | Extended Price'
+    ho = find_header(group_lines([_sw(t, x, 76, x1) for t, x, x1 in (
+        ("Pkg", 41, 53), ("Line", 55, 69), ("Type", 71, 87), ("Qty", 112, 124), ("UoM", 156, 172),
+        ("Description", 242, 280), ("Note", 409, 426), ("to", 428, 435), ("Bidder", 437, 459),
+        ("Unit", 546, 560), ("Price", 562, 580), ("Extended", 603, 633), ("Price", 636, 654))])[0])
+    ro = build_ranges(ho, 700.0)
+    lo = group_lines([_sw(t, x, 117, x1) for t, x, x1 in (
+        ("1", 16, 20), ("Con1", 56, 72), ("18", 113, 121), ("MO", 158, 170),
+        ("BARRICADES,", 205, 248), ("SIGNS", 250, 271), ("REFER", 345, 366), ("TO", 368, 377),
+        ("CITY", 379, 393), ("$10,250.00", 546, 590), ("$184,500.00", 603, 650))])
+    refine_reordered(lo, 76.0, ro)
+    check("description right of quantity and unit",
+          (ro.get("reordered"), spaced(lo[0], ro["item"]), desc_and_qty(lo[0], ro),
+           spaced(lo[0], ro["unit"]), [w["text"] for w in desc_words(lo[0], ro)]),
+          (True, "1", ("BARRICADES, SIGNS", "18"), "MO", ["BARRICADES,", "SIGNS"]))
+    check("the usual order keeps the usual ranges",
+          build_ranges(hb, 612.0).get("reordered"), None)
     return out

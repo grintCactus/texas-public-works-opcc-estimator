@@ -46,6 +46,7 @@ try:
     item_family = _pb.item_family
     extract_size_in = _pb.extract_size_in
     lf_width_size = _pb.lf_width_size
+    size_is_thickness = _pb.size_is_thickness
     unit_from_description = _pb.unit_from_description
     KNOWN_UNITS = set(_pb.KNOWN_UNITS)
     read_xlsx = _pb.read_xlsx
@@ -90,6 +91,9 @@ except Exception as e:  # noqa: BLE001
 
     def lf_width_size(r):  # type: ignore[misc]
         return r.get("size_in")
+
+    def size_is_thickness(desc_norm):  # type: ignore[misc]
+        return False
 
     def unit_from_description(unit_raw, desc):  # type: ignore[misc]
         return ""
@@ -150,7 +154,10 @@ def classify_line(description, unit_raw):
       5. size_in   = lf_width_size(row) -- an LF sidewalk / trail line is
                      sized by its width in feet (after the unit, which it
                      depends on)
-      6. size_bucket = build_master.size_bucket(size_in)
+      6. size_in   = None on an EA / LS line whose size is a thickness
+                     ("4'x4' 4\" Thick Reinf. Conc. Pad", EA) -- the parser's
+                     round-9 row pass (thickness_is_no_size below)
+      7. size_bucket = build_master.size_bucket(size_in)
     Returns the fields the estimator's line dict needs, plus `unit_known`.
     """
     desc = str(description or "").strip()
@@ -165,6 +172,7 @@ def classify_line(description, unit_raw):
             unit = u2
     size_in = lf_width_size({"unit": unit, "item_family": fam,
                              "description": desc, "size_in": size_in})
+    size_in = thickness_is_no_size(unit, fam, dn, size_in)
     return {
         "desc_norm": dn,
         "family": fam,
@@ -182,7 +190,20 @@ def resize(description, unit, family):
     size_in = extract_size_in(norm_desc(desc))
     size_in = lf_width_size({"unit": unit, "item_family": family,
                              "description": desc, "size_in": size_in})
+    size_in = thickness_is_no_size(unit, family, norm_desc(desc), size_in)
     return size_in, size_bucket(size_in)
+
+
+def thickness_is_no_size(unit, family, desc_norm, size_in):
+    """The parser's round-9 row pass (src/parse_bidtabs.py main(): "a
+    thickness is no size on an EA / LS line"), so a takeoff line is sized as
+    the panel row it would have been: per SY / SF / CY a thickness IS the size;
+    a piece priced EACH or as a lump with "4 in thick" in its words has none.
+    Box culverts keep theirs (span x rise read as inches)."""
+    if (unit or "") in ("EA", "LS") and size_in is not None \
+            and family not in ("box_culvert",) and size_is_thickness(desc_norm):
+        return None
+    return size_in
 
 
 # ---------------------------------------------------------------------------
