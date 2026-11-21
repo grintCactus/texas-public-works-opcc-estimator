@@ -165,6 +165,11 @@ What happened:
   - On large jobs, the misses come from weakly matched main items, not from mobilization.
 - **Status:** not adopted; production is unchanged.
 
+**Weighting recent jobs more in the level correction (round 15, registered before scoring).** Half-lives of 12 and 24 months were tried.
+- **It did not help.** The price-level drift between years is a step, not a trend, so weighting recent years more fixed 2026 but pushed 2024 further off. Year-to-year level explains only 0.2% of the spread of job-total errors.
+- **A level change cannot narrow P80 anyway.** P80's margin is learned from the same centred ratios, so a correction shared by all jobs cancels out of P80.
+- **Status:** not adopted. The overshoot can only come down if single jobs are priced more accurately.
+
 **Park equipment as "not covered" (registered before scoring).** Playground units, shade structures, dog-park gear and similar vendor-priced park items are bought by model. In the bid history they spread 10–100× across jobs, and the model priced them at a fraction of the bids, about $1,000 for a $165,000 play unit. Marking them "not covered" (left out of P50 / P80, vendor quote asked for) was tested on 34 line types in 6 lettings.
 - **It did not pass.** On the two small park jobs, removing the equipment left mostly lump sums, and our mobilization there was about $140,000 against the low bidder's $25,000. The underpriced equipment had been hiding that.
 - **Status:** not adopted. It waits for the small-job lump-sum problem to be fixed, which keeps showing up in rounds 12 and 14 and here.
