@@ -883,6 +883,10 @@ def _cell_label(kind, key):
 # reused here; src/ is not changed and P50 / P80 never see it.
 
 UNIT_HINT_MIN = 5                  # a family cell is usable with 5 lettings
+#: the results alert "thin_heavy_lines": a priced line with at least this
+#: share of the expected low bid, backed by fewer earlier projects than this
+THIN_HEAVY_SHARE = 0.15
+THIN_HEAVY_MAX_PROJECTS = 3
 UNIT_CANONICAL = {"length": "LF", "area": "SY", "volume": "CY",
                   "weight": "TON", "liquid": "GAL"}
 #: unit -> (dimension, num, den): quantity in the dimension's canonical unit
@@ -1780,6 +1784,37 @@ class ProductionEngine:
                                 % (len(al), ", ".join(
                                     ln["item_no"] or ln["description"][:30]
                                     for ln in al[:6]))})
+        # The lines that carry much of the money on almost no evidence, named
+        # (2026-11-21). Presentation only: P50 / P80 are unchanged. Example:
+        # "Embankment Fill 48,600 CF" priced from the one earlier letting in
+        # CF (a geofoam fill) carried $440k of an $842k expected low bid.
+        if el:
+            heavy = sorted(
+                [ln for ln in lines if ln["status"] == "priced"
+                 and (ln.get("amount_p50") or 0) >= THIN_HEAVY_SHARE * el
+                 and 0 < (ln["evidence"].get("n_projects") or 0)
+                 < THIN_HEAVY_MAX_PROJECTS],
+                key=lambda ln: -(ln.get("amount_p50") or 0))
+            if heavy:
+                share = sum(ln["amount_p50"] for ln in heavy) / el
+                names = "; ".join(
+                    "%s (%s, %d earlier project%s)" % (
+                        (ln["description"] or ln["item_no"] or "a line")[:60],
+                        "${:,.0f}".format(ln["amount_p50"]),
+                        ln["evidence"]["n_projects"],
+                        "" if ln["evidence"]["n_projects"] == 1 else "s")
+                    for ln in heavy[:4])
+                out.append({
+                    "level": "caution", "code": "thin_heavy_lines",
+                    "text": "%s %s %.0f%% of the expected low bid but rest%s "
+                            "on fewer than %d earlier projects: %s. Check %s "
+                            "against its references and any unit hint shown "
+                            "on its line before relying on the total."
+                            % (len(heavy), "line carries" if len(heavy) == 1
+                               else "lines carry", 100 * share,
+                               "s" if len(heavy) == 1 else "",
+                               THIN_HEAVY_MAX_PROJECTS, names,
+                               "it" if len(heavy) == 1 else "them")})
         ds = r.get("degraded_dollar_share")
         if el is not None and ds and ds >= 0.5:
             out.append({"level": "caution", "code": "thin_evidence",
