@@ -160,7 +160,8 @@ What happened:
   - Today, rewriting the units of 188 city takeoffs changes P50 by more than 20% on 79 of them, and leaves 624 lines unpriced.
   - It was still not adopted, because line accuracy got worse. A rarer unit often marks a different product: seeding by the acre costs about a quarter of sod by the square yard, and sidewalk bid by the square foot runs 1.5 times the square-yard price. Converting thousand-gallon watering into gallons also pushed every quantity into the top quantity class.
 - **Converting only lines whose own unit has fewer than 5 earlier lettings** cut the unpriced lines from 624 to 42. The few converted lines were often different products or misclassified, so it did not pass either.
-- **Status:** not used for P50/P80. The worksheet will show a converted reference price as a hint ("only 2 earlier lettings in SF; 140 in SY, about $X/SF"), for the estimator to accept or not.
+- **Leaving such lines unpriced** was tested too: a line resting on fewer than 5 earlier lettings in a unit that is rare for its item type, when the usual unit has 5 or more. It touched only 15 city lettings and narrowly failed the registered test.
+- **Status:** none of the three is used for P50/P80. The worksheet shows a converted reference price as a hint, for the estimator to accept or not. For example: "only 1 earlier letting prices this in CF; 622 price it in CY: about $0.78/CF".
 
 ## Item-level accuracy
 
