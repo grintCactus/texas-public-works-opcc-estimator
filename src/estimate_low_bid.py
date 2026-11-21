@@ -473,6 +473,34 @@ ROUND10_CORE = ("muni_cells", "cmp_removal_identity", "f1_pipe_only",
 # (holdout_eval --compare-switch round11_core_not2).
 ROUND11_CORE_NOT2 = ("muni_cells", "cmp_removal_identity", "f1_pipe_only",
                      "identical_bid_owner_set")
+# ROUND 13 (handoff/scratchpad/p50fix/PREREGISTRATION_ROUND13.md, md5
+# 1710c5e7...): one batch on data snapshot 9 (parser .29, master_panel
+# ca92f1f8...) selected P_L/own -- the municipal price level of TxDOT-
+# dominated family-keyed cells, with its own forward P80 calibration (the
+# production path).  Forward, municipal 2024-26, 186 lettings both score:
+# median P80 overshoot 43.1% -> 38.0% (90% interval -7.2 to -1.1 points),
+# P80 under 16.1% -> 14.5% (2026: 17.2%, limit 21.8%), P50 median error
+# 19.1% -> 19.4%, mean |ln| 0.313 -> 0.311; TxDOT identical.  NOT confirmed
+# (own mode; the locked set is not reopened): the registered prospective
+# check (>= 40 new DFW municipal lettings dated after 2026-11-20: P80 under
+# <= 20% and median overshoot below B's on them) decides.  Until then the
+# switch stays OFF; pricing_rule(round13_l=True) turns it on
+# (holdout_eval --compare-switch round13_l).
+#   P_L  MUNI_TXDOT_LEVEL  a municipal line priced from a band cell, a family
+#        cell or F1's nearest sized cell is multiplied by R ** s (token picks
+#        are left alone).  s = the TxDOT share of that cell's lettings before
+#        D (0 for a municipal-only cell).  R = MarketLevel.ratio: exp(median
+#        ln(median municipal entry / median TxDOT entry)) over the family's
+#        BOTH-MARKET band cells at D (>= LEVEL_MIN_EACH municipal and >=
+#        LEVEL_MIN_EACH TxDOT lettings, same family_key, unit, size bucket
+#        and quantity band) when the family has >= LEVEL_MIN_CELLS_FAM of
+#        them, else over every family's when >= LEVEL_MIN_CELLS_ALL, else no
+#        change.  Not MC: no cell is swapped.
+MUNI_TXDOT_LEVEL = False           # P_L: OFF until the prospective check passes
+LEVEL_MIN_EACH = 3                 # both-market cell: >= 3 lettings per market
+LEVEL_MIN_CELLS_FAM = 3            # a family's own ratio: >= 3 such cells
+LEVEL_MIN_CELLS_ALL = 10           # the all-family ratio: >= 10 such cells
+ROUND13_L = ("muni_txdot_level",)  # the preset pricing_rule(round13_l=True)
 
 
 def _municipal(market):
@@ -594,7 +622,8 @@ def pricing_rule(size_fallback=True, removal_identity=True, comparables=True,
                  txdot_c4d1=True, coverage_scope=True, muni_cells=False,
                  cmp_removal_identity=False, f1_pipe_only=False,
                  family_cell_t2=False, identical_bid_owner_set=False,
-                 round10_core=False, round11_core_not2=False):
+                 round10_core=False, round11_core_not2=False,
+                 muni_txdot_level=False, round13_l=False):
     """Run a block under another combination of the switches; the defaults
     are production's.
     coverage_scope=False: the full-total scope before 2026-11-20 (every line
@@ -604,13 +633,16 @@ def pricing_rule(size_fallback=True, removal_identity=True, comparables=True,
     round10_core=True is the preset that turns on exactly those five
     (ROUND10_CORE) -- holdout_eval --compare-switch round10_core.
     round11_core_not2=True: round 11's selected arm, the same without
-    family_cell_t2 (ROUND11_CORE_NOT2)."""
+    family_cell_t2 (ROUND11_CORE_NOT2).
+    muni_txdot_level: round 13's P_L (default OFF); round13_l=True is its
+    preset (ROUND13_L) -- holdout_eval --compare-switch round13_l."""
     g = globals()
     cmp_mod = g["comparables"]          # the module (the argument shadows it)
     old = (g["SIZE_FALLBACK"], item_tokens.REMOVAL_IDENTITY,
            g["COMPARABLES_BLEND"], g["TXDOT_C4D1"], g["COVERAGE_SCOPE"],
            g["MUNI_CELLS"], cmp_mod.MUNI_REMOVAL_IDENTITY, g["F1_PIPE_ONLY"],
            g["FAMILY_CELL_T2"], g["IDENTICAL_BID_OWNER_SET"])
+    old13 = g["MUNI_TXDOT_LEVEL"]
     core = bool(round10_core)
     c11 = bool(round11_core_not2)       # round 11: round10_core without T2
     g["SIZE_FALLBACK"], g["COMPARABLES_BLEND"] = size_fallback, comparables
@@ -621,6 +653,7 @@ def pricing_rule(size_fallback=True, removal_identity=True, comparables=True,
     g["F1_PIPE_ONLY"] = bool(f1_pipe_only) or core or c11
     g["FAMILY_CELL_T2"] = bool(family_cell_t2) or core
     g["IDENTICAL_BID_OWNER_SET"] = bool(identical_bid_owner_set) or core or c11
+    g["MUNI_TXDOT_LEVEL"] = bool(muni_txdot_level) or bool(round13_l)
     item_tokens.REMOVAL_IDENTITY = removal_identity
     try:
         yield
@@ -630,6 +663,7 @@ def pricing_rule(size_fallback=True, removal_identity=True, comparables=True,
             g["MUNI_CELLS"], cmp_mod.MUNI_REMOVAL_IDENTITY, \
             g["F1_PIPE_ONLY"], g["FAMILY_CELL_T2"], \
             g["IDENTICAL_BID_OWNER_SET"] = old
+        g["MUNI_TXDOT_LEVEL"] = old13
 
 
 class SizeCells:
@@ -1021,6 +1055,100 @@ class MobRatio:
         return self.lets if D is None else self.lets[:bisect.bisect_left(self.lets, D)]
 
 
+class MarketLevel:
+    """P_L (MUNI_TXDOT_LEVEL): the municipal / TxDOT price level of pooled
+    reference cells, from the rows that may train.
+
+      share(kind, key, D)  the TxDOT share of the lettings (available
+                           strictly before D; D None: all) of the reference
+                           cell `key` of table `kind` ("tok", "band", "fam":
+                           _reference_cells' keys); None if the cell is empty
+      ratio(base_family, D) (R, scope, cells): over the family's BOTH-MARKET
+                           band cells at D -- a (family_key, unit, size
+                           bucket, quantity band) cell with >= LEVEL_MIN_EACH
+                           municipal and >= LEVEL_MIN_EACH TxDOT lettings
+                           before D -- R = exp(median over cells of ln(median
+                           municipal entry price / median TxDOT entry price)),
+                           when >= LEVEL_MIN_CELLS_FAM cells ("family");
+                           else the same over every family's both-market
+                           cells when >= LEVEL_MIN_CELLS_ALL ("all"); else
+                           (None, "none", n).  An entry is one letting's
+                           median unit price in the cell (the tables' grain).
+    The family of a cell is _base_family(family_key) (a removal-only cell
+    counts with its family)."""
+
+    def __init__(self, cells, pkmk, avail):
+        self.cells, self.mk, self.av = cells, pkmk, avail
+        self.fam = collections.defaultdict(list)
+        self.all = []
+        for (fk, un, sz, bd), lets in cells["band"].items():
+            m, t = [], []
+            for pk, es in lets.items():
+                a = avail.get(pk, NEVER)
+                for e in es:
+                    (m if pkmk.get(pk) == "municipal" else t).append(
+                        (a, pk, e[0]))
+            if len({x[1] for x in m}) >= LEVEL_MIN_EACH and \
+                    len({x[1] for x in t}) >= LEVEL_MIN_EACH:
+                m.sort()
+                t.sort()
+                c = (len(self.all), m, [x[0] for x in m], t, [x[0] for x in t])
+                self.fam[_base_family(fk or "")].append(c)
+                self.all.append(c)
+        self.memo_c, self.memo_r, self.memo_a = {}, {}, {}
+
+    def lettings(self):
+        """Every letting in a both-market cell (the leak guards' view)."""
+        return {x[1] for c in self.all for x in c[1] + c[3]}
+
+    def _lnr(self, c, D):
+        cid, m, md, t, td = c
+        Lm = len(m) if D is None else bisect.bisect_left(md, D)
+        Lt = len(t) if D is None else bisect.bisect_left(td, D)
+        hit = self.memo_c.get((cid, Lm, Lt), 0)
+        if hit != 0:
+            return hit
+        mm, tt = m[:Lm], t[:Lt]
+        r = None
+        if len({x[1] for x in mm}) >= LEVEL_MIN_EACH and \
+                len({x[1] for x in tt}) >= LEVEL_MIN_EACH:
+            r = (math.log(statistics.median([x[2] for x in mm]))
+                 - math.log(statistics.median([x[2] for x in tt])))
+        self.memo_c[(cid, Lm, Lt)] = r
+        return r
+
+    def _all(self, D):
+        if D not in self.memo_a:
+            v = [x for x in (self._lnr(c, D) for c in self.all)
+                 if x is not None]
+            self.memo_a[D] = ((math.exp(statistics.median(v)), "all", len(v))
+                              if len(v) >= LEVEL_MIN_CELLS_ALL
+                              else (None, "none", len(v)))
+        return self.memo_a[D]
+
+    def ratio(self, base_family, D=None):
+        key = (base_family, D)
+        if key not in self.memo_r:
+            v = [x for x in (self._lnr(c, D)
+                             for c in self.fam.get(base_family, ()))
+                 if x is not None]
+            if len(v) >= LEVEL_MIN_CELLS_FAM:
+                self.memo_r[key] = (math.exp(statistics.median(v)), "family",
+                                    len(v))
+            else:
+                self.memo_r[key] = self._all(D)
+        return self.memo_r[key]
+
+    def share(self, kind, key, D=None):
+        by = self.cells.get(kind, {}).get(key)
+        if not by:
+            return None
+        pks = [pk for pk in by if D is None or self.av.get(pk, NEVER) < D]
+        if not pks:
+            return None
+        return sum(1 for pk in pks if self.mk.get(pk) != "municipal") / len(pks)
+
+
 class T1State:
     """T1's D1 discount, the model totals its comparables adjustment reads,
     and the mobilization ratio, for one pricing pass.
@@ -1313,6 +1441,11 @@ class Tables:
             self.ref_m = _MuniMap(cm["fam"], None, MUNI_CELLS_NMIN, "fam", {})
         # low confidence: the earlier low bidders' share per class (display only)
         self.lowconf = LowConfShare(pool, avail) if LOWCONF else None
+        # P_L (round 13): the market levels over every letting (forward
+        # reads still stop before the schedule's own bid date)
+        self.market_level = (MarketLevel(_reference_cells(pool),
+                                         {r[1]: r[0] for r in pool}, avail)
+                             if MUNI_TXDOT_LEVEL else None)
         return self
 
     # -- the basis check, run rather than asserted in a comment -------------
@@ -1515,6 +1648,34 @@ def escalation(tab, from_year, to_year, market):
                                         if not k.startswith("_"))}
 
 
+def _r13_level(tab, out, kind, key, fk, market):
+    """P_L (MUNI_TXDOT_LEVEL; round 13): a priced municipal line from a
+    "band" cell or a "fam" cell (the family cell, the substituted or unsized
+    bucket, or F1's nearest sized cell) x R ** s (MarketLevel): s = that
+    cell's TxDOT share at D, 0 for a municipal-only (MC) cell; R = the
+    municipal / TxDOT level of the line's family.  Token picks are not
+    passed here.  Writes txdot_level into the line's trace."""
+    if not _municipal(market) or not out.get("price"):
+        return
+    ml = getattr(tab, "market_level", None)
+    if ml is None:
+        return
+    D = getattr(tab, "D", None)
+    sc = 0.0 if out.get("muni_cell") else ml.share(kind, key, D)
+    if not sc:
+        return
+    R, scope, nc = ml.ratio(_base_family(fk or ""), D)
+    if R is None:
+        return
+    fct = R ** sc
+    out["price"] *= fct
+    out["txdot_level"] = {"share": sc, "R": R, "scope": scope, "cells": nc,
+                          "factor": fct}
+    out["why"].append(
+        "P_L: TxDOT share %.2f of the cell's lettings; municipal/TxDOT level "
+        "%.4f (%s, %d cells): x %.4f" % (sc, R, scope, nc, fct))
+
+
 def item_market_price(tab, family, unit, quantity, size_bucket="",
                       to_year=None, market="municipal",
                       description="", size_in=None):
@@ -1629,8 +1790,10 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
     rb_row = None
     if qb and tab.ref_band:
         rb_row = tab.ref_band.get((fk, unit, size_bucket, qb))
+        _kb13 = (fk, unit, size_bucket, qb)
         if rb_row is None and not f1:          # F1: never the unsized cell
             rb_row = tab.ref_band.get((fk, unit, "", qb))
+            _kb13 = (fk, unit, "", qb)
         if rb_row is not None and (_f(rb_row.get("n_projects")) or 0) < 2:
             rb_row = None
     if rb_row is not None:
@@ -1662,6 +1825,8 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
             # No band shape adjustment here, on purpose: the band is already
             # in the key, so applying a multiplier on top would move the price
             # out of the band it was just measured in.
+            if MUNI_TXDOT_LEVEL:
+                _r13_level(tab, out, "band", _kb13, fk, market)
             return out
 
     # Tier 2: the pooled family median, scaled into this item's band.
@@ -1716,6 +1881,7 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
                 out["removal_no_cell"] = True
             return out
         c = min(cands)
+        _k13 = c[3]
         row, sr = c[4], c[5]
         row = tab.ref.get(c[3], row)          # MC: municipal row if it qualifies
         k, kinfo = si.k_at(fk, unit, D)
@@ -1730,6 +1896,7 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
                               size_in, c[3][2], sr, size_in, sr, k))
     else:
         row = tab.ref.get((fk, unit, size_bucket))
+        _k13 = (fk, unit, size_bucket)
         if row is not None and FAMILY_CELL_T2 and _municipal(market) \
                 and (_f(row.get("n_projects")) or 0) < T2_MIN:
             row = None                              # T2: fall through
@@ -1745,12 +1912,14 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
         pick = max(vetted, key=lambda kv: _f(kv[1].get("n_projects")) or 0)             if vetted else None
         if pick is not None:
             row = tab.ref.get(pick[0], pick[1])   # MC: municipal row if it qualifies
+            _k13 = pick[0]
             out["why"].append("size_bucket %r not in the reference; "
                               "substituted the best-evidenced bucket %r (%s "
                               "projects)" % (size_bucket, pick[0][2],
                                              pick[1].get("n_projects")))
         else:
             row = tab.ref.get((fk, unit, ""))
+            _k13 = (fk, unit, "")
             if row is not None and FAMILY_CELL_T2 and _municipal(market) \
                     and (_f(row.get("n_projects")) or 0) < T2_MIN:
                 row = None                          # T2: fall through
@@ -1827,6 +1996,8 @@ def item_market_price(tab, family, unit, quantity, size_bucket="",
                           % (v, to_year, extra))
     out["vintage_year"] = v
     out["price"] = p
+    if MUNI_TXDOT_LEVEL:
+        _r13_level(tab, out, "fam", _k13, fk, market)
     return out
 
 
@@ -3463,6 +3634,11 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
     pool = _reference_pool(sizes)
     cells = _reference_cells(pool, sizes, avail)
     lsz = _line_sizes(pool, sizes) if sizes is not None else {}
+    # P_L (round 13): the market levels from the training rows; built for
+    # the leak guards whenever `fitted` is asked for, priced from only when
+    # MUNI_TXDOT_LEVEL is on
+    ml13 = (MarketLevel(cells, {r[1]: r[0] for r in pool}, avail)
+            if (MUNI_TXDOT_LEVEL or fitted is not None) else None)
     pools = comparables_pools(pool, avail)
     t1 = T1State(pool, avail) if TXDOT_C4D1 else None
     kinds_m, cells_m = muni_forward_kinds(pool, avail)      # MC
@@ -3473,7 +3649,7 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
             # (nothing is priced from them then)
             cells_m = _reference_cells([r for r in pool if r[0] == "municipal"])
         fitted.update({"size_cells": cells["size"], "comparables": pools,
-                       "t1": t1, "muni_cells": cells_m})
+                       "t1": t1, "muni_cells": cells_m, "market_level": ml13})
     cov = collections.Counter()
     cov["reference_rebuild_mismatch"] = _check_reference_cells(tab, cells)
     kinds = _forward_kinds(cells, avail)
@@ -3551,6 +3727,7 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
                                         cells["size"], pools, t1,
                                         muni_kinds=kinds_m)
             ft.lowconf = lch
+            ft.market_level = ml13 if MUNI_TXDOT_LEVEL else None   # P_L
         r = estimate(ft, items, n, mk, yr or None, target={"key": pk})
         if r.get("not_covered"):
             cov["not_covered"] += 1
@@ -4828,6 +5005,67 @@ def _selftest():
         (nl27.get("history"), "implied_p50_range" in nl27,
          nb27["expected_low"] == on27["expected_low"]),
         (None, False, True))
+
+    # 29. round 13 P_L (synthetic): the market level, the share, the hook,
+    # the preset.
+    av29 = {"m1": "2023-01-01", "m2": "2023-06-01", "t1": "2023-02-01",
+            "t2": "2023-03-01", "t3": "2023-04-01", "m3": "2024-01-01",
+            "m4": "2023-07-01", "t4": "2023-08-01"}
+    mk29 = {k: ("municipal" if k.startswith("m") else "txdot") for k in av29}
+    fam29 = {("pipe", "LF", "12"): {"m1": [(100.0, 50.0, 2023.0, "a")],
+                                    "t1": [(80.0, 500.0, 2023.0, "b")]},
+             ("pipe", "LF", "24"): {"m2": [(220.0, 40.0, 2023.0, "c")],
+                                    "t2": [(180.0, 400.0, 2023.0, "d")],
+                                    "m3": [(999.0, 10.0, 2024.0, "e")]},
+             ("pipe", "LF", ""): {"t3": [(30.0, 100.0, 2023.0, "f")]}}
+    band29 = {}
+    for i in range(3):
+        band29[("conc", "SY", "", "b%d" % i)] = {
+            "m1": [(120.0, 1.0, 2023.0, "a")], "m2": [(120.0, 1.0, 2023.0, "a")],
+            "m4": [(120.0, 1.0, 2023.0, "a")],
+            "t1": [(100.0, 1.0, 2023.0, "b")], "t2": [(100.0, 1.0, 2023.0, "b")],
+            "t3": [(100.0, 1.0, 2023.0, "b")]}
+    band29[("conc#rm", "SY", "", "b9")] = {"m1": [(10.0, 1.0, 2023.0, "a")]}
+    ml29 = MarketLevel({"band": band29, "fam": fam29, "tok": {}}, mk29, av29)
+    r29 = ml29.ratio("conc", "2023-12-31")
+    chk("29 market level: family scope, 3 both-market cells",
+        (round(r29[0], 6), r29[1], r29[2]), (1.2, "family", 3))
+    chk("29 market level: too few lettings before D -> none (all < 10)",
+        ml29.ratio("conc", "2023-06-15")[1:], ("none", 0))
+    chk("29 market level: other family falls back to all (< 10 -> none)",
+        ml29.ratio("pipe", "2023-12-31")[1:], ("none", 3))
+    chk("29 share: TxDOT share of the cell's lettings before D",
+        (ml29.share("fam", ("pipe", "LF", "24"), "2023-12-31"),
+         ml29.share("fam", ("pipe", "LF", "24"), "2025-01-01"),
+         ml29.share("fam", ("nope", "LF", ""), "2025-01-01")),
+        (0.5, 1.0 / 3.0, None))
+
+    class _T29:
+        pass
+    t29 = _T29()
+    t29.D, t29.shape = "2023-12-31", {}
+    t29.market_level = ml29
+    old29 = MUNI_TXDOT_LEVEL
+    g29 = globals()
+    g29["MUNI_TXDOT_LEVEL"] = True
+    o29e = {"price": 100.0, "n_projects": 3, "why": []}
+    _r13_level(t29, o29e, "band", ("conc", "SY", "", "b0"), "conc",
+               "municipal")
+    chk("29 P_L: x R ** s (s 3/6 = 0.5 at D)",
+        round(o29e["price"], 6), round(100.0 * 1.2 ** 0.5, 6))
+    o29f = {"price": 100.0, "n_projects": 3, "why": [], "muni_cell": True}
+    _r13_level(t29, o29f, "band", ("conc", "SY", "", "b0"), "conc",
+               "municipal")
+    chk("29 P_L: a municipal-only (MC) cell -> s 0, unchanged",
+        o29f["price"], 100.0)
+    o29d = {"price": 100.0, "n_projects": 3, "why": []}
+    _r13_level(t29, o29d, "band", ("conc", "SY", "", "b0"), "conc", "txdot")
+    chk("29 P_L: a TxDOT line is left alone", o29d["price"], 100.0)
+    g29["MUNI_TXDOT_LEVEL"] = old29
+    with pricing_rule(round13_l=True):
+        on29 = MUNI_TXDOT_LEVEL
+    chk("29 preset round13_l sets / restores", (on29, MUNI_TXDOT_LEVEL),
+        (True, False))
 
     print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
     return ok

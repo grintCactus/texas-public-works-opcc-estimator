@@ -90,6 +90,11 @@ Municipal figures use the "covered" scope (see below). The discount uses each le
   - On small jobs, lowering the lump sums exposed unit-priced lines that run low. On large jobs, most of the misses were too large for a few percent to rescue.
 - **Status:** not adopted; production is unchanged. The code is kept in a development copy, switched off.
 
+**Waiting for new lettings (round 13, registered before scoring).** Municipal lines priced from cells dominated by TxDOT lettings were moved to the municipal price level.
+- **Development result:** the median overshoot fell from 43% to 38%, mostly because the P80 margin got tighter.
+- **Status:** as registered, it stays switched off until 40 new municipal lettings after 2026-11-20 confirm it (`data/test_holdout/REGISTRATIONS.md`, section 6).
+- **A second change** shrank prices backed by a single earlier letting. It fixed the worst single lines (a 48-inch water line went from 3.7× to 0.8× the bids), but it did not make job totals more accurate.
+
 ## Item-level accuracy
 
 How close the price of each kind of line item is, before the lines are added up. Job totals are more accurate than single lines, because line errors partly cancel.

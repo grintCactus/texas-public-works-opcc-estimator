@@ -351,3 +351,26 @@ Everything else as in the original registration 5: snapshot 6 is made after the 
   - Log `reports/measurements/holdout_confirm_4_round10_core_20261120.txt`;
   - Two access-log rows: start 11:22:53, done 11:23:42.
 - **Note**: the locked test set has now been opened 4 times. Future confirmations use new lettings after 2026-11-20, as a prospective check.
+
+## 6. Municipal changes waiting for a prospective check (recorded 2026-11-20 19:0x)
+
+The locked test set has been opened four times. Municipal changes chosen in later development rounds are therefore confirmed on new DFW municipal lettings dated after 2026-11-20. Until a change passes its check, it stays in the code with its switch off.
+
+| Round | Change | Preset | Registration | Development result (municipal, forward) |
+|---|---|---|---|---|
+| 11 | Municipal price cells + E + F1P + D (CORE without T2) | `round11_core_not2` | handoff/scratchpad/p50fix/PREREGISTRATION_ROUND11.md, md5 2ffee091… | snapshot 7 (parser .27), 2024–26: median overshoot 51.4% → 38.2%, P80 under 16.6% |
+| 13 | L: municipal price level for band / family-tier cells dominated by TxDOT lettings | `round13_l` | handoff/scratchpad/p50fix/PREREGISTRATION_ROUND13.md, md5 1710c5e7… | snapshot 9 (parser .29), 2024–26: overshoot 43.1% → 38.0% (−5.2, 90% interval −7.2 to −1.1), P80 under 16.1% → 14.5%, P50 error 19.1% → 19.4% |
+
+**Rule, for each change separately:**
+- **When:** once at least 40 DFW municipal lettings dated after 2026-11-20 are in the data and scorable.
+- **How:** score production and the change forward on them, paired, with the code and data of that time.
+- **Pass:** the change's P80 is under the low bid on at most 20% of them, AND its median overshoot is strictly below production's on the same lettings.
+- **Outcome:** a change that passes is switched on; a change that fails stays off and is reported as is.
+
+**Notes on round 13:**
+- **Where the gain comes from:** mostly from a tighter forward P80 margin (multiplier 1.309 → 1.288). With production's margin it is −3.1 points, and that interval crosses 0. This is why it waits for the check.
+- **Report jobs of $2M and more separately.** On those its under-rate went from 25.9% to 27.6% in development.
+- **Round 13's other arms:** shrinking prices backed by a single earlier letting (T), and T+L, did not pass or tied and lost on simplicity.
+- **Round 12** (lump sums as a share of the job, size-classed centring) did not pass and is not pending.
+- **Records:** reports/p50_fix_round13.md; patch applied 2026-11-20 19:0x with the switch off. Production is unchanged.
+

@@ -455,12 +455,14 @@ def schedule_of(d, pk=None, lsz=None):
 
 
 def price_forward(pks, lets, avail, tab, kinds, tok_inv, findex, fdisc, cov, audit=None,
-                  lsz=None, size_cells=None, pools=None, targets=None, muni_kinds=None):
+                  lsz=None, size_cells=None, pools=None, targets=None, muni_kinds=None,
+                  market_level=None):
     """estimate() on ForwardTables at each letting's own date, calibrate_forward's
     loop line for line.  Returns {key: record} for the lettings that pass.
     lsz / size_cells: F1's line sizes and size cells; pools: V2's comparables
     pools; targets: a held-out letting's own owner and work type; muni_kinds:
-    MC's municipal-only cells (training rows only)."""
+    MC's municipal-only cells (training rows only); market_level: P_L's
+    municipal / TxDOT levels (round 13; training rows only)."""
     out = {}
     ft_d, ft = None, None
     for pk in sorted(pks, key=lambda k: (avail.get(k, e.NEVER), k)):
@@ -480,6 +482,7 @@ def price_forward(pks, lets, avail, tab, kinds, tok_inv, findex, fdisc, cov, aud
             ft_d, ft = D, e.ForwardTables(tab, kinds, tok_inv, D, findex.at(D),
                                           pooled, muni, size_cells, pools,
                                           muni_kinds=muni_kinds)
+            ft.market_level = market_level          # P_L (None unless it is on)
         tgt = (targets or {}).get(pk) or {"key": pk}
         r = e.estimate(ft, items, n, mk, yr or None, target=tgt)
         if r.get("not_covered"):
@@ -589,6 +592,11 @@ def evaluate(panel, tab, base_index, excluded, test_keys, meta, audit=None):
     out["train_pool_rows"] = len(train_pool)
     step("training reference cells: %d price rows (held-out files removed)" % len(train_pool))
     cells = e._reference_cells(train_pool, train_sizes, avail)
+    # P_L (round 13): the municipal / TxDOT levels from the training rows
+    # only (a function of `cells`, which the audit already checks)
+    market_level = (e.MarketLevel(cells, {r[1]: r[0] for r in train_pool}, avail)
+                    if getattr(e, "MUNI_TXDOT_LEVEL", False) else None)
+    out["market_level"] = market_level
     # MC: municipal-only cells from the training rows only
     muni_kinds, muni_cells = e.muni_forward_kinds(train_pool, avail)
     if audit is not None and muni_cells is not None:
@@ -645,7 +653,7 @@ def evaluate(panel, tab, base_index, excluded, test_keys, meta, audit=None):
     cov = {}
     recs = price_forward(train_ids + test_ids, lets, avail, tab, kinds, cells["tok_inv"],
                          findex, fdisc, cov, audit, lsz, cells["size"], pools, targets,
-                         muni_kinds)
+                         muni_kinds, market_level)
     for pk in train_ids:
         out["cov_train"][cov[pk]] += 1
     train_recs = sorted((recs[pk] for pk in train_ids if pk in recs),
