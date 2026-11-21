@@ -96,6 +96,20 @@ SECTION_BANNER_RE = re.compile(
     r"(?:\s+bid)?(?:\s*(?:#|no\.?)?\s*(?:\d{1,2}|[a-z]|[ivx]{1,4})\b)?(?:\s*[:\-].{0,60})?)\W*$", re.I)
 
 
+# (round 11, .32) a NUMBERED group heading that is a section banner.  Frisco's bid-system export numbers
+# its groups ('1 MOBILIZATION', '2 DEMO', ... '11 ALTERNATES') and items within them ('#11-1'); the
+# alternates' group (#11-1 ... #11-22 of Frisco on the Green, $2.8M of A & C's $5.5M) was read as base
+# bid, so every bidder's base was its total with alternates.  A bare group number (one or two digits) in
+# the item column beside a description that is a section banner (SECTION_BANNER_RE), with no quantity,
+# unit or price on the line, opens that section; '1 MOBILIZATION' and an item without its prices stay.
+def numbered_banner(item_no, desc, qty_s, unit_s):
+    """The section label of a numbered group heading ('11', 'ALTERNATES'), or None."""
+    if (re.fullmatch(r"\d{1,2}", (item_no or "").strip()) and desc and not qty_s and not unit_s
+            and SECTION_BANNER_RE.match(desc)):
+        return desc.strip()[:60].upper()
+    return None
+
+
 DASHES = {"‐": "-", "‑": "-", "–": "-", "—": "-",
           "−": "-", " ": " "}
 
@@ -199,8 +213,18 @@ def extract_words_robust(page):
         W = float(getattr(page, "width", 0) or 0) or max(
             w["x1"] for w in words)
         fixed = []
+        # (round 11, .32) the few words a turned page prints UPRIGHT are no part of its table: an
+        # agenda packet's page stamp ('Packet Pg. 415', '7.C.a') put on after the table was turned.
+        # Turned with the table they landed in its item column, reversed ('.gP 59'), and Celina's
+        # Ownsby Parkway item 59 (2 EA, $6,375 / $5,000 / $3,915 ...) was no item.  Left out only
+        # where they are a sliver of the page's words (under 5%): a page of mixed orientation keeps all.
+        stray = up and up < 0.05 * len(words)
+        if stray:
+            WORD_STATS["upright_stamp_words_dropped"] += up
         for k in sorted(rows, reverse=True):
             for w in sorted(rows[k], key=lambda w: -w["top"]):
+                if stray and w.get("upright", True):
+                    continue
                 # Horizontal axis IS flipped (reading order within a row runs
                 # against the original top), the vertical axis is NOT.  Both
                 # flipped put the page upside down: the column header landed at
@@ -382,6 +406,14 @@ def find_header(line):
             if nxt in ("PRICE", "COST", "BID"):
                 continue
             if ws[i]["x0"] < unit_price_x[0]:
+                return ws[i]["x0"]
+        # (round 11, .32) 'U/M' (the coordinate reading of Hickory Creek's and Coppell's 'ITEM # |
+        # DESCRIPTION | U/M | QTY' tabs) and a bare 'MEASURE' caption (Collin County's 'Quantity | Measure
+        # | Unit Cost') name the unit column too, where no UNIT caption does
+        for i, t in enumerate(txts):
+            if t in ("U/M", "U.M.", "UOM.", "U/O/M", "MEASURE") and ws[i]["x0"] < unit_price_x[0]:
+                if t == "MEASURE" and i > 0 and txts[i - 1] in ("OF", "UNIT", "UNITS"):
+                    continue          # 'UNIT OF MEASURE' is read at its UNIT above
                 return ws[i]["x0"]
         return None
 
@@ -1263,6 +1295,12 @@ def parse_pdf_by_coords(path):
                     txt_left = (item_no + " " + desc).strip()
                     if not txt_left:
                         continue
+                    nb = numbered_banner(item_no, desc, qty_s, unit_s)
+                    if nb:
+                        section = nb                  # (round 11) '11 ALTERNATES'
+                        WORD_STATS["numbered_section_banners"] += 1
+                        events.append(("stop", l))
+                        continue
                     if ITEM_RE.match(item_no):
                         numbered = (l, item_no, desc)
                         continue
@@ -1281,7 +1319,9 @@ def parse_pdf_by_coords(path):
                     # from the item column, as its 'Base Bid' / 'Alternate 1' banners do
                     if (letters and letters.upper() == letters and len(txt_left) > 4
                             and not qty_s and not (ranges.get("reordered") and not item_no)):
-                        section = txt_left[:60].upper()
+                        # (round 11) a group number glued to its title ('9ALTERNATES', Frisco's Buffalo
+                        # Ridge Park tab) is spaced, so the title reads as the section it names
+                        section = re.sub(r"^(\d{1,2})(?=[A-Z]{3})", r"\1 ", txt_left[:60].upper())
                         events.append(("stop", l))
                     elif desc:
                         # a wrapped description line -- which item it belongs to
@@ -1889,4 +1929,44 @@ def selftest_checks():
           (True, "1", ("BARRICADES, SIGNS", "18"), "MO", ["BARRICADES,", "SIGNS"]))
     check("the usual order keeps the usual ranges",
           build_ranges(hb, 612.0).get("reordered"), None)
+
+    # 16a. (round 11) a numbered group heading that is a section banner
+    check("numbered group headings", [numbered_banner(*a) for a in (
+        ("11", "ALTERNATES", "", ""), ("9", "Alternates", "", ""), ("1", "MOBILIZATION", "", ""),
+        ("11", "ALTERNATES", "1", "LS"), ("#11-1", "ALTERNATES", "", ""), ("2", "Alternate 1: Bowser Road", "", ""),
+        ("12", "Alternate items are priced on sheet 3", "", ""))],
+          ["ALTERNATES", "ALTERNATES", None, None, None, "ALTERNATE 1: BOWSER ROAD", None])
+
+    # 16. (round 11) 'U/M' and a bare 'MEASURE' name the unit column; 'UNIT OF MEASURE' still at its UNIT
+    def hdr(words):
+        return find_header(group_lines([_sw(t, x, 60, x1) for t, x, x1 in words])[0])
+    hu = hdr((("ITEM", 10, 30), ("DESCRIPTION", 60, 120), ("U/M", 300, 315), ("QTY", 330, 345),
+              ("UNIT", 370, 385), ("PRICE", 387, 410), ("TOTAL", 420, 445), ("PRICE", 447, 470)))
+    hm = hdr((("Item", 10, 30), ("Description", 60, 120), ("Quantity", 300, 330), ("Measure", 340, 370),
+              ("Unit", 390, 405), ("Cost", 407, 425), ("Total", 450, 470)))
+    hn = hdr((("Item", 10, 30), ("Description", 60, 120), ("Quantity", 300, 330), ("Unit", 335, 350),
+              ("of", 352, 360), ("Measure", 362, 392), ("Unit", 400, 415), ("Cost", 417, 435),
+              ("Total", 450, 470)))
+    hx = hdr((("Item", 10, 30), ("Description", 60, 120), ("Quantity", 300, 330),
+              ("Unit", 390, 405), ("Cost", 407, 425), ("Total", 450, 470)))
+    check("U/M and MEASURE are unit captions",
+          [hu["unit_x"], hm["unit_x"], hn["unit_x"], hx["unit_x"]], [300.0, 340.0, 335.0, None])
+
+    # 17. (round 11) a turned page: the few UPRIGHT words (an agenda packet's page stamp) are no part of
+    #     its table; a page whose upright words are many keeps them all
+    class _Page(object):
+        def __init__(self, ws):
+            self.ws, self.width, self.height = ws, 792.0, 1224.0
+
+        def extract_words(self, **kw):
+            return [dict(w) for w in self.ws]
+    turned = [dict(_sw("x%d" % k, 40 + 12 * (k % 10), 30 + 20 * (k // 10), 50 + 12 * (k % 10)), upright=False)
+              for k in range(60)]
+    stamp = [dict(_sw(t, x, 1209, x + 20), upright=True) for t, x in (("Packet", 713), ("Pg.", 748), ("415", 766))]
+    got = [w["text"] for w in extract_words_robust(_Page(turned + stamp))]
+    check("upright stamp words on a turned page are dropped",
+          (len(got), any(t in got for t in ("tekcaP", ".gP", "514", "Packet", "415"))), (60, False))
+    many = [dict(_sw("u%d" % k, 40 + 12 * k, 600, 50 + 12 * k), upright=True) for k in range(20)]
+    got2 = extract_words_robust(_Page(turned + many))
+    check("a turned page with many upright words keeps them", len(got2), 80)
     return out

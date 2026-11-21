@@ -77,13 +77,13 @@ FORBIDDEN_INPUTS = ("opcc", "opcc_total", "engineer_estimate",
 #: adopts an estimator change and re-scores.
 MARKET_ACCURACY = {
     "municipal": {"label": "City / municipal (DFW) lettings, 2024-26",
-                  "lettings": 210, "p50_median_error": 0.196,
-                  "p80_under": 0.148, "median_overshoot": 0.466,
-                  "as_of": "2026-11-21 (parser .31, 57 more city tabs)"},
+                  "lettings": 224, "p50_median_error": 0.205,
+                  "p80_under": 0.143, "median_overshoot": 0.461,
+                  "as_of": "2026-11-21 (parser .32, 58 more city tabs)"},
     "txdot": {"label": "TxDOT (DFW counties) lettings, 2023-26",
               "lettings": 807, "p50_median_error": 0.16,
               "p80_under": 0.16, "median_overshoot": 0.315,
-              "as_of": "2026-11-21 (parser .31)"},
+              "as_of": "2026-11-21 (parser .32)"},
 }
 
 COVERAGE_LABELS = {
