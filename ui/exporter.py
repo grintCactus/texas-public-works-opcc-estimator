@@ -378,23 +378,26 @@ def takeoff_template_xlsx() -> bytes:
     ws.sheet_view.showGridLines = False
     for col, width in zip("ABCDE", (11, 60, 10, 13, 22)):
         ws.column_dimensions[col].width = width
+    from worksheet import text_lines
     ws.merge_cells("A1:E1")
     ws["A1"] = TEMPLATE_NOTES[0]
-    ws["A1"].font = Font(bold=True, size=14)
+    # Arial throughout: Calibri, the default, is missing on a Mac without
+    # Office, where previews fall back to a serif
+    ws["A1"].font = Font(name="Arial", bold=True, size=14)
     ws.row_dimensions[1].height = 24
     for i, text in enumerate(TEMPLATE_NOTES[1:], start=2):
         ws.merge_cells(start_row=i, start_column=1, end_row=i, end_column=5)
         c = ws.cell(row=i, column=1, value=text)
-        c.font = Font(size=10, color="4B5563")
+        c.font = Font(name="Arial", size=10, color="4B5563")
         c.alignment = Alignment(wrap_text=True, vertical="top")
-        ws.row_dimensions[i].height = 28
+        ws.row_dimensions[i].height = 12.75 * text_lines(text, 11 + 60 + 10 + 13 + 22) + 4
     head = len(TEMPLATE_NOTES) + 2            # one blank row, then the header
     first, last = head + 1, head + TEMPLATE_ROWS
     thin = Side(style="thin", color="BFBFBF")
     box = Border(left=thin, right=thin, top=thin, bottom=thin)
     for j, name in enumerate(TEMPLATE_HEADER, start=1):
         c = ws.cell(row=head, column=j, value=name)
-        c.font = Font(bold=True)
+        c.font = Font(name="Arial", size=10, bold=True)
         c.fill = PatternFill("solid", fgColor="D9D9D9")
         c.border = box
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -403,6 +406,7 @@ def takeoff_template_xlsx() -> bytes:
         for j in range(1, 6):
             c = ws.cell(row=r, column=j)
             c.border = box
+            c.font = Font(name="Arial", size=10)
             if j == 2:
                 c.alignment = Alignment(wrap_text=True, vertical="top")
             elif j in (1, 3):

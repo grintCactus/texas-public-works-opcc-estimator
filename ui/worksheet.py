@@ -314,206 +314,350 @@ def opcc_rows(t: dict, ws: dict) -> list:
     return rows
 
 
+def _keep_border(c, **sides):
+    """Add border sides to a cell, keeping the sides it already has."""
+    from openpyxl.styles import Border
+    b = c.border
+    c.border = Border(left=sides.get("left", b.left), right=sides.get("right", b.right),
+                      top=sides.get("top", b.top), bottom=sides.get("bottom", b.bottom))
+
+
+#: Arial / Helvetica advance widths (1/1000 em), to size wrapped rows.
+_AW: Dict[str, int] = {}
+for _chars, _w in (("ijl'", 222), ("|", 260), (" !,./:;I[\\]ft", 278),
+                   ("()-`r", 333), ("{}", 334), ('"', 355), ("*", 389),
+                   ("^", 469), ("Jcksvxyz", 500),
+                   ("#$0123456789?L_abdeghnopqu", 556), ("+<=>~", 584),
+                   ("FTZ", 611), ("&ABEKPSVXY", 667), ("CDHNRUw", 722),
+                   ("GOQ", 778), ("Mm", 833), ("%", 889), ("W", 944),
+                   ("@", 1015)):
+    for _c in _chars:
+        _AW[_c] = _w
+
+
+def text_lines(text, width: float, size: float = 10.0) -> int:
+    """How many lines `text` takes wrapped in a column `width` characters
+    wide (Excel's unit) at `size` points of Arial, erring on more. openpyxl
+    cannot measure text, and a viewer that does not size rows itself (Quick
+    Look, phone and mail previews) cuts off what does not fit, so every
+    wrapped row is given its height."""
+    room = (7.0 * width - 1) * 0.94            # px, with room for font differences
+    em = size * 96.0 / 72.0 / 1000.0
+    space = _AW[" "] * em
+    n = 0
+    for para in str(text).split("\n"):
+        n += 1
+        used = 0.0
+        for word in para.split(" "):
+            w = sum(_AW.get(ch, 600) for ch in word) * em
+            if used and used + space + w > room:
+                n += 1
+                used = w
+            else:
+                used += (space if used else 0.0) + w
+            while used > room:                 # a word longer than a line
+                n += 1
+                used -= room
+    return max(1, n)
+
+
 def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     """The OPCC itself, laid out the way an OPCC is delivered (user's team,
-    2026-11-21), and generic: no firm, no names, no house style.
-    - A title, the project block (date, prepared by, project no.) and
-      ESTIMATED QUANTITIES.
-    - The items in a bordered table with wrapped text and their unit cost
-      source.
-    - Sub-Total, the contingency and Project Total.
-    - A blank interim-review block for the engineer.
-    Returns the (cell, formula) pairs to write after the text-only pass, so
-    the totals stay live in Excel."""
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-    thin = Side(style="thin", color="BFBFBF")
-    dark = Side(style="medium", color="595959")
-    box = Border(left=thin, right=thin, top=thin, bottom=thin)
-    head_fill = PatternFill("solid", fgColor="D9D9D9")
-    total_fill = PatternFill("solid", fgColor="F2F2F2")
-    bold = Font(bold=True)
-    sh.sheet_view.showGridLines = False
-    for col, wd in zip("ABCDEFGH", (9, 46, 8, 12, 13, 15, 11, 50)):
+    2026-11-21: plain and readable, one total), and generic: no firm, no
+    names. The printed block is columns A-F inside one frame:
+    - a title and the project block (date, prepared by, project no.);
+    - ESTIMATED QUANTITIES: item, description, units, quantity, unit cost,
+      total cost, one line per item;
+    - Sub-Total, the contingency and Project Total;
+    - a blank interim-review box.
+    Columns G-H, outside the print area, are the working notes: the date and
+    the source of each unit cost. Arial 10, no fills, light row lines, and
+    every wrapped row sized to its text.
+    Returns (cell, formula, value) for the totals, written after the
+    text-only pass so they stay live in Excel; the value is cached in the
+    file too, so a viewer that does not calculate shows the right number."""
+    from openpyxl.styles import Alignment, Border, Font, Side
+    def F(size=10, bold=False, color=None):
+        return Font(name="Arial", size=size, bold=bold, color=color)
+    med = Side(style="medium", color="000000")
+    thin = Side(style="thin", color="000000")
+    hair = Side(style="thin", color="D9D9D9")
+    widths = dict(zip("ABCDEFGH", (7, 62, 8, 11, 12, 14, 10, 60)))
+    for col, wd in widths.items():
         sh.column_dimensions[col].width = wd
-    # title and project block
-    sh.merge_cells("A1:H1")
+    sh.merge_cells("A1:F1")
     sh["A1"] = OPCC_TITLE
-    sh["A1"].font = Font(bold=True, size=14)
+    sh["A1"].font = F(14, True)
     sh["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    sh.row_dimensions[1].height = 26
-    sh.merge_cells("A3:D5")
-    sh["A3"] = _txt(ws.get("project_name"), 120)
-    sh["A3"].font = Font(bold=True, size=12)
-    sh["A3"].alignment = Alignment(wrap_text=True, vertical="center")
-    for r, lab, val in ((3, "DATE:", _dt.date.today().isoformat()),
+    sh.row_dimensions[1].height = 24
+    for col in range(1, 7):
+        _keep_border(sh.cell(row=1, column=col), bottom=med)
+    name = _txt(ws.get("project_name"), 160)
+    sh.merge_cells("A3:C5")
+    sh["A3"] = name
+    sh["A3"].font = F(13, True)
+    sh["A3"].alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    if text_lines(name, sum(widths[c] for c in "ABC"), 13) > 3:
+        for r in (3, 4, 5):
+            sh.row_dimensions[r].height = 20
+    for r, lab, val in ((3, "DATE:", _dt.date.today()),
                         (4, "PREPARED BY:", _txt(ws.get("prepared_by"), 60)),
                         (5, "PROJECT NO.:", _txt(ws.get("project_no"), 60))):
-        c = sh.cell(row=r, column=5, value=lab)
-        c.font = bold
-        c.alignment = Alignment(horizontal="right")
-        sh.merge_cells(start_row=r, start_column=6, end_row=r, end_column=8)
-        sh.cell(row=r, column=6, value=val).alignment = Alignment(horizontal="left")
+        sh.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
+        sh.cell(row=r, column=4, value=lab).font = F(10, True)
+        c = sh.cell(row=r, column=6, value=val or None)
+        c.font = F(10)
+        c.alignment = Alignment(horizontal="right", shrink_to_fit=True)
+        if r == 3:
+            c.number_format = "mm/dd/yyyy"
+    sh.merge_cells("A7:C7")
     sh["A7"] = "ESTIMATED QUANTITIES"
-    sh["A7"].font = Font(bold=True, size=11)
-    # the table
+    sh["A7"].font = F(10, True)
     head = 8
-    for j, name in enumerate(OPCC_HEADER, 1):
-        c = sh.cell(row=head, column=j, value=name)
-        c.font = bold
-        c.fill = head_fill
-        c.border = box
-        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    sh.row_dimensions[head].height = 20
-    align = {1: Alignment(horizontal="center", vertical="top"),
-             2: Alignment(wrap_text=True, vertical="top"),
-             3: Alignment(horizontal="center", vertical="top"),
-             4: Alignment(horizontal="right", vertical="top"),
-             5: Alignment(horizontal="right", vertical="top"),
-             6: Alignment(horizontal="right", vertical="top"),
-             7: Alignment(horizontal="center", vertical="top"),
-             8: Alignment(wrap_text=True, vertical="top")}
-    small = Font(size=10, color="404040")
+    for j, name_ in enumerate(OPCC_HEADER, 1):
+        c = sh.cell(row=head, column=j, value=name_)
+        c.font = F(10, True, color="595959" if j > 6 else None)
+        c.alignment = Alignment(horizontal="center", vertical="bottom")
+        c.border = Border(top=thin, bottom=thin)
+    sh.freeze_panes = "A%d" % (head + 1)
+    sh.print_title_rows = "%d:%d" % (head, head)
     formulas = []
     first = r = head + 1
+    sub_value = 0.0
     for l, w, a in t["rows"]:
         q = _f(l.get("quantity"))
         unit = _opcc_unit(l, w, a)
-        vals = {1: _txt(l.get("item_no"), 20), 2: _txt(l.get("description")),
-                3: _txt(l.get("unit"), 12), 4: q, 5: unit, 6: None,
-                7: _txt(w.get("source_date"), 10),
-                8: _txt(w.get("source") or w.get("src_label"))}
+        desc = _txt(l.get("description"))
+        src = _txt(w.get("source") or w.get("src_label"))
+        if unit is None and a is None:
+            src = "No price yet" + (" (%s)" % src if src else "")
+        cells = [(1, _txt(l.get("item_no"), 20), "center"), (2, desc, "left"),
+                 (3, _txt(l.get("unit"), 12), "center"), (4, q, "right"),
+                 (5, unit, "right"), (6, None, "right"),
+                 (7, _txt(w.get("source_date"), 10), "center"), (8, src, "left")]
+        for j, v, h in cells:
+            c = sh.cell(row=r, column=j, value=v if v != "" else None)
+            c.font = F(10) if j <= 6 else F(9, color="595959")
+            c.alignment = Alignment(horizontal=h, vertical="top", wrap_text=(j == 2))
+            if j <= 6:
+                c.border = Border(bottom=hair)
+        n = text_lines(desc, widths["B"], 10)
+        if n > 1:                    # a long description wraps; the row is sized for it
+            sh.row_dimensions[r].height = 12.75 * n + 2
         # full precision in the cell (the format shows whole dollars, or
         # cents when there are any), so Excel's totals equal the page's
         if unit is not None and q is not None:
-            formulas.append(("F%d" % r, "=D%d*E%d" % (r, r)))
+            formulas.append(("F%d" % r, "=D%d*E%d" % (r, r), q * unit))
+            sub_value += q * unit
         elif a is not None:
-            vals[6] = a
-        for j in range(1, 9):
-            c = sh.cell(row=r, column=j, value=vals[j] if vals[j] != "" else None)
-            c.border = box
-            c.alignment = align[j]
-        sh.cell(row=r, column=8).font = small
-        qc = sh.cell(row=r, column=4)
-        qc.number_format = "#,##0" if (q is None or float(q).is_integer()) else "#,##0.00"
-        ec = sh.cell(row=r, column=5)
-        cents = isinstance(ec.value, float) and abs(ec.value - round(ec.value)) > 0.004
-        ec.number_format = '"$"#,##0.00' if cents else '"$"#,##0'
+            sh.cell(row=r, column=6, value=a)
+            sub_value += a
+        sh.cell(row=r, column=4).number_format = "#,##0" if (q is None or float(q).is_integer()) else "#,##0.00"
+        cents = isinstance(unit, float) and abs(unit - round(unit)) > 0.004
+        sh.cell(row=r, column=5).number_format = '"$"#,##0.00' if cents else '"$"#,##0'
         sh.cell(row=r, column=6).number_format = '"$"#,##0'
         r += 1
     last = r - 1
-    # the totals, below a blank row
     sub = r + 1
 
-    def total_row(row, label, strong=False):
-        for j in range(1, 9):
-            c = sh.cell(row=row, column=j)
-            c.border = Border(top=dark if row == sub else thin, bottom=thin,
-                              left=thin if j == 1 else None, right=thin if j == 8 else None)
-            if strong:
-                c.fill = total_fill
+    def total_row(row, label, strong=False, size=10):
         lc = sh.cell(row=row, column=2, value=label)
-        lc.font = Font(bold=True, size=12 if strong else 11)
+        lc.font = F(size, strong)
         fc = sh.cell(row=row, column=6)
+        fc.font = F(size, strong)
         fc.number_format = '"$"#,##0'
         fc.alignment = Alignment(horizontal="right")
-        fc.font = Font(bold=True, size=12 if strong else 11)
 
-    total_row(sub, "Sub-Total")
+    total_row(sub, "Sub-Total", True)
+    _keep_border(sh.cell(row=sub, column=6), top=thin)
     formulas.append(("F%d" % sub, ("=SUM(F%d:F%d)" % (first, last))
-                     if last >= first else "=0"))
-    conts, r = [], sub + 1
+                     if last >= first else "=0", sub_value))
+    conts, total_value, r = [], sub_value, sub + 1
     for l, w, a in t["below"]:
         pct = share_pct(l)
         total_row(r, _below_label(l))
-        sh.cell(row=r, column=2).font = Font(size=11)
-        sh.cell(row=r, column=6).font = Font(size=11)
-        sh.cell(row=r, column=1, value=_txt(l.get("item_no"), 20)).alignment = align[1]
+        c = sh.cell(row=r, column=1, value=_txt(l.get("item_no"), 20))
+        c.font = F(10)
+        c.alignment = Alignment(horizontal="center")
         if pct is not None:
-            formulas.append(("F%d" % r, "=F%d*%r" % (sub, pct / 100.0)))
+            v = sub_value * pct / 100.0
+            formulas.append(("F%d" % r, "=F%d*%r" % (sub, pct / 100.0), v))
+            total_value += v
         elif a is not None:
             sh.cell(row=r, column=6, value=a)
-        sh.cell(row=r, column=8, value=_txt(w.get("note"))).font = small
+            total_value += a
+        note = _txt(w.get("note"))
+        if note:
+            sh.cell(row=r, column=8, value=note).font = F(9, color="595959")
         conts.append(r)
         r += 1
     if t["contingency"]:
         total_row(r, _extra_label(t))
-        sh.cell(row=r, column=2).font = Font(size=11)
-        sh.cell(row=r, column=6).font = Font(size=11)
-        formulas.append(("F%d" % r, "=F%d*%r" % (sub, t["contingency_pct"] / 100.0)))
+        v = sub_value * t["contingency_pct"] / 100.0
+        formulas.append(("F%d" % r, "=F%d*%r" % (sub, t["contingency_pct"] / 100.0), v))
+        total_value += v
         conts.append(r)
         r += 1
-    tot = r
-    total_row(tot, "Project Total", strong=True)
-    for j in range(1, 9):
-        c = sh.cell(row=tot, column=j)
-        c.border = Border(top=dark, bottom=Side(style="double", color="595959"),
-                          left=thin if j == 1 else None, right=thin if j == 8 else None)
-    formulas.append(("F%d" % tot, "=" + "+".join("F%d" % k for k in [sub] + conts)))
-    sh.row_dimensions[tot].height = 20
-    # a blank interim-review block: the standard wording, no names
-    r = tot + 3
+    tot = r + 1
+    total_row(tot, "Project Total", True, 11)
+    _keep_border(sh.cell(row=tot, column=6), top=thin, bottom=Side(style="double", color="000000"))
+    formulas.append(("F%d" % tot, "=" + "+".join("F%d" % k for k in [sub] + conts),
+                     total_value))
+    # a blank interim-review box: the standard wording, no names
+    box = tot + 3
     lines = ("INTERIM REVIEW ONLY",
              "Document incomplete: not intended for permit or construction.",
-             "Engineer: ______________________    P.E. No.: ____________    Date: ____________")
+             "Engineer: ____________________   P.E. No.: __________   Date: __________")
     for k, text in enumerate(lines):
-        sh.merge_cells(start_row=r + k, start_column=2, end_row=r + k, end_column=6)
-        c = sh.cell(row=r + k, column=2, value=text)
-        c.font = Font(bold=(k == 0), size=11 if k == 0 else 10)
-        c.alignment = Alignment(horizontal="center" if k == 0 else "left", vertical="center")
-        for j in range(2, 7):
-            sh.cell(row=r + k, column=j).border = Border(
-                left=dark if j == 2 else None, right=dark if j == 6 else None,
-                top=dark if k == 0 else None, bottom=dark if k == len(lines) - 1 else None)
-        sh.row_dimensions[r + k].height = 18
-    # freeze the header; print landscape, one page wide, the header on every page
-    sh.freeze_panes = "A%d" % first
-    sh.print_title_rows = "%d:%d" % (head, head)
-    sh.page_setup.orientation = "landscape"
+        for j in (2, 3, 4):
+            _keep_border(sh.cell(row=box + k, column=j),
+                         top=thin if k == 0 else None,
+                         bottom=thin if k == len(lines) - 1 else None,
+                         left=thin if j == 2 else None, right=thin if j == 4 else None)
+        c = sh.cell(row=box + k, column=2, value=text)
+        c.font = F(10, k == 0)
+    end = box + len(lines) + 1
+    # one frame around the printed block (A-F)
+    for row in range(1, end + 1):
+        _keep_border(sh.cell(row=row, column=1), left=med)
+        _keep_border(sh.cell(row=row, column=6), right=med)
+    for col in range(1, 7):
+        _keep_border(sh.cell(row=1, column=col), top=med)
+        _keep_border(sh.cell(row=end, column=col), bottom=med)
+    sh.print_area = "A1:F%d" % end
+    sh.page_setup.orientation = "portrait"
     sh.page_setup.fitToWidth = 1
     sh.page_setup.fitToHeight = 0
     sh.sheet_properties.pageSetUpPr.fitToPage = True
-    sh.page_margins.left = sh.page_margins.right = 0.4
-    sh.page_margins.top = sh.page_margins.bottom = 0.5
+    sh.page_margins.left = sh.page_margins.right = 0.5
     sh.oddFooter.center.text = "Page &P of &N"
     return formulas
 
 
+def _arial(sh, first_row: int = 1):
+    """Arial on every cell with a value, keeping bold: Calibri, the default,
+    is missing on a Mac without Office, where previews fall back to a serif."""
+    from openpyxl.styles import Font
+    for row in sh.iter_rows(min_row=first_row):
+        for c in row:
+            if c.value is not None:
+                c.font = Font(name="Arial", size=10, bold=c.font.b)
+    sh.cell(row=1, column=1).font = Font(name="Arial", size=12, bold=True)
+
+
+def _summary_sheet(sh):
+    """The Summary sheet (label, value, share): money in dollars, the
+    contingency as a percent, the note on one line."""
+    from openpyxl.styles import Alignment
+    _arial(sh)
+    sh.column_dimensions["A"].width = 52
+    sh.column_dimensions["B"].width = 16
+    sh.column_dimensions["C"].width = 10
+    for row in sh.iter_rows(min_row=2):
+        lab, val = row[0].value, row[1].value if len(row) > 1 else None
+        if not isinstance(val, (int, float)) or isinstance(val, bool):
+            continue
+        lab = str(lab or "")
+        if lab.endswith(" %"):
+            # a true percent (0.10 shown as 10%): a literal "%" in the format
+            # reads as 1000% in Apple's previews
+            row[1].value = float(val) / 100.0
+            row[1].number_format = "0%" if float(val).is_integer() else "0.0%"
+        elif lab.startswith("Lines without"):
+            row[1].number_format = "#,##0"
+        else:
+            row[1].number_format = '"$"#,##0'
+        if len(row) > 2:
+            row[2].alignment = Alignment(horizontal="right")
+
+
 def _tidy_sheet(sh, title_row=1, header_row=2):
-    """The other sheets of the export (Summary, Lines, References): a bold
-    title, a gray header that stays on screen, sensible widths with wrapped
-    long text, and money / quantities shown as numbers."""
+    """The other sheets of the export (Lines, References): a bold title, a
+    gray header that stays on screen with the item and description, widths
+    that fit, long text wrapped with its row sized for it, every cell
+    top-aligned so a wrapped row reads across, money in dollars and
+    quantities as numbers, Arial throughout."""
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
     thin = Side(style="thin", color="BFBFBF")
-    sh.cell(row=title_row, column=1).font = Font(bold=True, size=12)
+    _arial(sh)
     has_head = header_row and sh.max_row >= header_row and any(
         c.value not in (None, "") for c in sh[header_row])
+    heads = {}
     if has_head:
         for c in sh[header_row]:
             if c.value in (None, ""):
                 continue
-            c.font = Font(bold=True)
+            heads[c.column] = str(c.value).lower()
+            c.font = Font(name="Arial", size=10, bold=True)
             c.fill = PatternFill("solid", fgColor="D9D9D9")
             c.border = Border(left=thin, right=thin, top=thin, bottom=thin)
             c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        sh.freeze_panes = "A%d" % (header_row + 1)
+        sh.freeze_panes = "%s%d" % ("C" if heads.get(2) == "description" else "A",
+                                    header_row + 1)
+    first = (header_row or title_row) + 1
+    widths = {}
     for col in range(1, sh.max_column + 1):
         letter = get_column_letter(col)
-        cells = [sh.cell(row=r, column=col) for r in range((header_row or title_row) + 1, sh.max_row + 1)]
+        cells = [sh.cell(row=r, column=col) for r in range(first, sh.max_row + 1)]
         longest = max((len(str(c.value)) for c in cells if c.value is not None), default=8)
-        head_len = len(str(sh.cell(row=header_row, column=col).value or "")) if has_head else 0
-        width = min(46, max(9, longest + 2, min(head_len, 22) + 2))
+        head_len = len(heads.get(col, ""))
+        width = min(46, max(9, longest + 2, min(head_len, 18) + 2))
         sh.column_dimensions[letter].width = width
+        widths[col] = width
+        h = heads.get(col, "")
+        mid = h in ("item", "unit", "rank", "references", "letting date")
         for c in cells:
             v = c.value
+            wrap = False
             if isinstance(v, bool):
-                continue
-            if isinstance(v, float):
-                c.number_format = "#,##0.00"
-            elif isinstance(v, int):
-                c.number_format = "#,##0"
-            elif isinstance(v, str) and len(v) > width:
-                c.alignment = Alignment(wrap_text=True, vertical="top")
+                pass
+            elif isinstance(v, (int, float)):
+                if "amount" in h:
+                    c.number_format = '"$"#,##0'
+                elif "$" in h:
+                    c.number_format = '"$"#,##0.00'
+                elif isinstance(v, float) and not v.is_integer():
+                    c.number_format = "#,##0.00"
+                else:
+                    c.number_format = "#,##0"
+            elif isinstance(v, str):
+                # words wrap; a link or file name (no spaces) stays on one line
+                wrap = len(v) > width and " " in v.strip()
+            c.alignment = Alignment(wrap_text=wrap, vertical="top",
+                                    horizontal="center" if mid else None)
+    if has_head:
+        sh.row_dimensions[header_row].height = 12.75 * max(
+            text_lines(sh.cell(row=header_row, column=k).value, widths[k], 10)
+            for k in heads) + 4
+    for r in range(first, sh.max_row + 1):
+        n = max((text_lines(c.value, widths[c.column], 10) for c in sh[r]
+                 if isinstance(c.value, str) and c.alignment.wrap_text), default=1)
+        if n > 1:
+            sh.row_dimensions[r].height = 12.75 * n + 2
+
+
+def _cache_values(xlsx: bytes, sheet_path: str, values: dict) -> bytes:
+    """openpyxl saves a formula with no result, which a viewer that does not
+    calculate (Quick Look, phone and mail previews) shows as $0. Put in each
+    result, as Excel itself saves it; Excel still recalculates on open
+    (the workbook asks for a full calculation on load)."""
+    import io
+    import zipfile
+    pat = re.compile(r'(<c r="([A-Z]+[0-9]+)"[^>]*><f>[^<]*</f>)(?:<v\s*/>|<v></v>)')
+
+    def fill(m):
+        v = values.get(m.group(2))
+        return m.group(0) if v is None else "%s<v>%r</v>" % (m.group(1), float(v))
+    zin = zipfile.ZipFile(io.BytesIO(xlsx))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            data = zin.read(info.filename)
+            if info.filename == sheet_path:
+                data = pat.sub(fill, data.decode("utf-8")).encode("utf-8")
+            zout.writestr(info, data)
+    return out.getvalue()
 
 
 def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
@@ -687,13 +831,18 @@ def to_xlsx(result, ws, refs) -> bytes:
                     "Sub-Total", "Project Total", "SUBTOTAL", "PROJECT TOTAL"))):
                 for c in sh[sh.max_row]:
                     c.font = bold
-        _tidy_sheet(sh, 1, 2 if head else 0)
+        if title == "OPCC worksheet":
+            _summary_sheet(sh)
+        else:
+            _tidy_sheet(sh, 1, 2 if head else 0)
     from exporter import xlsx_text_only    # "=..." notes stay text
     xlsx_text_only(wb)
     # then the OPCC's own totals, as live formulas (written by this module,
-    # never taken from the browser)
-    for ref, f in formulas:
+    # never taken from the browser), with their results cached for viewers
+    # that do not calculate
+    for ref, f, v in formulas:
         wb["OPCC"][ref] = f
     buf = io.BytesIO()
     wb.save(buf)
-    return buf.getvalue()
+    path = "xl/worksheets/sheet%d.xml" % (wb.sheetnames.index("OPCC") + 1)
+    return _cache_values(buf.getvalue(), path, {ref: v for ref, f, v in formulas})
