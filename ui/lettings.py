@@ -306,8 +306,14 @@ class SourceLinks:
                                                   else "")
                 if p:
                     pre = load_links_file(p)
-                self._links = (pre if pre is not None
-                               else load_manifest_links(self.external_dir))
+                if pre is None:
+                    pre = load_manifest_links(self.external_dir)
+                    # A checkout that runs on the public data bundle has no
+                    # data/external and so no manifests: the bundle's own
+                    # precomputed links then.
+                    if not pre and not p and self.external_dir is None:
+                        pre = load_links_file(LINKS_FILE) or pre
+                self._links = pre
             return self._links
 
     def get(self, pk: str, meta: Optional[dict] = None) -> dict:

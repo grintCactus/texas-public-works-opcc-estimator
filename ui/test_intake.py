@@ -12,6 +12,7 @@ and no credential is needed, read or stored.
 from __future__ import annotations
 
 import base64
+import importlib.util
 import io
 import json
 import os
@@ -117,6 +118,10 @@ class TakeoffReading(unittest.TestCase):
         self.assertEqual(p.lines[0].quantity, 1745.0)
         self.assertNotIn("23,750", p.lines[1].description)
 
+    @unittest.skipUnless(
+        shutil.which("pdftotext") or os.path.exists(
+            os.path.join(ROOT, "tools", "poppler", "bin", "pdftotext")),
+        "pdftotext (poppler) is not installed here")
     def test_a_text_pdf_is_read(self):
         d = tempfile.mkdtemp()
         try:
@@ -619,8 +624,8 @@ class CorrectionsMemory(unittest.TestCase):
     def test_the_default_file_is_local_and_excluded_from_git(self):
         self.assertEqual(os.path.relpath(intake.DEFAULT_CORRECTIONS, ROOT),
                          os.path.join("ui", ".local", "corrections.json"))
-        exclude = open(os.path.join(ROOT, ".git", "info", "exclude")).read()
-        self.assertIn("/ui/.local/", exclude.split())
+        ignored = open(os.path.join(ROOT, ".gitignore"), encoding="utf-8").read().split()
+        self.assertIn("ui/.local/", ignored)
 
 
 # ===========================================================================
@@ -702,6 +707,8 @@ def _ln(no, desc, unit, qty, conf="high", notes="", page=1, **extra):
     return d
 
 
+@unittest.skipUnless(importlib.util.find_spec("anthropic"),
+                     "the optional anthropic package is not installed here")
 class ClaudeReader(unittest.TestCase):
     """The optional Claude reader with fake backends: no network, no keys."""
 
@@ -1112,8 +1119,13 @@ class PublicMirror(unittest.TestCase):
         self.path = os.path.join(self.dir, "public_mirror.json")
         self.env = mock.patch.dict(os.environ, {lettings.MIRROR_ENV: self.path})
         self.env.start()
-        L = lettings.load_manifest_links()
-        self.key = next(k for k in sorted(L) if k.startswith("external/legistar/"))
+        # the harvest manifests of a working copy, else the public bundle's own links
+        L = lettings.load_manifest_links() or lettings.load_links_file(lettings.LINKS_FILE) or {}
+        self.key = next((k for k in sorted(L) if k.startswith("external/legistar/")), None)
+        if self.key is None:
+            self.env.stop()
+            shutil.rmtree(self.dir)
+            self.skipTest("no source links here: neither harvest manifests nor the public bundle")
 
     def tearDown(self):
         self.env.stop()
@@ -1247,6 +1259,8 @@ class SourcePaths(unittest.TestCase):
 
     def test_the_manifest_links_are_http_and_keyed_on_the_file(self):
         L = lettings.load_manifest_links()
+        if not L:
+            self.skipTest("no harvest manifests in this checkout (it runs on the public bundle)")
         self.assertGreater(len(L), 1000)
         for k, v in L.items():
             self.assertTrue(v["url"].startswith(("http://", "https://")), k)
