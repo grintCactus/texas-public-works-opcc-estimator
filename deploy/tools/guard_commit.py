@@ -15,6 +15,7 @@ This repository is public. The checks, on each staged file's staged content:
                         deploy/bundle/, .venv/, tools/;
   3. personal traces    a home-directory path, or an e-mail address other
                         than a no-reply or example address;
+     and secrets        a private key block (SSH, PEM) in any file;
   4. language           the repository is English-only: no CJK text, except
                         in the few files that keep Chinese program keys on
                         purpose (ALLOW_CJK).
@@ -40,6 +41,7 @@ ALLOW_CJK = {"src/holdout_eval.py", "src/index_weighting.py",
 CJK = re.compile("[\\u3000-\\u303f\\u3400-\\u9fff\\uff00-\\uffef]")
 HOME = re.compile("/" + "Users/[^/\\s\"'<>]|(?<![A-Za-z0-9._-])/" + "home/[a-z_][a-z0-9_-]*/")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+SECRET = re.compile("-----BEGIN [A-Z0-9 ]*PRIVATE " + "KEY-----")
 EMAIL_OK = re.compile(r"@(users\.noreply\.github\.com|github\.com$|example\.(com|org|net)|noreply\.|anthropic\.com$)|^noreply@|^git@", re.I)
 TEXT = (".py", ".md", ".txt", ".json", ".js", ".html", ".css", ".sh", ".csv",
         ".yml", ".yaml", ".toml", ".cfg", ".ini", ".ps1", "")
@@ -89,6 +91,8 @@ def main(argv=None):
         text = blob.decode("utf-8", "ignore")
         if rx is not None and rx.search(text):
             flag(f, "private pattern")
+        if SECRET.search(text):
+            flag(f, "a private key")
         ext = os.path.splitext(f)[1].lower()
         if ext not in TEXT:
             continue                      # binary: patterns only
