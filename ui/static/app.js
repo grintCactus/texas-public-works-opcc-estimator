@@ -92,6 +92,18 @@ function el(tag, attrs, children) {
   return n;
 }
 
+// a wrapping text box as tall as its text
+function growDesc(t) {
+  if (!t) return;
+  t.style.height = 'auto';
+  t.style.height = (t.scrollHeight + 2) + 'px';
+}
+let growTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(growTimer);
+  growTimer = setTimeout(() => document.querySelectorAll('#review-body textarea.desc').forEach(growDesc), 120);
+});
+
 /* ------------------------------------------------------------- formatting */
 
 const isNum = v => v !== null && v !== undefined && v !== '' && !isNaN(v);
@@ -241,7 +253,10 @@ function restoreFocus(st) {
   if (!st || (st.el && st.el.isConnected && document.activeElement === st.el)) return;
   const cell = document.querySelector('[data-fk="' + CSS.escape(st.fk) + '"]');
   if (!cell) return;
-  if (cell.tagName === 'INPUT' && cell.value !== st.value) cell.value = st.value;
+  if ((cell.tagName === 'INPUT' || cell.tagName === 'TEXTAREA') && cell.value !== st.value) {
+    cell.value = st.value;
+    if (cell.tagName === 'TEXTAREA') growDesc(cell);
+  }
   cell.focus();
   if (st.sel && st.sel[0] !== null) {
     try { cell.setSelectionRange(st.sel[0], st.sel[1]); } catch (e) { /* ok */ }
@@ -496,13 +511,18 @@ function initInput() {
     const t = e.target;
     if (!t.classList || !t.classList.contains('cellinput')) return;
     if (e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    if (t.tagName === 'TEXTAREA' && !e.altKey && e.key !== 'Enter') {
+      const atStart = t.selectionStart === 0 && t.selectionEnd === 0;
+      const atEnd = t.selectionStart === t.value.length && t.selectionEnd === t.value.length;
+      if ((e.key === 'ArrowUp' && !atStart) || (e.key === 'ArrowDown' && !atEnd)) return;
+    }
     e.preventDefault();
     const i = parseInt(t.dataset.i, 10);
     if (e.altKey && e.key !== 'Enter') {
       const l = S.lines[i];
       t.blur();
       if (l) moveLineBy(l, e.key === 'ArrowUp' ? -1 : 1);
-      const back = l && $('#review-body tr[data-row="' + CSS.escape(l.row_id) + '"] input[data-col="'
+      const back = l && $('#review-body tr[data-row="' + CSS.escape(l.row_id) + '"] [data-col="'
         + t.dataset.col + '"]');
       if (back) back.focus();
       return;
@@ -510,7 +530,7 @@ function initInput() {
     const col = t.dataset.col;
     const next = i + (e.key === 'ArrowUp' ? -1 : 1);
     t.blur();
-    const target = $('#review-body input[data-col="' + col + '"][data-i="' + next + '"]');
+    const target = $('#review-body [data-col="' + col + '"][data-i="' + next + '"]');
     if (target) { target.focus(); if (target.select) target.select(); }
     else if (e.key === 'Enter' && next === S.lines.length) addRow();
   });
@@ -757,6 +777,12 @@ async function uploadTakeoff(file) {
 
 async function acceptParse(p) {
   S.parse = p;
+  // the takeoff template's project block (user, 2026-11-21): typed once, it
+  // heads the worksheet and the exported OPCC
+  const pj = p.project || {};
+  if (pj.name) S.ws.name = pj.name;
+  if (pj.project_no) S.ws.project_no = pj.project_no;
+  if (pj.prepared_by) S.ws.prepared_by = pj.prepared_by;
   S.seq = 0;
   S.lines = (p.lines || []).map(l => newLine(Object.assign({}, l, { row_id: null })));
   S.bidders.mode = 'auto';
@@ -1110,12 +1136,13 @@ function renderGrid() {
   const focus = focusState();
   const has = S.lines.length > 0;
   $('#grid-head').hidden = !has;
-  $('#legend-claude').hidden = !(claudeStatus().available || S.lines.some(l => l.origin === 'claude'));
+  $('#legend-claude').hidden = !S.lines.some(l => l.origin === 'claude');
   $('#grid-wrap').hidden = !has;
   $('#addrow-bar').hidden = !has;
   const body = $('#review-body');
   body.innerHTML = '';
   S.lines.forEach((l, i) => body.appendChild(gridRow(l, i)));
+  body.querySelectorAll('textarea.desc').forEach(growDesc);
   const n = S.lines.filter(l => l.include).length;
   const noq = S.lines.filter(l => l.include && missingQuantity(l)).length;
   const unc = S.lines.filter(l => l.include && l.cls && l.cls.coverage_class && !(l.quote > 0)).length;
@@ -1279,11 +1306,14 @@ function gridRow(l, i) {
     'data-fk': focusKey('g', l.row_id, 'item_no'),
     oninput: e => { l.item_no = e.target.value; markStale(); },
   })));
-  tr.appendChild(el('td', { class: 'tight' }, el('input', {
-    class: 'cellinput', type: 'text', value: l.description,
+  // a long description wraps onto as many lines as it needs (user,
+  // 2026-11-21: "you must wrap"); Enter moves on, it never adds a line break
+  tr.appendChild(el('td', { class: 'tight descc' }, el('textarea', {
+    class: 'cellinput desc', rows: 1, text: l.description || '', spellcheck: 'false',
     'data-col': 'description', 'data-i': i, 'data-fk': focusKey('g', l.row_id, 'description'),
     oninput: e => {
-      l.description = e.target.value;
+      growDesc(e.target);
+      l.description = e.target.value.replace(/\s*\n\s*/g, ' ');
       if (l.family_src === 'remembered') { l.family = ''; l.family_src = ''; l.remembered = null; }
       markStale(); classifyOne(l);
     },
@@ -1589,7 +1619,7 @@ function addRow(col) {
   const row = $('#review-body tr[data-row="' + CSS.escape(id) + '"]');
   if (!row) return;
   row.scrollIntoView({ block: 'nearest', behavior: motion0() ? 'smooth' : 'auto' });
-  const cell = $('input[data-col="' + (col || 'description') + '"]', row);
+  const cell = $('[data-col="' + (col || 'description') + '"]', row);
   if (cell) cell.focus();
 }
 
@@ -3300,7 +3330,7 @@ function contingencyRow(l) {
       + 'model\u2019s subtotal, ' + money(l.amount_p50) + '.' : ': the owner\u2019s fixed amount, at '
       + 'face value.') });
   tr.appendChild(el('td', { class: 'dim nowrap', text: l.item_no || '' }));
-  tr.appendChild(el('td', {}, [
+  tr.appendChild(el('td', { class: 'desccell' }, [
     el('span', { class: 'ldesc', text: l.description }),
     el('div', { class: 'dim small', text: what + ' \u00b7 ' + (sh ? sh.pct + '% of the subtotal'
       : 'the owner\u2019s fixed amount') }),
@@ -3366,7 +3396,7 @@ function resultRow(l, judg, isOpen) {
       () => ncHintBox(l.nc_hint, l.coverage_label)));
   }
   tr.appendChild(el('td', { class: 'dim nowrap' }, [chev, document.createTextNode(l.item_no || '')]));
-  tr.appendChild(el('td', {}, [
+  tr.appendChild(el('td', { class: 'desccell' }, [
     el('span', { class: 'ldesc', text: l.description }),
     el('div', { class: 'dim small', text: l.family_label + (l.size_bucket ? ' · ' + l.size_bucket : '')
       + (l.basis ? ' · ' + l.basis : '') }),

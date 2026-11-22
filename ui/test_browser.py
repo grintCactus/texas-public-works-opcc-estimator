@@ -595,6 +595,40 @@ class PageInteractions(unittest.TestCase):
                     self.assertEqual(fh.read(2), b"PK")      # an .xlsx (zip)
                 self.assertEqual(errors, [])
 
+    def test_a_long_description_wraps_in_the_takeoff_grid(self):
+        """2026-11-21 (user): "a long description is not wrapped, it is all
+        written in one line -- you must wrap". The description box grows
+        with its text, nothing is cut off, and Enter still moves on."""
+        long_ = ("Mobilization/Site Preparation, Clearing and Grubbing (Including Tree Removal "
+                 "(all sizes), Riprap, Fencing, Trash and other Deleterious Material, and "
+                 "Temporary Construction Fence), in accordance with the plans and specifications")
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                browser = getattr(self.pw, engine).launch()
+                self.addCleanup(browser.close)
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                errors = []
+                page.on("pageerror", lambda e: errors.append(str(e)))
+                page.goto(self.url + "/")
+                page.wait_for_function(SAMPLE_READY, timeout=60000)
+                page.fill("#paste-text", "100\t%s\tLS\t1\n101\tTrench Safety System\tLF\t1450" % long_)
+                page.click("#btn-parse-text")
+                page.wait_for_function("() => S.lines.length === 2 && S.lines.every(l => l.cls)")
+                box = page.locator('tr[data-row="r1"] [data-col="description"]')
+                self.assertEqual(box.evaluate("e => e.tagName"), "TEXTAREA")
+                self.assertEqual(box.input_value(), long_)
+                fit = box.evaluate("e => [e.scrollHeight <= e.clientHeight + 2, e.scrollWidth <= e.clientWidth + 2,"
+                                   " e.getBoundingClientRect().height]")
+                self.assertTrue(fit[0] and fit[1], fit)
+                self.assertGreater(fit[2], 40)                      # more than one line tall
+                short = page.locator('tr[data-row="r2"] [data-col="description"]')
+                self.assertLess(short.evaluate("e => e.getBoundingClientRect().height"), 40)
+                box.click()
+                page.keyboard.press("Enter")                       # moves on; no line break typed
+                self.assertEqual(page.evaluate("() => document.activeElement.dataset.i"), "1")
+                self.assertNotIn("\n", page.evaluate("() => S.lines[0].description"))
+                self.assertEqual(errors, [])
+
     def test_ai_mode_is_a_place_kept_in_the_upload_step(self):
         """2026-11-21 (user): an "AI mode" button where files are uploaded:
         drawings and documents go in through the one drop area, then "Read by
@@ -726,7 +760,7 @@ class PageInteractions(unittest.TestCase):
         return page.eval_on_selector_all("#review-body tr", """trs => trs.map(tr => [
             tr.cells.length,
             ...['item_no', 'description', 'unit', 'quantity'].map(c => {
-              const i = tr.querySelector('input[data-col="' + c + '"]');
+              const i = tr.querySelector('[data-col="' + c + '"]');
               return i ? i.value + (i.classList.contains('flag') ? '!' : '')
                 + (i.classList.contains('assumed') ? '~' : '') : null;
             })])""")
@@ -885,7 +919,7 @@ class PageInteractions(unittest.TestCase):
     def test_alt_arrows_move_a_line(self):
         page, errors = self.estimate_page(self.engines[0])
         before = self.order(page)
-        page.focus('tr[data-row="r3"] input[data-col="description"]')
+        page.focus('tr[data-row="r3"] [data-col="description"]')
         page.keyboard.press("Alt+ArrowUp")
         self.assertEqual(self.order(page), [before[0], before[2], before[1]] + before[3:])
         self.assertIn("moved to position 2", page.inner_text("#sr-live") or

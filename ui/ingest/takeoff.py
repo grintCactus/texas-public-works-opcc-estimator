@@ -286,6 +286,10 @@ class TakeoffParse:
     #: numbers only, words with no unit and no quantity -- with their text,
     #: so the page can show them ({row, reason, raw}).
     unread: List[dict] = field(default_factory=list)
+    #: A takeoff filled in the template's layout carries its project block
+    #: (name, project no., prepared by), so the worksheet and the exported
+    #: OPCC are headed without typing it again (user, 2026-11-21).
+    project: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -298,6 +302,7 @@ class TakeoffParse:
             "n_skipped": len(self.skipped),
             "unread": self.unread[:80],
             "n_unread": len(self.unread),
+            "project": self.project,
         }
 
 
@@ -1278,15 +1283,18 @@ def _from_xlsx(path: str, name: str) -> TakeoffParse:
     import openpyxl
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     best: Optional[TakeoffParse] = None
+    best_rows: list = []
     tried: List[str] = []
     for ws in wb.worksheets:
-        grid = [[_txt(c) for c in row]
-                for row in ws.iter_rows(values_only=True)]
+        rows = list(ws.iter_rows(values_only=True))
+        grid = [[_txt(c) for c in row] for row in rows]
         p = _lines_from_grid(grid, name, "xlsx/%s" % ws.title)
         tried.append("%s: %d item(s)" % (ws.title, len(p.lines)))
         if best is None or len(p.lines) > len(best.lines):
-            best = p
+            best, best_rows = p, rows
     wb.close()
+    if best is not None:
+        best.project = _template_project(best_rows)
     if best is None:
         return TakeoffParse(source=name, method="xlsx",
                             notes=["Workbook has no sheets."])
@@ -1294,6 +1302,28 @@ def _from_xlsx(path: str, name: str) -> TakeoffParse:
         best.notes.append("Sheets scanned -- %s. Used the richest one."
                           % "; ".join(tried))
     return best
+
+
+def _template_project(rows: list) -> dict:
+    """The project block of a takeoff filled in the template's (OPCC) layout:
+    the title in A1, DATE: / PREPARED BY: / PROJECT NO.: in D3:D5, the name in
+    A3 and the values in F4:F5. {} for any other layout."""
+    def cell(r, c):
+        try:
+            v = rows[r][c]
+        except (IndexError, TypeError):
+            return ""
+        return "" if v is None else str(v)
+    if "PROBABLE CONSTRUCTION COST" not in cell(0, 0).upper():
+        return {}
+    labels = [_txt(cell(r, 3)).upper() for r in (2, 3, 4)]
+    if labels != ["DATE:", "PREPARED BY:", "PROJECT NO.:"]:
+        return {}
+    name = " \u2013 ".join(x.strip() for x in cell(2, 0).splitlines() if x.strip())
+    if name.strip("() ").lower() == "project name":
+        name = ""
+    out = {"name": _txt(name)[:160], "prepared_by": _txt(cell(3, 5))[:60], "project_no": _txt(cell(4, 5))[:60]}
+    return {k: v for k, v in out.items() if v}
 
 
 def _from_csv(path: str, name: str) -> TakeoffParse:

@@ -24,7 +24,7 @@ The model is trained **only on public bid tabulations**. Every number it reports
 Or start the app on your own machine with `.venv/bin/python ui/run.py`, then open http://127.0.0.1:8017/. Pricing is ready about 10 seconds after start.
 
 1. **Enter the takeoff.**
-   - No takeoff yet? Download the blank takeoff template (Excel) at the top of this step. It is laid out like the OPCC it becomes, just not filled in. Fill in one pay item per row: item no., description, units and quantity; an allowance the bid form prints a dollar amount for goes in Total Cost. Then upload the file, or paste the rows with the header row.
+   - No takeoff yet? Download the blank takeoff template (Excel) at the top of this step. It is laid out like the OPCC it becomes, just not filled in. Fill in one pay item per row: item no., description, units and quantity; an allowance the bid form prints a dollar amount for goes in Total Cost. Then upload the file, or paste the rows with the header row. An uploaded template brings its project name, project no. and prepared by into the worksheet and the export, and long descriptions wrap in the grid.
    - Paste a bid schedule, or upload Excel, CSV, Word or PDF. Scanned PDFs are read with OCR.
    - **AI mode** (coming later): the upload step keeps a place for reading a job's engineering drawings and documents by AI ("Read by AI"), to list the work to be done and the quantities as a takeoff to check. Files go in through the same drop area. It is not built yet; the button only shows where it will be.
    - Check each line's description, unit, quantity and the item type it was matched to. Change the type with the picker if it is wrong.

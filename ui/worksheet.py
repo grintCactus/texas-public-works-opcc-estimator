@@ -496,6 +496,10 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
         cents = isinstance(unit, float) and abs(unit - round(unit)) > 0.004
         sh.cell(row=r, column=5).number_format = '"$"#,##0.00' if cents else '"$"#,##0'
         sh.cell(row=r, column=6).number_format = '"$"#,##0'
+        if unit is None and a is None:          # printed as such, never read as $0
+            c = sh.cell(row=r, column=5, value="No price yet")
+            c.font = Font(name="Arial", size=9, italic=True, color="595959")
+            c.alignment = Alignment(horizontal="right", vertical="top")
         r += 1
     last = r - 1
     sub = r + 1
@@ -1113,7 +1117,9 @@ def to_pdf(result, ws, refs=None) -> bytes:
             cents = isinstance(unit, float) and abs(unit - round(unit)) > 0.004
             qtxt = "" if q is None else (format(q, ",.0f") if float(q).is_integer() else format(q, ",.2f"))
             table.row([_latin1(_txt(l.get("item_no"), 20)), _latin1(_txt(l.get("description"))),
-                       _latin1(_txt(l.get("unit"), 12)), qtxt, _usd(unit, cents), _usd(a)])
+                       _latin1(_txt(l.get("unit"), 12)), qtxt,
+                       _usd(unit, cents) if unit is not None else ("" if a is not None else "No price yet"),
+                       _usd(a)])
         table.row(["", "", "", "", "", ""])
         r = table.row()
         for v, st in (("", None), ("Sub-Total", bold), ("", None), ("", None), ("", None),

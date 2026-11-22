@@ -331,6 +331,12 @@ table.grid td.basis { font-size: 12px; color: var(--ink-dim); }
 .cellinput.flag { border-color: var(--warn-line); background: var(--warn-bg); }
 .cellinput.flag::placeholder { font: 10.5px var(--sans); color: var(--warn-ink); }
 .cellinput.hintfill { border-color: var(--violet-line); background: var(--violet-bg); }
+/* the takeoff grid's description wraps and grows with its text (user, 2026-11-21) */
+textarea.cellinput.desc { display: block; resize: none; overflow: hidden; min-height: 30px;
+  font: inherit; line-height: 1.35; white-space: pre-wrap; overflow-wrap: break-word; }
+/* the worksheet's description keeps room to be read: whole words, a sane minimum width */
+#result-table th.desc, #result-table td.desccell { min-width: 210px; }
+#result-table td.desccell .ldesc { overflow-wrap: break-word; }
 .money { font-family: var(--mono); white-space: nowrap; }
 .money.p50 { font-weight: 650; }
 .dim { color: var(--ink-faint); }
