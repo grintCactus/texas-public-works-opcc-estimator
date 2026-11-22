@@ -3394,7 +3394,7 @@ function resultRow(l, judg, isOpen) {
       afterInput(renderWsNow);
     } });
   const picks = wsPicks(l);
-  const sel = locked || ncl || !picks.length ? null : el('select', { class: 'pick', title: 'Quick picks',
+  const sel = locked || ncl || !picks.length ? null : el('select', { class: 'pick', title: 'Pick a reference price for this line',
     'data-fk': focusKey('ws', l.row_id, 'pick'),
     onchange: e => {
       const pk = picks.find(p => p.v === e.target.value);
@@ -3406,7 +3406,7 @@ function resultRow(l, judg, isOpen) {
       w.src_date = pk.date || '';
       if (pk.note && !w.note) w.note = pk.note;
       afterInput(renderWsNow);
-    } }, [el('option', { value: '', text: 'pick…' })]       // a menu: it always reads "pick…"; the
+    } }, [el('option', { value: '', text: 'pick reference…' })]   // a menu: it always reads "pick reference…"; the
       .concat(picks.map(p => el('option', { value: p.v, text: p.label }))));   // source shows under the price
   tr.appendChild(el('td', {}, [el('div', { class: 'yourcell' }, [inp, sel]),
     w.src_label && w.src !== 'model' ? el('div', { class: 'dim small', text: w.src_label }) : null]));

@@ -756,8 +756,8 @@ tr.judgrow > td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .yourcell { display: flex; gap: 4px; align-items: center; }
 /* fixed widths: in a narrow column the quick-pick list shrank to a bare arrow
    (WebKit: a sliver) and no longer read as a list */
-.yourcell .yourp { width: 92px; flex: none; }
-.yourcell select.pick { width: 96px; flex: none; font-size: 12px; }
+.yourcell .yourp { width: 80px; flex: none; }
+.yourcell select.pick { width: 128px; flex: none; font-size: 12px; }
 .cellinput.note { width: 100%; }
 /* a line of the worksheet opens its references on a click anywhere on it
    (fields and controls inside it excepted): a chevron, a pointer, a hover

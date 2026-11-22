@@ -145,21 +145,22 @@ class PageInteractions(unittest.TestCase):
     def test_the_quick_pick_reads_pick_and_names_its_source(self):
         """QA 2026-11-20 (bug 23): the 96 px quick-pick box showed the applied
         source's long label, cut to "Model price !". It is a menu now: it
-        always reads "pick…", and the chosen source shows under the price."""
+        always reads "pick reference…" (named so 2026-11-21: the user asked what
+        "pick" meant), and the chosen source shows under the price."""
         for engine in self.engines:
             with self.subTest(engine=engine):
                 page, errors = self.estimate_page(engine)
                 shown = page.evaluate("() => [...document.querySelectorAll('#result-body select.pick')]"
                                       ".map(s => s.options[s.selectedIndex].text)")
                 self.assertTrue(shown)
-                self.assertEqual(set(shown), {"pick…"})
+                self.assertEqual(set(shown), {"pick reference…"})
                 row = 'tr[data-line="r3"]'
                 want = page.evaluate("() => S.ws.refs && S.ws.refs.r3 && S.ws.refs.r3.range.median")
                 page.select_option(row + " select.pick", "ref_median")
                 page.wait_for_timeout(300)
                 self.assertEqual(page.evaluate(
                     "r => { const s = document.querySelector(r + ' select.pick'); "
-                    "return s.options[s.selectedIndex].text; }", row), "pick…")
+                    "return s.options[s.selectedIndex].text; }", row), "pick reference…")
                 self.assertIn("Reference median", page.inner_text(row + " td:has(.yourcell) .dim.small"))
                 got = float(page.input_value(row + " input.yourp").replace(",", ""))
                 # the picked price, rounded up to a round number (the default)
