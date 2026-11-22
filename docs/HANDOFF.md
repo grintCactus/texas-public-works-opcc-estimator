@@ -18,7 +18,7 @@ Written 2026-11-21 for whoever maintains this project next. `AGENTS.md` holds th
 | TxDOT engineers' own estimates | 451 | 21% | 14% | n/a | 19 / 22 / 23% |
 
   The goal: P80 below the actual low bid on at most 20% of lettings (met), and within that the smallest overshoot (13% is the aspiration; engineers reach about 25% at the same not-under rate; the project is at 34% for cities). The city gap is almost all in estimating the bidders' typical price per job, not in the step from the median bid to the low bid.
-- **Last deploy.** 2026-11-21 20:15, code as of commit `176d550`, data bundle built 2026-11-21 20:08. See the deploy log at the end.
+- **Last deploy.** 2026-11-21 23:46, from a fresh clone at commit `ae9d0de` with data bundle `bundle-2026-11-21` (built 2026-11-21 20:08). See the deploy log at the end.
 
 ## 2. The first hour
 
@@ -177,3 +177,4 @@ To publish the whole pipeline, company-specific content left the code. No number
 |---|---|---|---|
 | 2026-11-20 21:02 | first deploy | parser .29 | Site live. |
 | 2026-11-21 20:15 | `176d550` | built 2026-11-21 20:08 (parser .34b, round 20) | Allowance alert follows the amount typed; OPCC date is the user's day. |
+| 2026-11-21 23:46 | `ae9d0de`, from a fresh clone | `bundle-2026-11-21` (the same build, as published) | First deploy by the documented path: `fetch_bundle.py`, `assemble_space.py`, `check_package.sh` (identical in 400 schedules), `redeploy.sh`. `live_check.py` on the live site gave the known answer. Pricing unchanged; the package now holds the published code only. |
