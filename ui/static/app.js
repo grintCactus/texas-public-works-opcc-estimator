@@ -1364,6 +1364,7 @@ function gridRow(l, i) {
       l.amount_src = 'user';
       e.target.value = amountCellText(l);
       markStale(); afterInput(renderGrid); afterInput(renderOwnerSet); suggestBidders();
+      afterInput(() => renderTopAlerts(S.result));
     },
   })));
   tr.appendChild(el('td', {}, el('div', { class: 'row-actions nowrap' }, [
@@ -2097,6 +2098,7 @@ function renderOwnerSetInto(box) {
           l.amount_src = 'user';
           e.target.value = amountCellText(l);
           markStale(); afterInput(renderGrid); afterInput(renderOwnerSet); suggestBidders();
+          afterInput(() => renderTopAlerts(S.result));
         } }),
     ]));
   });
@@ -2355,11 +2357,47 @@ function renderResult() {
   renderSimilar(r);
 }
 
+// The alerts above the estimate follow what has been filled in since (user,
+// 2026-11-21: "I filled the amount in and it is still there"): an owner-set
+// allowance given its amount leaves the red alert at once, and a short note
+// asks for Re-estimate to put it into P50 and P80.
+function renderTopAlerts(r, box) {
+  box = box || $('#r-top-alerts');
+  if (!box || !r) return;
+  box.innerHTML = '';
+  const byId = new Map(S.lines.map(l => [l.row_id, l]));
+  const given = x => { const l = byId.get(x.row_id); return !!(l && (l.amount > 0 || l.amount_pct > 0)); };
+  (r.alerts || []).filter(a => a.placement === 'above_headline').forEach(a => {
+    if (a.code === 'allowance_missing') {
+      const miss = (r.lines || []).filter(x => x.amount_missing);
+      const still = miss.filter(x => !given(x));
+      if (miss.length && !still.length) {
+        box.appendChild(notice('info', null, 'Allowance amount' + (miss.length === 1 ? '' : 's')
+          + ' entered. Press Re-estimate to add ' + (miss.length === 1 ? 'it' : 'them') + ' to P50 and P80.'));
+        return;
+      }
+      if (still.length < miss.length) {
+        a = Object.assign({}, a, { more: 0,
+          title: still.length + ' owner-set allowance' + (still.length === 1 ? ' has' : 's have')
+            + ' no amount, so the totals are too low.',
+          items: still.map(x => rowName(byId.get(x.row_id) || x)) });
+      }
+    }
+    box.appendChild(a.level === 'info' ? notice('info', null, a.text) : ackNotice(a));
+  });
+  // a worksheet line whose allowance now has its amount loses its red mark too
+  document.querySelectorAll('#result-body tr.st-amount-missing').forEach(tr => {
+    const x = (r.lines || []).find(y => y.row_id === tr.dataset.line);
+    if (x && given(x)) tr.classList.remove('st-amount-missing');
+  });
+}
+
 function renderHeadline(r) {
   const host = $('#r-headline');
   host.innerHTML = '';
-  (r.alerts || []).filter(a => a.placement === 'above_headline')
-    .forEach(a => host.appendChild(a.level === 'info' ? notice('info', null, a.text) : ackNotice(a)));
+  const top = el('div', { id: 'r-top-alerts' });
+  host.appendChild(top);
+  renderTopAlerts(r, top);
   const h = r.headline;
   const nc = r.not_covered;
   if (h.p50 === null || h.p50 === undefined) {

@@ -629,6 +629,41 @@ class PageInteractions(unittest.TestCase):
                 self.assertNotIn("\n", page.evaluate("() => S.lines[0].description"))
                 self.assertEqual(errors, [])
 
+    def test_an_allowance_alert_follows_the_amount_filled_in(self):
+        """2026-11-21 (user): "it flagged one owner-set allowance with no
+        amount; I filled it in and it is still there". The red alert above
+        the estimate drops as soon as the amount is in, a note asks for
+        Re-estimate, and after Re-estimate nothing is left."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                browser = getattr(self.pw, engine).launch()
+                self.addCleanup(browser.close)
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                errors = []
+                page.on("pageerror", lambda e: errors.append(str(e)))
+                page.goto(self.url + "/")
+                page.wait_for_function(SAMPLE_READY, timeout=60000)
+                page.fill("#paste-text", "1\tMobilization\tLS\t1\n2\tIrrigation Repair Allowance\tLS\t1\n"
+                                         "3\tGrouted Rock Riprap, 18 inch\tSY\t900")
+                page.click("#btn-parse-text")
+                page.wait_for_function("() => S.lines.length === 3 && S.lines.every(l => l.cls)")
+                page.click("#btn-estimate")
+                page.wait_for_function("() => S.result && S.ws && S.ws.refs", timeout=60000)
+                top = page.locator("#r-top-alerts")
+                self.assertIn("no amount", top.inner_text())
+                inp = page.locator("#ownerset-box input.num").first
+                inp.fill("25000")
+                inp.dispatch_event("change")
+                page.wait_for_timeout(500)
+                self.assertNotIn("no amount", top.inner_text())
+                self.assertIn("Re-estimate", top.inner_text())
+                self.assertEqual(page.locator("#result-body tr.st-amount-missing").count(), 0)
+                page.click("#btn-reestimate")
+                page.wait_for_function("() => S.result && !S.stale", timeout=60000)
+                page.wait_for_timeout(300)
+                self.assertNotIn("no amount", page.locator("#r-top-alerts").inner_text())
+                self.assertEqual(errors, [])
+
     def test_ai_mode_is_a_place_kept_in_the_upload_step(self):
         """2026-11-21 (user): an "AI mode" button where files are uploaded:
         drawings and documents go in through the one drop area, then "Read by
