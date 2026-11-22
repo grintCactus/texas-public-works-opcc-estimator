@@ -262,7 +262,7 @@ def _m(v):
 #: showing one: items, Sub-Total, Construction Contingency (10%), Project
 #: Total): the estimator's prices only, no model or reference columns.
 OPCC_HEADER = ["Item No.", "Description", "Units", "Quantity", "Unit Cost",
-               "Total Cost", "Date", "Unit Cost Source"]
+               "Total Cost", "Notes", "Date", "Unit Cost Source"]
 OPCC_TITLE = "OPINION OF PROBABLE CONSTRUCTION COSTS"
 
 
@@ -305,18 +305,18 @@ def opcc_rows(t: dict, ws: dict) -> list:
         q = _f(l.get("quantity"))
         rows.append([_txt(l.get("item_no"), 20), _txt(l.get("description")),
                      _txt(l.get("unit"), 12), q if q is not None else "",
-                     _m(_opcc_unit(l, w, a)), _m(a),
+                     _m(_opcc_unit(l, w, a)), _m(a), _txt(w.get("note")),
                      _txt(w.get("source_date"), 10),
                      _txt(w.get("source") or w.get("src_label"))])
-    rows.append([""] * 8)
-    rows.append(["", "Sub-Total", "", "", "", _m(t["subtotal"]), "", ""])
+    rows.append([""] * 9)
+    rows.append(["", "Sub-Total", "", "", "", _m(t["subtotal"]), "", "", ""])
     for l, w, a in t["below"]:
         rows.append([_txt(l.get("item_no"), 20), _below_label(l), "", "", "",
-                     _m(a), "", _txt(w.get("note"))])
+                     _m(a), _txt(w.get("note")), "", ""])
     if show_extra(t):
         rows.append(["", _extra_label(t), "", "", "", _m(t["contingency"] or 0.0),
-                     "", ""])
-    rows.append(["", "Project Total", "", "", "", _m(t["your_opcc"]), "", ""])
+                     "", "", ""])
+    rows.append(["", "Project Total", "", "", "", _m(t["your_opcc"]), "", "", ""])
     return rows
 
 
@@ -381,15 +381,17 @@ def text_lines(text, width: float, size: float = 10.0) -> int:
 def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     """The OPCC itself, laid out the way an OPCC is delivered (user's team,
     2026-11-21: plain and readable, one total), and generic: no firm, no
-    names. The printed block is columns A-F inside one frame:
+    names. The printed block is columns A-G inside one frame:
     - a title and the project block (date, prepared by, project no.);
     - ESTIMATED QUANTITIES: item, description, units, quantity, unit cost,
       total cost, one line per item;
     - Sub-Total, the contingency and Project Total;
     - a blank interim-review box.
-    Columns G-H, outside the print area, are the working notes: the date and
-    the source of each unit cost. Arial 10, no fills, light row lines, and
-    every wrapped row sized to its text.
+    Notes (G) is part of the printed OPCC: the estimator's note on each line
+    (user, 2026-11-21: "the notes must be on the OPCC"). Columns H-I, outside
+    the print area, are the working notes: the date and source of each unit
+    cost.
+    Arial 10, no fills, a thin grid, and every wrapped row sized to its text.
     Returns (cell, formula, value) for the totals, written after the
     text-only pass so they stay live in Excel; the value is cached in the
     file too, so a viewer that does not calculate shows the right number."""
@@ -400,15 +402,15 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     thin = Side(style="thin", color="000000")
     hair = Side(style="thin", color="D9D9D9")
     sh.sheet_view.showGridLines = False      # it draws its own lines
-    widths = dict(zip("ABCDEFGH", (7, 62, 8, 11, 12, 14, 10, 60)))
+    widths = dict(zip("ABCDEFGHI", (7, 52, 8, 11, 12, 14, 28, 10, 50)))
     for col, wd in widths.items():
         sh.column_dimensions[col].width = wd
-    sh.merge_cells("A1:F1")
+    sh.merge_cells("A1:G1")
     sh["A1"] = OPCC_TITLE
     sh["A1"].font = F(14, True)
     sh["A1"].alignment = Alignment(horizontal="center", vertical="center")
     sh.row_dimensions[1].height = 24
-    for col in range(1, 7):
+    for col in range(1, 8):
         _keep_border(sh.cell(row=1, column=col), bottom=med)
     name = _txt(ws.get("project_name"), 160)
     sh.merge_cells("A3:C5")
@@ -423,6 +425,7 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
                         (5, "PROJECT NO.:", _txt(ws.get("project_no"), 60))):
         sh.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
         sh.cell(row=r, column=4, value=lab).font = F(10, True)
+        sh.merge_cells(start_row=r, start_column=6, end_row=r, end_column=7)
         c = sh.cell(row=r, column=6, value=val or None)
         c.font = F(10)
         c.alignment = Alignment(horizontal="right", shrink_to_fit=True)
@@ -434,7 +437,7 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     head = 8
     for j, name_ in enumerate(OPCC_HEADER, 1):
         c = sh.cell(row=head, column=j, value=name_)
-        c.font = F(10, True, color="595959" if j > 6 else None)
+        c.font = F(10, True, color="595959" if j > 7 else None)
         c.alignment = Alignment(horizontal="center", vertical="bottom")
         c.border = Border(top=thin, bottom=thin)
     sh.freeze_panes = "A%d" % (head + 1)
@@ -446,21 +449,22 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
         q = _f(l.get("quantity"))
         unit = _opcc_unit(l, w, a)
         desc = _txt(l.get("description"))
+        note = _txt(w.get("note"))      # printed with the line (user, 2026-11-21)
         src = _txt(w.get("source") or w.get("src_label"))
         if unit is None and a is None:
             src = "No price yet" + (" (%s)" % src if src else "")
         cells = [(1, _txt(l.get("item_no"), 20), "center"), (2, desc, "left"),
                  (3, _txt(l.get("unit"), 12), "center"), (4, q, "right"),
                  (5, unit, "right"), (6, None, "right"),
-                 (7, _txt(w.get("source_date"), 10), "center"), (8, src, "left")]
+                 (7, note, "left"),
+                 (8, _txt(w.get("source_date"), 10), "center"), (9, src, "left")]
         for j, v, h in cells:
             c = sh.cell(row=r, column=j, value=v if v != "" else None)
-            c.font = F(10) if j <= 6 else F(9, color="595959")
-            c.alignment = Alignment(horizontal=h, vertical="top", wrap_text=(j == 2))
-            if j <= 6:
-                c.border = Border(bottom=hair)
-        n = text_lines(desc, widths["B"], 10)
-        if n > 1:                    # a long description wraps; the row is sized for it
+            c.font = F(10) if j <= 6 else F(9, color="404040") if j == 7 else F(9, color="595959")
+            c.alignment = Alignment(horizontal=h, vertical="top", wrap_text=(j in (2, 7)))
+        # a long description or note wraps; the row is sized for the longer
+        n = max(text_lines(desc, widths["B"], 10), text_lines(note, widths["G"], 9) if note else 1)
+        if n > 1:
             sh.row_dimensions[r].height = 12.75 * n + 2
         # full precision in the cell (the format shows whole dollars, or
         # cents when there are any), so Excel's totals equal the page's
@@ -506,7 +510,9 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
             total_value += a
         note = _txt(w.get("note"))
         if note:
-            sh.cell(row=r, column=8, value=note).font = F(9, color="595959")
+            c = sh.cell(row=r, column=7, value=note)
+            c.font = F(9, color="404040")
+            c.alignment = Alignment(wrap_text=True, vertical="top")
         conts.append(r)
         r += 1
     if show_extra(t):
@@ -523,9 +529,9 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     formulas.append(("F%d" % tot, "=" + "+".join("F%d" % k for k in [sub] + conts),
                      total_value))
     # the table: a line on every side of every cell, header to Project Total
-    # (A-F), and the working notes beside it (G-H) in a lighter one
-    _grid(sh, head, tot, 1, 6)
-    _grid(sh, head, last, 7, 8, "BFBFBF")
+    # (A-G), and the working notes beside it (H-I) in a lighter one
+    _grid(sh, head, tot, 1, 7)
+    _grid(sh, head, last, 8, 9, "BFBFBF")
     _keep_border(sh.cell(row=tot, column=6), bottom=Side(style="double", color="000000"))
     # a blank interim-review box at the bottom right (C-F), where the team's
     # OPCC puts it (user, 2026-11-21): the standard wording, no names
@@ -536,38 +542,38 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
               "purposes.", F(9), "center"),
              ("Engineer: ________________________________", F(10), "left"),
              ("P.E. No.: ______________     Date: ______________", F(10), "left"))
-    bw = sum(widths[c] for c in "CDEF")
+    bw = sum(widths[c] for c in "DEFG")
     for k, (text, font, align) in enumerate(lines):
         r = box + k
-        sh.merge_cells(start_row=r, start_column=3, end_row=r, end_column=6)
-        c = sh.cell(row=r, column=3, value=text)
+        sh.merge_cells(start_row=r, start_column=4, end_row=r, end_column=7)
+        c = sh.cell(row=r, column=4, value=text)
         c.font = font
         c.alignment = Alignment(horizontal=align, vertical="center", wrap_text=True)
         n = text_lines(text, bw, font.sz or 10)
         sh.row_dimensions[r].height = max(18, (font.sz or 10) * 1.3 * n + 6)
-        for j in range(3, 7):
+        for j in range(4, 8):
             sides = {}
             if k == 0:
                 sides["top"] = thin
             if k == len(lines) - 1:
                 sides["bottom"] = thin
-            if j == 3:
+            if j == 4:
                 sides["left"] = thin
-            if j == 6:
+            if j == 7:
                 sides["right"] = thin
             if sides:
                 _keep_border(sh.cell(row=r, column=j), **sides)
     end = box + len(lines)
-    # one frame around the printed block (A-F), thin like the grid: a cell
+    # one frame around the printed block (A-G), thin like the grid: a cell
     # with one medium side reads as a thick box in Apple's previews; only
     # the title keeps its heavier rule
     for row in range(1, end + 1):
         _keep_border(sh.cell(row=row, column=1), left=thin)
-        _keep_border(sh.cell(row=row, column=6), right=thin)
-    for col in range(1, 7):
+        _keep_border(sh.cell(row=row, column=7), right=thin)
+    for col in range(1, 8):
         _keep_border(sh.cell(row=1, column=col), top=thin)
         _keep_border(sh.cell(row=end, column=col), bottom=thin)
-    sh.print_area = "A1:F%d" % end
+    sh.print_area = "A1:G%d" % end
     sh.page_setup.orientation = "portrait"
     sh.page_setup.fitToWidth = 1
     sh.page_setup.fitToHeight = 0

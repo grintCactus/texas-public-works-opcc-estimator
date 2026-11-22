@@ -20,6 +20,7 @@ Nothing is downloaded, saved on the server or sent anywhere.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import socket
@@ -48,6 +49,35 @@ def _free_port():
     s.close()
     return p
 
+
+def read_xlsx(path):
+    """{sheet name: {cell: value}} from an .xlsx, values as saved (a formula's
+    cached result included): numbers as floats, text as text."""
+    import zipfile
+    import xml.etree.ElementTree as ET
+    m = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    z = zipfile.ZipFile(path)
+    ss = []
+    if "xl/sharedStrings.xml" in z.namelist():
+        for si in ET.fromstring(z.read("xl/sharedStrings.xml")).iter(m + "si"):
+            ss.append("".join(t.text or "" for t in si.iter(m + "t")))
+    names = [s.get("name") for s in ET.fromstring(z.read("xl/workbook.xml")).iter(m + "sheet")]
+    out = {}
+    for k, name in enumerate(names, 1):
+        cells = {}
+        for c in ET.fromstring(z.read("xl/worksheets/sheet%d.xml" % k)).iter(m + "c"):
+            t, v = c.get("t"), c.find(m + "v")
+            if t == "s" and v is not None:
+                cells[c.get("r")] = ss[int(v.text)]
+            elif t == "inlineStr":
+                cells[c.get("r")] = "".join(x.text or "" for x in c.iter(m + "t"))
+            elif v is not None and v.text is not None:
+                try:
+                    cells[c.get("r")] = float(v.text)
+                except ValueError:
+                    cells[c.get("r")] = v.text
+        out[name] = cells
+    return out
 
 @unittest.skipIf(sync_playwright is None, "Playwright is not installed here")
 class PageInteractions(unittest.TestCase):
@@ -372,6 +402,102 @@ class PageInteractions(unittest.TestCase):
                 self.assertIn("(0% of the subtotal)", page.inner_text("#result-foot tr.wscont"))
                 self.assertIn("$0", page.inner_text("#result-foot tr.wscont"))
                 self.assertIn("construction contingency 0% $0", page.inner_text("#ws-totals .yours"))
+                self.assertEqual(errors, [])
+
+    def test_every_edit_reaches_the_exported_excel(self):
+        """2026-11-21 (user): change every editable thing on the page to a
+        different value, export, and check the Excel really carries each
+        change: the heading, P50 / P80, rounding, a typed price, an engineer's
+        number, a Reference pick, a note, a not-covered quote, the
+        contingency -- line by line and in the totals."""
+        import tempfile
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                page.click('#ws-totals .basis .seg[data-basis="p50"]')        # P50 prices
+                page.wait_for_timeout(300)
+                page.select_option("#ws-round", "off")                       # no rounding
+                page.wait_for_timeout(300)
+                for sel, val in (("#ws-project", "Test Creek Repair 7"), ("#ws-prepared", "QA"),
+                                 ("#ws-projno", "T-777")):
+                    page.fill(sel, val)
+                    page.press(sel, "Tab")
+                def price(row, v):
+                    page.fill('tr[data-line="%s"] input.yourp' % row, v)
+                    page.press('tr[data-line="%s"] input.yourp' % row, "Tab")
+                    page.wait_for_timeout(300)
+                price("r1", "30000")                                         # engineer input
+                page.select_option('tr[data-line="r3"] td.refcell select.pick', "ref_median")
+                page.wait_for_timeout(300)
+                page.fill('tr[data-line="r4"] input.note', "checked with the vendor")
+                page.press('tr[data-line="r4"] input.note', "Tab")
+                price("r5", "33")                                            # a typed price
+                k = page.evaluate("() => S.result.lines.find(l => l.status === 'not_covered').row_id")
+                q = '#quotes-box input[data-fk="q:%s"]' % k                   # a vendor quote
+                page.fill(q, "50,000")
+                page.press(q, "Tab")
+                page.wait_for_timeout(300)
+                page.select_option('#ws-totals select[data-fk="ws:contingency"]', "15")
+                page.wait_for_timeout(400)
+                # what the page shows now
+                doc = page.evaluate("() => wsDoc()")
+                lines = {l["row_id"]: l for l in doc["worksheet"]["lines"]}
+                by_desc = {l["description"]: l for l in page.evaluate("() => S.result.lines")}
+                tot = doc["totals"]
+                self.assertEqual(lines["r1"]["your_unit"], 30000)
+                self.assertEqual(lines["r5"]["your_unit"], 33)
+                self.assertEqual(lines[k]["your_amount"], 50000)
+                # export and read the file
+                with page.expect_download() as dl:
+                    page.click("#btn-export-xlsx")
+                path = os.path.join(tempfile.mkdtemp(), "export.xlsx")
+                dl.value.save_as(path)
+                x = read_xlsx(path)
+                o, sm = x["OPCC"], x["Summary"]
+                self.assertEqual((o.get("A3"), o.get("F4"), o.get("F5")), ("Test Creek Repair 7", "QA", "T-777"))
+                head = next(int(c[1:]) for c, v in o.items() if c.startswith("A") and v == "Item No.")
+                seen = 0
+                for r in range(head + 1, head + 60):
+                    d = o.get("B%d" % r)
+                    if d not in by_desc:
+                        continue
+                    l = by_desc[d]
+                    w = lines[l["row_id"]]
+                    if w["your_amount"] is None:
+                        self.assertIsNone(o.get("F%d" % r), d)
+                        continue
+                    self.assertAlmostEqual(o["F%d" % r], w["your_amount"], places=2, msg=d)
+                    if l["status"] not in ("owner_set",) and w["your_unit"] is not None:
+                        self.assertAlmostEqual(o["E%d" % r], w["your_unit"], places=4, msg=d)
+                    self.assertEqual(o.get("G%d" % r) or "", w["note"] or "", d)     # printed Notes
+                    self.assertEqual(o.get("I%d" % r) or "", w["source"] or "", d)
+                    seen += 1
+                self.assertGreaterEqual(seen, 8)
+                rows = {v: int(c[1:]) for c, v in o.items() if c.startswith("B") and isinstance(v, str)}
+                self.assertAlmostEqual(o["F%d" % rows["Sub-Total"]], tot["subtotal"], places=2)
+                self.assertAlmostEqual(o["F%d" % rows["Construction Contingency (15%)"]],
+                                       tot["subtotal"] * 0.15, places=2)
+                self.assertAlmostEqual(o["F%d" % rows["Project Total"]], tot["your_opcc"], places=2)
+                # the summary says where the prices started, and the same total
+                srow = {v: c for c, v in sm.items() if isinstance(v, str)}
+                self.assertIn("P50", sm["B" + srow["Prices start from"][1:]])
+                self.assertAlmostEqual(sm["B" + srow["Project Total"][1:]], tot["your_opcc"], places=2)
+                self.assertEqual(errors, [])
+
+    def test_a_note_typed_goes_into_the_export(self):
+        """2026-11-21 (user): a note typed on a line, and the export clicked
+        straight after, carries the note (the OPCC sheet shows it beside the
+        line's source)."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                page.fill('tr[data-line="r4"] input.note', "checked with the vendor")
+                with page.expect_request(lambda r: "/api/worksheet/export/xlsx" in r.url) as req:
+                    with page.expect_download():
+                        page.click("#btn-export-xlsx")
+                body = json.loads(req.value.post_data)
+                notes = {l["row_id"]: l["note"] for l in body["worksheet"]["lines"]}
+                self.assertEqual(notes["r4"], "checked with the vendor")
                 self.assertEqual(errors, [])
 
     def test_one_export_in_its_own_step(self):
