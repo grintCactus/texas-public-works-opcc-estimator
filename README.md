@@ -13,7 +13,7 @@ The focus is municipal work in the Dallas–Fort Worth area, especially creek er
 
 The model is trained **only on public bid tabulations**. Every number it reports was measured **forward in time**: each letting is priced using only lettings dated before it, the way the tool would actually be used.
 
-> **Status: work in progress.** The data pipeline, the evaluation framework and two rounds of confirmed pricing changes are in place. TxDOT accuracy is near engineer level; municipal accuracy is still short of the goal (see below). This repository is being published step by step.
+> **Status: work in progress.** The data pipeline, the evaluation framework, the confirmed pricing changes and the web app are in place. TxDOT accuracy is near engineer level; municipal accuracy is still short of the goal (see below). Model optimization is paused since 2026-11-21 (after round 20). Maintainers and coding agents start with [`AGENTS.md`](AGENTS.md) and [`docs/HANDOFF.md`](docs/HANDOFF.md).
 
 ---
 
@@ -21,7 +21,7 @@ The model is trained **only on public bid tabulations**. Every number it reports
 
 **Try it online:** https://129-146-109-44.sslip.io (a demo on a free cloud server; files you upload are processed and not stored, so do not upload confidential documents).
 
-Or start the app on your own machine with `.venv/bin/python ui/run.py`, then open http://127.0.0.1:8017/. Pricing is ready about 10 seconds after start.
+Or run it on your own machine (see [Running it](#running-it)), then open http://127.0.0.1:8017/. Pricing is ready about 10 seconds after start.
 
 1. **Enter the takeoff.**
    - No takeoff yet? Download the blank takeoff template (Excel) at the top of this step. It is laid out like the OPCC it becomes, just not filled in. Fill in one pay item per row: item no., description, units and quantity; an allowance the bid form prints a dollar amount for goes in Total Cost. Then upload the file, or paste the rows with the header row. An uploaded template brings its project name, project no. and prepared by into the worksheet and the export, and long descriptions wrap in the grid.
@@ -135,7 +135,7 @@ On the lettings that both builds score, the change is within noise. That build c
 - **Recent lettings run higher than history.** In 2026, P80 was under the low bid on 17% of municipal and 23% of TxDOT lettings; TxDOT is above the 20% floor. The guard adapts, but with a lag.
 - **About a third of the worst municipal misses cannot be fixed this way.** They are ordinary market variation between bidders that bid history alone cannot predict. Another sixth are one-off specialty items, which are now marked not covered.
 - **City data is thin.** Many city items have little bid history. Some cities publish bid tabs only behind vendor portals, which are not collected. Scanned tabs lose lines.
-- **Not runnable end to end from this repository.** A few pipeline modules still carry client-specific configuration and are not published. The bid-tab corpus (several GB) is not distributed.
+- **A full rebuild needs the document corpus.** The app and the estimator run from this repository with the public data bundle (see [Running it](#running-it)). Rebuilding the tables from documents needs the bid-tab corpus (several GB); the public documents repository holds most of it, not all.
 
 **Tried and not adopted (yet).** Pricing municipal lines from municipal-only price data, instead of data dominated by TxDOT price levels, together with four smaller pricing fixes.
 - **Forward tests:** passed the registered test. Municipal overshoot fell 49% → 42% and P50 error 24% → 20%.
@@ -390,16 +390,22 @@ forward calibration ── centring and the P80 divisor from earlier lettings on
 | Path | What it is |
 |---|---|
 | `src/` | Pipeline: harvesting, parsing, OCR, panel build, reference tables, estimator, evaluation and guards |
-| `ui/` | A small local web app for pricing a schedule |
-| `data/test_holdout/` | Registry and access log of the locked public test set (file list only) |
+| `ui/` | A small local web app for pricing a schedule, with its tests |
+| `deploy/` | The public site: package files, server setup, data-bundle tools, the commit guard |
+| `data/test_holdout/` | Registry of the locked public test set and of every registered decision (file list only) |
+| `docs/` | For maintainers: [handoff](docs/HANDOFF.md), [history of everything tried](docs/HISTORY.md), [method and mathematics](docs/METHOD.md), [data sources and cleaning](docs/DATA.md) |
+| `AGENTS.md` | Standing rules and commands for anyone (or any coding agent) working here |
+
+Published separately:
+
+- **The public data bundle:** the built tables the app reads, public lettings only (about 350 MB unpacked, 21 MB to download). It is a release asset of this repository; `deploy/tools/fetch_bundle.py` downloads and verifies it.
+- **The original bid documents:** https://github.com/grintCactus/texas-public-works-bid-tabs (2,150 public bid tabulations and award documents, with each file's source page).
 
 Not included:
 
-- **The derived tables:** several GB built from the bid tabs. The original documents themselves are in the companion data repository below.
-- **Experiment reports and setup notes:** kept in the working copy; the results that matter are summarized in this README.
-- **The original bid documents** are published separately: https://github.com/grintCactus/texas-public-works-bid-tabs (2,150 public bid tabulations and award documents, with each file's source page).
-- **Local tools:** poppler, Tesseract and the Python environment.
-- **Some pipeline modules:** they still carry client-specific configuration, which is being moved out into a local file. They will be added in a following commit.
+- **The working corpus and the full built tables** (several GB), and the rows of the locked public test set.
+- **Experiment reports and working files** of each round; `docs/HISTORY.md` summarizes them.
+- **Anything private.** A private test set exists outside this repository; a few scripts that only read it are not published, and the rebuild script skips their steps where they are absent.
 
 ## Running it
 
@@ -408,11 +414,15 @@ Requires Python 3.12 on macOS or Linux.
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python deploy/tools/fetch_bundle.py     # the public data bundle -> data/clean
+.venv/bin/python ui/run.py                        # http://127.0.0.1:8017/
 ```
 
-Text extraction and OCR use poppler (`pdftotext`) and Tesseract, installed from conda-forge into `tools/` (see `tools/README.txt` in a working copy). A full rebuild (`bash src/rebuild_all.sh`) needs the bid-tab corpus, which is not distributed here.
+Pricing is ready about 10 seconds after start. Reading PDF takeoffs and scanned uploads also needs `pdftotext` (poppler) and Tesseract (macOS: `brew install poppler tesseract`; Debian/Ubuntu: `apt-get install poppler-utils tesseract-ocr`).
 
-The web UI: `.venv/bin/python ui/run.py` opens http://127.0.0.1:8017/. It needs the built tables in `data/clean`; see `ui/README.md`.
+Tests: `.venv/bin/python ui/run.py --test`. A known-answer check and everything else a maintainer needs are in [`docs/HANDOFF.md`](docs/HANDOFF.md). Updating the public site: [`deploy/README.md`](deploy/README.md).
+
+A full rebuild of the tables (`bash src/rebuild_all.sh`) needs the document corpus under `data/external/` and `data/txdot/`; see [`docs/DATA.md`](docs/DATA.md).
 
 ## License
 
