@@ -23,6 +23,7 @@ never reused for different data: pass a new --tag instead.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import io
 import json
@@ -92,23 +93,37 @@ def main(argv=None):
                   for k, v in sorted(man["files"].items())},
         "total_bytes": man.get("total_bytes")}
 
-    # 2. the archive: plain members, no owner names, no extended attributes
+    # 2. the archive: plain members, no owner names, no extended attributes,
+    #    one fixed time -- the same bundle always packs to the same bytes
     out = os.path.join(bundle, asset)
+    stamp = int(os.path.getmtime(os.path.join(bundle, "MANIFEST.json")))
 
     def clean(ti):
         ti.uid = ti.gid = 0
         ti.uname = ti.gname = ""
         ti.mode = 0o644
+        ti.mtime = stamp
         return ti
-    with tarfile.open(out, "w:gz", format=tarfile.PAX_FORMAT) as tf:
+    with open(out, "wb") as raw, \
+            gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz, \
+            tarfile.open(fileobj=gz, mode="w", format=tarfile.GNU_FORMAT) as tf:
         body = json.dumps(public_manifest, indent=1).encode("utf-8")
         ti = tarfile.TarInfo("data/MANIFEST.json")
         ti.size = len(body)
-        ti.mtime = int(os.path.getmtime(os.path.join(bundle, "MANIFEST.json")))
         tf.addfile(clean(ti), io.BytesIO(body))
         for f in files:
             tf.add(os.path.join(bd, f), arcname="data/clean/" + f, filter=clean)
     digest, size = sha256(out), os.path.getsize(out)
+
+    # a published tag is never reused for different bytes
+    lock_path = os.path.join(REPO, "deploy", "bundle.lock.json")
+    if os.path.exists(lock_path):
+        prev = json.load(open(lock_path, encoding="utf-8"))
+        if prev.get("tag") == tag and prev.get("sha256") != digest:
+            print("STOP: deploy/bundle.lock.json already names tag %s with another "
+                  "archive (sha256 %s...). Pass a new --tag for new data."
+                  % (tag, str(prev.get("sha256"))[:12]))
+            return 1
 
     # 3. the lock
     lock = {"about": "The public data bundle this checkout uses. Read by "
@@ -119,7 +134,7 @@ def main(argv=None):
             "sha256": digest, "bytes": size, "built": built,
             "parser_version": public_manifest["parser_version"],
             "tables": len(files), "unpacked_bytes": man.get("total_bytes")}
-    with open(os.path.join(REPO, "deploy", "bundle.lock.json"), "w", encoding="utf-8") as fh:
+    with open(lock_path, "w", encoding="utf-8") as fh:
         json.dump(lock, fh, indent=1)
         fh.write("\n")
     print("packed %s: %.1f MB, sha256 %s" % (os.path.relpath(out, REPO), size / 1e6, digest))
