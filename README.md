@@ -84,7 +84,7 @@ All figures are forward in time: each letting is priced from lettings dated befo
 
 | | Lettings | P50 median error | P80 under the low bid | Median overshoot (P80 ≥ low) | Overshoot at 70% / 75% / 80% not-under |
 |---|---|---|---|---|---|
-| **TxDOT** (DFW counties), 2023–26 | 807 | **16%** | 16% | 32% | **26% / 27% / 30%** |
+| **TxDOT** (DFW counties), 2023–26 | 807 | **16%** | 15% | 31% | **26% / 27% / 30%** |
 | TxDOT engineers' own estimates (same 451 lettings, official totals) | 451 | 21% | 14% | — | 19% / 22% / 23% |
 | **City / municipal** (DFW), 2024–26 | 235 | **20%** | 14% | 45% | **30% / 32% / 34%** |
 | Municipal engineers' own estimates | 140 | ~15% | 33% | — | 20% / 21% / 25% |
@@ -109,7 +109,7 @@ On the lettings that both builds score, the change is within noise. That build c
 - **TxDOT is close to engineer level.**
   - On 807 DFW TxDOT lettings, the median P50 error is 16%.
   - On the 451 of them with an official engineer's estimate, our median error (17%) is lower than the engineers' (21%), whose estimates run about 20% high.
-  - At an 80% not-under rate, the engineers still overshoot less: 23% vs our 31%.
+  - At an 80% not-under rate, the engineers still overshoot less: 23% vs our 30%.
 - **Standard items are priced close to the bidders' own spread.** On TxDOT, half of the asphalt, bridge concrete, concrete pavement, riprap, headwall, box culvert and storm pipe lines are within 14–20% of the median bid. In cities, the same holds for curb ramps, driveways and inlets (16–24%). See [Item-level accuracy](#item-level-accuracy).
 - **The evaluation is strict.**
   - Every figure is forward in time.
