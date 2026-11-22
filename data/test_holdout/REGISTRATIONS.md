@@ -374,3 +374,9 @@ The locked test set has been opened four times. Municipal changes chosen in late
 - **Round 12** (lump sums as a share of the job, size-classed centring) did not pass and is not pending.
 - **Records:** reports/p50_fix_round13.md; patch applied 2026-11-20 19:0x with the switch off. Production is unchanged.
 
+### Round 18: switched on, with a prospective switch-off check (2026-11-21 15:20)
+
+Rounds 16 + 17 (X1/B80): bidder counts above the discount table's top bin priced off the top bin, the abandonment identity (AB), and the P80 divisor and guard level from production B (B80). Registered in handoff/scratchpad/p50fix/PREREGISTRATION_ROUND18.md (md5 2c1e265f5ae9333bb275111cdd00bc1b) and judged by ADOPTION_RULE_2026-11-21.md. It passed track T and track U on the common lettings: municipal overshoot 45.78% -> 45.54% (90% interval -1.05 to -0.05), P50 error 20.20% -> 19.88%, P80 under 14.29% in every year, TxDOT unchanged. Unlike rounds 11 and 13 it is on in production (src md5: estimate_low_bid bd51fdad..., item_tokens 79738052...), because both markets passed on forward evidence and the floor did not move.
+
+**Switch-off rule:** once at least 40 DFW municipal lettings dated after 2026-11-20 are scorable, score production and production B (round 18's switches off) forward on them, paired. Switch round 18 off in both markets (discount() and tokens() are shared) if its P80 is under the low bid on more than 20% of them, or its median overshoot is more than 1.0 point above B's on the same lettings. Lettings only round 18 prices (above the top bin) are reported apart. Records: reports/p50_fix_round18.md; handoff/scratchpad/p50fix/round18/INSTALL.txt.
+
