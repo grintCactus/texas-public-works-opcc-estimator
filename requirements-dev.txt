@@ -1,0 +1,5 @@
+# Only for the in-browser tests (ui/test_browser.py); everything else runs on requirements.txt.
+#     .venv/bin/python -m pip install -r requirements-dev.txt
+#     .venv/bin/python -m playwright install chromium
+# Without it those tests are skipped, not failed.
+playwright==1.65.2

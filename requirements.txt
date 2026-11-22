@@ -1,9 +1,12 @@
-# Versions as installed on the Windows PC (Python 3.14) on 2026-11-19.
-# On the Mac:  python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
-# If a pinned version has no wheel for the Mac's Python, relax that line to >= and note it.
-# (All pins installed unchanged on the Mac's Python 3.12.9.  The python.org build has
-#  no CA bundle: PIP_CERT=/etc/ssl/cert.pem pip install --use-deprecated=legacy-certs ...)
-# Not pip packages: pdftotext (poppler) and Tesseract live in tools/ -- see tools/README.txt.
+# The project's Python packages, pinned to the versions it was verified with
+# (Python 3.12, macOS and Linux).
+#     python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+# A python.org build of Python on macOS ships no CA bundle; if pip cannot verify
+# certificates there:  PIP_CERT=/etc/ssl/cert.pem .venv/bin/python -m pip install --use-deprecated=legacy-certs -r requirements.txt
+# Not pip packages: pdftotext (poppler) and Tesseract, needed by the data pipeline and
+# by OCR of scanned uploads -- macOS: brew install poppler tesseract;
+# Debian/Ubuntu: apt-get install poppler-utils tesseract-ocr.
+# Browser tests need requirements-dev.txt as well.
 pandas==2.3.3
 numpy==2.4.2
 openpyxl==3.1.5
@@ -11,6 +14,7 @@ pdfplumber==0.11.9
 pdfminer.six==20251230
 pypdfium2==5.6.0
 PyMuPDF==1.27.1
+fpdf2==2.8.9          # the PDF export of the web app
 scipy==1.18.0
 scikit-learn==1.9.0
 pyarrow==23.0.1

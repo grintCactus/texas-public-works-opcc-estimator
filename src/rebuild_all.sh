@@ -6,6 +6,12 @@
 # one.  provenance_check.py, train_test_guard.py and company_twin_scan.py exit
 # non-zero on a train/test leak, so a leak stops the run too.
 #
+# Local-only steps: four scripts read the private company test files (or the
+# list of them) and exist only in the owner's working copy: company_twin_scan,
+# qc_report, estimate_accuracy_benchmark and opcc_analysis.  Where a script is
+# absent its step is skipped and the log says so; every table the estimator and
+# the web app read is still built, from public data alone.
+#
 # Usage (bash, Git Bash or macOS):  bash src/rebuild_all.sh [--from <script-name>]
 #   PYTHON=/path/to/python overrides the interpreter
 #     (default: the project venv .venv/bin/python, else python, else python3)
@@ -37,7 +43,7 @@ export PYTHONIOENCODING=utf-8 BIDTAB_WORKERS="${BIDTAB_WORKERS:-8}" OMP_NUM_THRE
 # WITHOUT an error and the classifications drift, so a missing pdftotext stops here.
 if [ -x tools/poppler/bin/pdftotext ]; then export PATH="$PWD/tools/poppler/bin:$PATH"; fi
 if ! command -v pdftotext >/dev/null 2>&1; then
-  echo "STOPPED: pdftotext not found -- install poppler (see tools/README.txt)"; exit 1
+  echo "STOPPED: pdftotext not found -- install poppler (macOS: brew install poppler; Debian/Ubuntu: apt-get install poppler-utils; or see tools/README.txt in a working copy)"; exit 1
 fi
 FROM=""
 if [ "${1:-}" = "--from" ]; then FROM="${2:-}"; fi
@@ -61,8 +67,17 @@ run() {
   fi
 }
 
+# A step whose script exists only in the owner's working copy.
+run_local() {
+  if [ -f "$2" ]; then
+    run "$@"
+  else
+    echo "=== skip $2 (local-only step: the script is not in this checkout)" | tee -a "$LOG"
+  fi
+}
+
 # 0. inputs: no public copy of a company letting may be where the parser reads
-run "$PYTHON" src/company_twin_scan.py
+run_local "$PYTHON" src/company_twin_scan.py
 # 1. external corpus bookkeeping (moves out-of-window files; never run beside a harvest)
 run "$PYTHON" src/audit_external.py
 # 1b. image-only scans: OCR the ones still unreadable (cached sidecars, so only
@@ -71,15 +86,15 @@ run "$PYTHON" src/audit_external.py
 #     scanned public copy of a company tab was checked on its file name alone
 run "$PYTHON" src/ocr_scans.py
 run "$PYTHON" src/audit_external.py
-run "$PYTHON" src/company_twin_scan.py
+run_local "$PYTHON" src/company_twin_scan.py
 run "$PYTHON" src/index_external.py
 run "$PYTHON" src/quarantine_pre2020.py
 # 2. parse (PARSER_VERSION was bumped, so every file is re-parsed)
 run "$PYTHON" src/parse_bidtabs.py
 # 2b. content check: a public letting that repeats a company file's bid rows
 #     (item, quantity, unit price) is a copy whatever its title says
-run "$PYTHON" src/company_twin_scan.py --rows
-run "$PYTHON" src/qc_report.py
+run_local "$PYTHON" src/company_twin_scan.py --rows
+run_local "$PYTHON" src/qc_report.py
 # 3. other loaders (they re-derive item_family from the current rules)
 run "$PYTHON" src/load_txdot.py
 run "$PYTHON" src/parse_txdot_archive.py
@@ -95,8 +110,8 @@ run "$PYTHON" src/award_identity.py
 run "$PYTHON" src/competition_and_crosswalk.py
 run "$PYTHON" src/index_by_market.py
 run "$PYTHON" src/estimate_low_bid.py
-run "$PYTHON" src/estimate_accuracy_benchmark.py
-run "$PYTHON" src/opcc_analysis.py
+run_local "$PYTHON" src/estimate_accuracy_benchmark.py
+run_local "$PYTHON" src/opcc_analysis.py
 # 5. train/test guards: non-zero exit means a real leak
 run "$PYTHON" src/provenance_check.py
 run "$PYTHON" src/train_test_guard.py

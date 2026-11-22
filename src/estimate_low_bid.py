@@ -168,10 +168,10 @@ MIN_SCHEDULE_ITEMS = 3
 # by two or more bidders, 200 carry one identical amount (185 of 202 in the
 # parser's `contingency` family); most of the rest are percentage contingencies
 # or ordinary items that merely say "allow".  Pricing such a line off OTHER
-# projects' allowances returns some other owner's figure: the Carrollton tab
-# writes a $20,000 sprinkler allowance as 20,000 x $1 under unit ALLOW, and the
-# family median per ALLOW unit ($11,616.53) made it $232 million
-# (reports/opcc_benchmark.md, 2.4).  So an owner-set amount is taken at face
+# projects' allowances returns some other owner's figure: one tab writes an
+# allowance of N dollars as N x $1 under unit ALLOW, and pricing N units at the
+# family median per ALLOW unit (over $11,000) made it hundreds of millions of
+# dollars.  So an owner-set amount is taken at face
 # value and kept OUT of the competition discount, and an allowance-like line
 # with no amount is priced as before but flagged.  No rule reads a quantity as
 # dollars: that convention occurs in 0 of the 72 public ALLOW items, so the

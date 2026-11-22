@@ -388,3 +388,15 @@ Installed 18:12-18:52 by a full rebuild (every guard passed). The five external-
 
 **Switch-off rule:** once at least 40 DFW municipal lettings dated after 2026-11-20 are scorable, score production and production with the .33 parser (a full rebuild each) forward on them, paired. Revert the parser file and rebuild if the P80 under rate is above 20%, or the median overshoot is more than 1.0 point above the .33 run's on the same lettings. Records: reports/p50_fix_round20.md; handoff/scratchpad/p50fix/round20/install/G/INSTALL.txt.
 
+## Source fingerprints after the handoff refactor (2026-11-21 23:33)
+
+Not a registration: a record, so that the md5 values quoted above can be matched to the files in the repository.
+
+To publish the whole pipeline, content that named private test files left the code: a private local configuration (`src/local_config.py`) now supplies it on the owner's machine, comments were reworded, and report text written by four modules was translated to English. No logic changed.
+
+- **Verification:** a full rebuild with an empty parse cache (1,686 files parsed again). 80 of the 81 CSV tables in `data/clean` are byte-identical to the tables of the round 20 arm G install; the 81st (`award_reconciliation.csv`) differs in one translated label that nothing reads back. Both guards passed. The app prices 400 public lettings identically before and after.
+- **md5 now:** `src/estimate_low_bid.py` c1edaaf5f380148dffc468746a6ead80 (a comment only; the token stream is identical); `src/parse_bidtabs.py` 543bec67c54da119c0d243ff9bd537f1 (parser version unchanged, `.34b`); `src/build_master.py` 6174374a525d151a1127577928d5219c; `src/train_test_guard.py` 3225a66222e3f64d07ac0c242bc5e9d9.
+- **Unchanged:** `src/holdout_eval.py` cb152bd0…, `src/item_tokens.py` 79738052…, `src/coverage.py` a2e99bb7….
+
+Older md5 values in this file refer to the same logic.
+
