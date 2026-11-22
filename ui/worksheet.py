@@ -541,13 +541,15 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
         c = sh.cell(row=box + k, column=2, value=text)
         c.font = F(10, k == 0)
     end = box + len(lines) + 1
-    # one frame around the printed block (A-F)
+    # one frame around the printed block (A-F), thin like the grid: a cell
+    # with one medium side reads as a thick box in Apple's previews; only
+    # the title keeps its heavier rule
     for row in range(1, end + 1):
-        _keep_border(sh.cell(row=row, column=1), left=med)
-        _keep_border(sh.cell(row=row, column=6), right=med)
+        _keep_border(sh.cell(row=row, column=1), left=thin)
+        _keep_border(sh.cell(row=row, column=6), right=thin)
     for col in range(1, 7):
-        _keep_border(sh.cell(row=1, column=col), top=med)
-        _keep_border(sh.cell(row=end, column=col), bottom=med)
+        _keep_border(sh.cell(row=1, column=col), top=thin)
+        _keep_border(sh.cell(row=end, column=col), bottom=thin)
     sh.print_area = "A1:F%d" % end
     sh.page_setup.orientation = "portrait"
     sh.page_setup.fitToWidth = 1
@@ -707,12 +709,12 @@ def _summary_page(sh, result: dict, ws: dict, t: dict):
     for a, b in blocks:
         _grid(sh, a, b, 1, 4)
     _keep_border(sh.cell(row=total_row, column=2), bottom=Side(style="double", color="000000"))
-    for rr in range(1, end + 1):
-        _keep_border(sh.cell(row=rr, column=1), left=med)
-        _keep_border(sh.cell(row=rr, column=4), right=med)
+    for rr in range(1, end + 1):          # a thin frame, as on the OPCC
+        _keep_border(sh.cell(row=rr, column=1), left=thin)
+        _keep_border(sh.cell(row=rr, column=4), right=thin)
     for col in range(1, 5):
-        _keep_border(sh.cell(row=1, column=col), top=med)
-        _keep_border(sh.cell(row=end, column=col), bottom=med)
+        _keep_border(sh.cell(row=1, column=col), top=thin)
+        _keep_border(sh.cell(row=end, column=col), bottom=thin)
     sh.print_area = "A1:D%d" % end
     sh.page_setup.orientation = "portrait"
     sh.page_setup.fitToWidth = 1
