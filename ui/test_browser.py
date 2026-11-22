@@ -142,30 +142,40 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(self.expanded(page, "r4"), "false")
                 self.assertEqual(errors, [])
 
-    def test_the_quick_pick_reads_pick_and_names_its_source(self):
-        """QA 2026-11-20 (bug 23): the 96 px quick-pick box showed the applied
-        source's long label, cut to "Model price !". It is a menu now: it
-        always reads "pick reference…" (named so 2026-11-21: the user asked what
-        "pick" meant), and the chosen source shows under the price."""
+    def test_the_reference_column_shows_and_changes_the_source(self):
+        """2026-11-21 (user): a column of its own, "Reference", says where each
+        unit price comes from. It starts on the default (the model's price at
+        the chosen level), short enough to read whole; picking another there
+        changes the price, which flashes; a price rounded from its source
+        says so; a price you type reads "your price"."""
         for engine in self.engines:
             with self.subTest(engine=engine):
                 page, errors = self.estimate_page(engine)
-                shown = page.evaluate("() => [...document.querySelectorAll('#result-body select.pick')]"
-                                      ".map(s => s.options[s.selectedIndex].text)")
-                self.assertTrue(shown)
-                self.assertEqual(set(shown), {"pick reference…"})
+                self.assertIn("\treference\t", page.inner_text("#result-table thead").lower())
                 row = 'tr[data-line="r3"]'
+                sel = row + " td.refcell select.pick"
+                shown = lambda: page.evaluate("s => { const e = document.querySelector(s); "
+                                              "return e.options[e.selectedIndex].text; }", sel)
+                self.assertTrue(shown().startswith("Model P80 \u00b7 $"), shown())
+                # every model-priced line starts on the model's price
+                firsts = page.evaluate("() => [...document.querySelectorAll('#result-body td.refcell select.pick')]"
+                                       ".map(s => s.options[s.selectedIndex].text)")
+                self.assertTrue(firsts and all(t.startswith(("Model P80", "engineer input")) for t in firsts), firsts)
                 want = page.evaluate("() => S.ws.refs && S.ws.refs.r3 && S.ws.refs.r3.range.median")
-                page.select_option(row + " select.pick", "ref_median")
+                page.select_option(sel, "ref_median")
                 page.wait_for_timeout(300)
-                self.assertEqual(page.evaluate(
-                    "r => { const s = document.querySelector(r + ' select.pick'); "
-                    "return s.options[s.selectedIndex].text; }", row), "pick reference…")
-                self.assertIn("Reference median", page.inner_text(row + " td:has(.yourcell) .dim.small"))
+                self.assertTrue(shown().startswith("Ref. median ("), shown())
                 got = float(page.input_value(row + " input.yourp").replace(",", ""))
-                # the picked price, rounded up to a round number (the default)
                 self.assertAlmostEqual(got, page.evaluate("p => nicePrice(p, 'up')", want), places=2)
+                self.assertIn("flash", page.get_attribute(row + " input.yourp", "class"))
+                if abs(got - want) > 0.004:
+                    self.assertIn("rounded up from", page.inner_text(row + " td:has(.yourcell)"))
                 self.assertEqual(self.expanded(page, "r3"), "false")
+                # a price you type: the column says so
+                page.fill(row + " input.yourp", "44")
+                page.press(row + " input.yourp", "Tab")
+                page.wait_for_timeout(300)
+                self.assertEqual(shown(), "your price")
                 self.assertEqual(errors, [])
 
     def test_opcc_conventions_on_the_worksheet(self):

@@ -2871,35 +2871,47 @@ function wsPicks(l) {
     const v = isNum(ident.mean_esc) ? ident.mean_esc : ident.median_esc;
     out.push({ v: 'ident', price: v, date: ident.date, label: 'Newest identical item: ' + ident.project
       + ' (' + ident.date + ') average ' + rate(v) + ' (' + yr + ')',
+      short: 'Identical item ' + String(ident.date).slice(0, 7) + ' \u00b7 ' + rate(v),
       note: 'used ' + tagOf(ident) + ' average bid (identical item)' });
   }
-  if (l.unit_price_p50) out.push({ v: 'model', price: modelUnit(l), label: 'Model ' + basisLabel() + ' price ' + rate(modelUnit(l)) });
+  if (l.unit_price_p50) out.push({ v: 'model', price: modelUnit(l), label: 'Model ' + basisLabel() + ' price ' + rate(modelUnit(l)),
+    short: 'Model ' + basisLabel() + ' \u00b7 ' + rate(modelUnit(l)) });
   if (x && x.range && isNum(x.range.mean)) out.push({ v: 'ref_mean', price: x.range.mean, label: 'Reference average ('
-    + x.n_refs + ', ' + yr + ') ' + rate(x.range.mean), note: 'average bid of ' + x.n_refs + ' reference projects' });
+    + x.n_refs + ', ' + yr + ') ' + rate(x.range.mean), note: 'average bid of ' + x.n_refs + ' reference projects',
+    short: 'Ref. average (' + x.n_refs + ') \u00b7 ' + rate(x.range.mean) });
   if (x && x.range) out.push({ v: 'ref_median', price: x.range.median, label: 'Reference median ('
-    + x.n_refs + ', ' + yr + ') ' + rate(x.range.median), note: 'reference median of ' + x.n_refs + ' projects' });
+    + x.n_refs + ', ' + yr + ') ' + rate(x.range.median), note: 'reference median of ' + x.n_refs + ' projects',
+    short: 'Ref. median (' + x.n_refs + ') \u00b7 ' + rate(x.range.median) });
   const uh = x && x.unit_hint;
   if (uh && isNum(uh.unit_price)) out.push({ v: 'unit', price: uh.unit_price,
     label: 'Converted from ' + uh.target + ' bids: ' + rate(uh.unit_price) + '/' + l.unit
       + ' (= ' + rate(uh.unit_price_target) + '/' + uh.target + ')',
-    note: 'converted from ' + uh.target + ' bids (' + uh.n_target + ' earlier lettings); check it is the same kind of work' });
+    note: 'converted from ' + uh.target + ' bids (' + uh.n_target + ' earlier lettings); check it is the same kind of work',
+    short: 'Converted from ' + uh.target + ' bids: ' + rate(uh.unit_price) + '/' + l.unit });
   const capAmt = printedCapAmount(l);
   if (capAmt !== null && isNum(l.quantity) && l.quantity > 0) out.push({ v: 'cap', price: capAmt / l.quantity,
     label: 'Printed cap: ' + l.printed_cap.text + ' of the '
       + (l.printed_cap.basis === 'rest' ? 'rest of the bid' : 'total bid') + ' = ' + money(capAmt),
-    note: 'printed cap ' + l.printed_cap.text + '; bidders usually price it at or just under the cap' });
+    note: 'printed cap ' + l.printed_cap.text + '; bidders usually price it at or just under the cap',
+    short: 'Printed cap: ' + l.printed_cap.text + ' of the ' + (l.printed_cap.basis === 'rest' ? 'rest of the bid'
+      : 'total bid') + ' = ' + money(capAmt) });
   const sp = similarPick(l);
   if (sp) out.push({ v: 'similar', price: sp.m.their_low_unit, date: sp.c.date, label: 'Most recent similar: '
     + sp.c.project + ' (' + sp.c.date + ') low ' + rate(sp.m.their_low_unit),
-    note: 'used ' + sp.c.owner + ' ' + String(sp.c.date).slice(0, 4) + ' ' + sp.c.project + ' low bid' });
+    note: 'used ' + sp.c.owner + ' ' + String(sp.c.date).slice(0, 4) + ' ' + sp.c.project + ' low bid',
+    short: 'Similar job ' + String(sp.c.date).slice(0, 7) + ' low \u00b7 ' + rate(sp.m.their_low_unit) });
   ((x && x.picks) || []).forEach((pk, i) => {
     const tag = tagOf(pk);
+    const who = (pk.owner || 'Past job') + ' ' + String(pk.date).slice(0, 7);
     if (isNum(pk.mean_esc)) out.push({ v: 'ref' + i + 'a', price: pk.mean_esc, date: pk.date, label: pk.project
-      + ' (' + pk.date + ') average ' + rate(pk.mean_esc) + ' (' + yr + ')', note: 'used ' + tag + ' average bid' });
+      + ' (' + pk.date + ') average ' + rate(pk.mean_esc) + ' (' + yr + ')', note: 'used ' + tag + ' average bid',
+      short: who + ' avg \u00b7 ' + rate(pk.mean_esc) });
     if (isNum(pk.median_esc)) out.push({ v: 'ref' + i + 'm', price: pk.median_esc, date: pk.date, label: pk.project
-      + ' (' + pk.date + ') median ' + rate(pk.median_esc) + ' (' + yr + ')', note: 'used ' + tag + ' median bid' });
+      + ' (' + pk.date + ') median ' + rate(pk.median_esc) + ' (' + yr + ')', note: 'used ' + tag + ' median bid',
+      short: who + ' median \u00b7 ' + rate(pk.median_esc) });
     if (isNum(pk.low_esc)) out.push({ v: 'ref' + i + 'l', price: pk.low_esc, date: pk.date, label: pk.project
-      + ' (' + pk.date + ') low ' + rate(pk.low_esc) + ' (' + yr + ')', note: 'used ' + tag + ' low bid' });
+      + ' (' + pk.date + ') low ' + rate(pk.low_esc) + ' (' + yr + ')', note: 'used ' + tag + ' low bid',
+      short: who + ' low \u00b7 ' + rate(pk.low_esc) });
   });
   return out;
 }
@@ -2961,7 +2973,7 @@ function renderWorksheetRows(r) {
     body.appendChild(resultRow(l, judg, open));
     const d = el('tr', { class: 'detail', 'data-detail': l.row_id, id: 'detail-' + l.row_id,
       style: open ? '' : 'display:none' },
-      el('td', { colspan: 10 }, lineDetail(l)));
+      el('td', { colspan: 11 }, lineDetail(l)));
     body.appendChild(d);
     if (open) {
       const host = $('[data-refs="' + CSS.escape(l.row_id) + '"]', d);
@@ -3078,7 +3090,7 @@ function renderWsTotals(r) {
   const foot = $('#result-foot');
   foot.innerHTML = '';
   const footRow = (cls, label, amt, right) => el('tr', { class: cls }, [
-    el('td', { colspan: 8, class: 'num', text: label }),
+    el('td', { colspan: 9, class: 'num', text: label }),
     el('td', { class: 'num money p50', text: money(amt) }),
     el('td', { class: 'dim', text: right || '' })]);
   foot.appendChild(footRow('wssub', 'Subtotal' + (t.missing ? ' (' + t.missing + ' line'
@@ -3296,6 +3308,7 @@ function contingencyRow(l) {
   tr.appendChild(el('td', {}));
   tr.appendChild(el('td', {}));
   tr.appendChild(el('td', { class: 'num money dim', text: sh ? sh.pct + '%' : 'fixed' }));
+  tr.appendChild(el('td', {}));                    // Reference
   tr.appendChild(el('td', { class: 'num money p50', text: amt === null ? '\u2014' : money(amt) }));
   tr.appendChild(el('td', {}, el('input', { class: 'cellinput note', type: 'text', value: w.note || '',
     placeholder: 'note', 'data-fk': focusKey('ws', l.row_id, 'note'),
@@ -3393,23 +3406,43 @@ function resultRow(l, judg, isOpen) {
       w.src_label = isNum(v) ? 'your price' : '';
       afterInput(renderWsNow);
     } });
+  // the Reference column (user, 2026-11-21): where this price comes from,
+  // set to the default (the model's price at the chosen level), changed
+  // here; the price follows and flashes once
   const picks = wsPicks(l);
-  const sel = locked || ncl || !picks.length ? null : el('select', { class: 'pick', title: 'Pick a reference price for this line',
-    'data-fk': focusKey('ws', l.row_id, 'pick'),
-    onchange: e => {
-      const pk = picks.find(p => p.v === e.target.value);
-      if (!pk) return;
-      // the picked price, rounded per the worksheet's setting (wsLine)
-      w.raw = pk.price;
-      w.src = pk.v === 'model' ? 'model' : pk.v;
-      w.src_label = pk.label;
-      w.src_date = pk.date || '';
-      if (pk.note && !w.note) w.note = pk.note;
-      afterInput(renderWsNow);
-    } }, [el('option', { value: '', text: 'pick reference…' })]   // a menu: it always reads "pick reference…"; the
-      .concat(picks.map(p => el('option', { value: p.v, text: p.label }))));   // source shows under the price
-  tr.appendChild(el('td', {}, [el('div', { class: 'yourcell' }, [inp, sel]),
-    w.src_label && w.src !== 'model' ? el('div', { class: 'dim small', text: w.src_label }) : null]));
+  const cur = picks.find(p => p.v === w.src) || null;
+  let ref;
+  if (locked) ref = el('span', { class: 'dim', text: 'owner-set' });
+  else if (ncl) ref = el('span', { class: 'dim', text: l.quote > 0 ? 'vendor quote' : '\u2014' });
+  else if (!picks.length) ref = el('span', { class: 'dim', text: w.src === 'you' ? 'your price' : '\u2014' });
+  else {
+    const lead = cur ? [] : [el('option', { value: '', selected: true,
+      text: w.src === 'you' ? 'your price' : engineerInput(l) ? 'engineer input' : 'choose\u2026' })];
+    ref = el('select', { class: 'pick', title: cur ? cur.label : 'Where this price comes from: pick a reference',
+      'aria-label': 'Reference for this price', 'data-fk': focusKey('ws', l.row_id, 'pick'),
+      onchange: e => {
+        const pk = picks.find(p => p.v === e.target.value);
+        if (!pk) return;
+        // the picked price, rounded per the worksheet's setting (wsLine)
+        w.raw = pk.price;
+        w.src = pk.v === 'model' ? 'model' : pk.v;
+        w.src_label = pk.label;
+        w.src_date = pk.date || '';
+        S.ws.flash = l.row_id;
+        if (pk.note && !w.note) w.note = pk.note;
+        afterInput(renderWsNow);
+      } }, lead.concat(picks.map(p => el('option', { value: p.v, text: p.short || p.label, title: p.label,
+        selected: !!cur && p.v === cur.v }))));
+  }
+  if (S.ws.flash === l.row_id) { inp.classList.add('flash'); S.ws.flash = null; }
+  // a price rounded from its source says so; an engineer-input line says what it needs
+  const rounded = cur && w.src !== 'model' && isNum(w.raw) && isNum(w.your_unit) && Math.abs(w.your_unit - w.raw) > 0.004;
+  const sub = rounded ? 'rounded ' + (S.ws.round === 'nearest' ? '' : S.ws.round === 'down' || w.src === 'cap' ? 'down ' : 'up ')
+      + 'from ' + rate(w.raw)
+    : (!w.src && w.src_label ? w.src_label : '');
+  tr.appendChild(el('td', {}, [el('div', { class: 'yourcell' }, [inp]),
+    sub ? el('div', { class: 'dim small', text: sub }) : null]));
+  tr.appendChild(el('td', { class: 'refcell' }, ref));
   const amt = wsAmount(l, w);
   tr.appendChild(el('td', { class: 'num money p50', text: amt === null ? '—' : money(amt) }));
   tr.appendChild(el('td', {}, el('input', { class: 'cellinput note', type: 'text', value: w.note || '',

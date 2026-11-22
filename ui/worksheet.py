@@ -527,20 +527,37 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     _grid(sh, head, tot, 1, 6)
     _grid(sh, head, last, 7, 8, "BFBFBF")
     _keep_border(sh.cell(row=tot, column=6), bottom=Side(style="double", color="000000"))
-    # a blank interim-review box: the standard wording, no names
-    box = tot + 3
-    lines = ("INTERIM REVIEW ONLY",
-             "Document incomplete: not intended for permit or construction.",
-             "Engineer: ____________________   P.E. No.: __________   Date: __________")
-    for k, text in enumerate(lines):
-        for j in (2, 3, 4):
-            _keep_border(sh.cell(row=box + k, column=j),
-                         top=thin if k == 0 else None,
-                         bottom=thin if k == len(lines) - 1 else None,
-                         left=thin if j == 2 else None, right=thin if j == 4 else None)
-        c = sh.cell(row=box + k, column=2, value=text)
-        c.font = F(10, k == 0)
-    end = box + len(lines) + 1
+    # a blank interim-review box at the bottom right (C-F), where the team's
+    # OPCC puts it (user, 2026-11-21): the standard wording, no names
+    box = tot + 2
+    lines = (("INTERIM REVIEW ONLY", F(12, True), "center"),
+             ("This document is incomplete and is released for interim review "
+              "only. It is not to be used for construction, bidding or permit "
+              "purposes.", F(9), "center"),
+             ("Engineer: ________________________________", F(10), "left"),
+             ("P.E. No.: ______________     Date: ______________", F(10), "left"))
+    bw = sum(widths[c] for c in "CDEF")
+    for k, (text, font, align) in enumerate(lines):
+        r = box + k
+        sh.merge_cells(start_row=r, start_column=3, end_row=r, end_column=6)
+        c = sh.cell(row=r, column=3, value=text)
+        c.font = font
+        c.alignment = Alignment(horizontal=align, vertical="center", wrap_text=True)
+        n = text_lines(text, bw, font.sz or 10)
+        sh.row_dimensions[r].height = max(18, (font.sz or 10) * 1.3 * n + 6)
+        for j in range(3, 7):
+            sides = {}
+            if k == 0:
+                sides["top"] = thin
+            if k == len(lines) - 1:
+                sides["bottom"] = thin
+            if j == 3:
+                sides["left"] = thin
+            if j == 6:
+                sides["right"] = thin
+            if sides:
+                _keep_border(sh.cell(row=r, column=j), **sides)
+    end = box + len(lines)
     # one frame around the printed block (A-F), thin like the grid: a cell
     # with one medium side reads as a thick box in Apple's previews; only
     # the title keeps its heavier rule
