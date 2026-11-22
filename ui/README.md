@@ -131,10 +131,10 @@ r = estimate(tab, items, n_bidders, market, to_year,
 1. **Status bar:** when `data/clean` was built and the latest letting in it, the
    estimator file's md5 and rule (for example V2+F1+F2, T1 on TxDOT, coverage
    scope), load time and memory, parser, the OCR engines for scanned PDFs, the
-   Claude reader's backend (or "off"), the number of remembered corrections,
-   and the theme toggle.
+   number of remembered corrections, and the theme toggle.
 2. **Takeoff:** paste or upload (.xlsx, .csv, PDF with a text layer or scanned,
-   .docx), or the optional **Read a PDF with Claude**; then the editable
+   .docx) through the one drop area; an **AI mode** button keeps the place for
+   reading drawings and documents by AI (not built yet); then the editable
    confirmation grid. Each line shows its classification: family, size bucket
    and unit, and badges for not covered, low confidence, possible owner-set
    money, unclassified, **check** (low-confidence reading, with up to three
@@ -214,6 +214,10 @@ TAKEOFF_NO_BIDTAB=1 .venv/bin/python ui/intake_eval.py --tag generic
 ```
 
 ## Setting up Claude reading
+
+Not on the page for now: its button was folded into **AI mode** (2026-11-21),
+which is a kept place, not built yet. The reader below stays in the code
+(`/api/claude/*`, `ui/intake_eval.py --reader claude`) for when AI mode is built.
 
 Optional. **Read a PDF with Claude** sends one PDF to Anthropic to transcribe
 its pay items (item no, description, unit, quantity, plus Claude's per-line

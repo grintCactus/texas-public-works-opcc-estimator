@@ -262,8 +262,20 @@ def _m(v):
 #: showing one: items, Sub-Total, Construction Contingency (10%), Project
 #: Total): the estimator's prices only, no model or reference columns.
 OPCC_HEADER = ["Item No.", "Description", "Units", "Quantity", "Unit Cost",
-               "Total Cost", "Notes", "Date", "Unit Cost Source"]
+               "Total Cost", "Unit Cost Source", "Notes"]
 OPCC_TITLE = "OPINION OF PROBABLE CONSTRUCTION COSTS"
+#: The interim-review box at the bottom right, line for line as on the
+#: team's printed OPCC (user, 2026-11-21): the standard Texas legend and
+#: blanks for the engineer, P.E. serial no., date, company and firm
+#: registration no. Generic: "Company" stands where the firm's name goes.
+INTERIM_LINES = ("INTERIM REVIEW ONLY",
+                 "Document Incomplete: Not Intended",
+                 "For Permit or Construction.",
+                 "Engineer : " + "_" * 27,
+                 "P.E. Serial No : " + "_" * 22,
+                 "Date : " + "_" * 30,
+                 "Company",
+                 "TBPE Firm Registration No. " + "_" * 12)
 
 
 def _txt(v, n=300) -> str:
@@ -305,18 +317,18 @@ def opcc_rows(t: dict, ws: dict) -> list:
         q = _f(l.get("quantity"))
         rows.append([_txt(l.get("item_no"), 20), _txt(l.get("description")),
                      _txt(l.get("unit"), 12), q if q is not None else "",
-                     _m(_opcc_unit(l, w, a)), _m(a), _txt(w.get("note")),
-                     _txt(w.get("source_date"), 10),
-                     _txt(w.get("source") or w.get("src_label"))])
-    rows.append([""] * 9)
-    rows.append(["", "Sub-Total", "", "", "", _m(t["subtotal"]), "", "", ""])
+                     _m(_opcc_unit(l, w, a)), _m(a),
+                     _txt(w.get("source") or w.get("src_label")),
+                     _txt(w.get("note"))])
+    rows.append([""] * 8)
+    rows.append(["", "Sub-Total", "", "", "", _m(t["subtotal"]), "", ""])
     for l, w, a in t["below"]:
         rows.append([_txt(l.get("item_no"), 20), _below_label(l), "", "", "",
-                     _m(a), _txt(w.get("note")), "", ""])
+                     _m(a), "", _txt(w.get("note"))])
     if show_extra(t):
         rows.append(["", _extra_label(t), "", "", "", _m(t["contingency"] or 0.0),
-                     "", "", ""])
-    rows.append(["", "Project Total", "", "", "", _m(t["your_opcc"]), "", "", ""])
+                     "", ""])
+    rows.append(["", "Project Total", "", "", "", _m(t["your_opcc"]), "", ""])
     return rows
 
 
@@ -381,51 +393,57 @@ def text_lines(text, width: float, size: float = 10.0) -> int:
 def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     """The OPCC itself, laid out the way an OPCC is delivered (user's team,
     2026-11-21: plain and readable, one total), and generic: no firm, no
-    names. The printed block is columns A-G inside one frame:
+    names. The printed block is columns A-F inside one frame:
     - a title and the project block (date, prepared by, project no.);
     - ESTIMATED QUANTITIES: item, description, units, quantity, unit cost,
       total cost, one line per item;
     - Sub-Total, the contingency and Project Total;
     - a blank interim-review box.
-    Notes (G) is part of the printed OPCC: the estimator's note on each line
-    (user, 2026-11-21: "the notes must be on the OPCC"). Columns H-I, outside
-    the print area, are the working notes: the date and source of each unit
-    cost.
-    Arial 10, no fills, a thin grid, and every wrapped row sized to its text.
+    Columns G-H, outside the print area, are the working notes: the source of
+    each unit cost and the estimator's note on the line (user, 2026-11-21:
+    notes go with the source, outside the OPCC table; no date column). The
+    frame and the interim box are heavy black lines and ESTIMATED QUANTITIES
+    a gray band, as on the team's OPCC.
+    It prints as the team's printed OPCC does (user, 2026-11-21, with their
+    printout: "this feel", on Letter): no lines inside the table and none
+    under the totals, the title and project block in a bold serif, the rest
+    Arial 10; on screen the sheet's own gridlines show both ways (they do not
+    print). Every wrapped row is sized to its text.
     Returns (cell, formula, value) for the totals, written after the
     text-only pass so they stay live in Excel; the value is cached in the
     file too, so a viewer that does not calculate shows the right number."""
-    from openpyxl.styles import Alignment, Border, Font, Side
+    from openpyxl.styles import Alignment, Font, Side
     def F(size=10, bold=False, color=None):
         return Font(name="Arial", size=size, bold=bold, color=color)
+
+    def T(size, bold=True):                  # the printout's serif headings
+        return Font(name="Times New Roman", size=size, bold=bold)
     med = Side(style="medium", color="000000")
-    thin = Side(style="thin", color="000000")
-    hair = Side(style="thin", color="D9D9D9")
-    sh.sheet_view.showGridLines = False      # it draws its own lines
-    widths = dict(zip("ABCDEFGHI", (7, 52, 8, 11, 12, 14, 28, 10, 50)))
+    sh.sheet_view.showGridLines = True       # on screen only; the page prints clean
+    widths = dict(zip("ABCDEFGH", (7, 62, 8, 11, 12, 14, 50, 50)))
     for col, wd in widths.items():
         sh.column_dimensions[col].width = wd
-    sh.merge_cells("A1:G1")
+    sh.merge_cells("A1:F1")
     sh["A1"] = OPCC_TITLE
-    sh["A1"].font = F(14, True)
+    sh["A1"].font = T(14)
     sh["A1"].alignment = Alignment(horizontal="center", vertical="center")
     sh.row_dimensions[1].height = 24
-    for col in range(1, 8):
+    for col in range(1, 7):
         _keep_border(sh.cell(row=1, column=col), bottom=med)
     name = _txt(ws.get("project_name"), 160)
     sh.merge_cells("A3:C5")
     sh["A3"] = name
-    sh["A3"].font = F(13, True)
+    sh["A3"].font = T(16)
     sh["A3"].alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    if text_lines(name, sum(widths[c] for c in "ABC"), 13) > 3:
+    n_name = text_lines(name, sum(widths[c] for c in "ABC"), 16)
+    if n_name > 2:                           # three rows hold two lines at 16 pt
         for r in (3, 4, 5):
-            sh.row_dimensions[r].height = 20
+            sh.row_dimensions[r].height = round(n_name * 19.5 / 3 + 1, 1)
     for r, lab, val in ((3, "DATE:", _dt.date.today()),
                         (4, "PREPARED BY:", _txt(ws.get("prepared_by"), 60)),
                         (5, "PROJECT NO.:", _txt(ws.get("project_no"), 60))):
         sh.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
-        sh.cell(row=r, column=4, value=lab).font = F(10, True)
-        sh.merge_cells(start_row=r, start_column=6, end_row=r, end_column=7)
+        sh.cell(row=r, column=4, value=lab).font = T(10)
         c = sh.cell(row=r, column=6, value=val or None)
         c.font = F(10)
         c.alignment = Alignment(horizontal="right", shrink_to_fit=True)
@@ -434,12 +452,14 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     sh.merge_cells("A7:C7")
     sh["A7"] = "ESTIMATED QUANTITIES"
     sh["A7"].font = F(10, True)
+    from openpyxl.styles import PatternFill
+    for col in range(1, 7):                 # a gray band, as on the team's OPCC
+        sh.cell(row=7, column=col).fill = PatternFill("solid", fgColor="BFBFBF")
     head = 8
     for j, name_ in enumerate(OPCC_HEADER, 1):
         c = sh.cell(row=head, column=j, value=name_)
-        c.font = F(10, True, color="595959" if j > 7 else None)
+        c.font = F(10, True, color="595959" if j > 6 else None)
         c.alignment = Alignment(horizontal="center", vertical="bottom")
-        c.border = Border(top=thin, bottom=thin)
     sh.freeze_panes = "A%d" % (head + 1)
     sh.print_title_rows = "%d:%d" % (head, head)
     formulas = []
@@ -449,22 +469,20 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
         q = _f(l.get("quantity"))
         unit = _opcc_unit(l, w, a)
         desc = _txt(l.get("description"))
-        note = _txt(w.get("note"))      # printed with the line (user, 2026-11-21)
+        note = _txt(w.get("note"))      # a working note, beside the source
         src = _txt(w.get("source") or w.get("src_label"))
         if unit is None and a is None:
             src = "No price yet" + (" (%s)" % src if src else "")
         cells = [(1, _txt(l.get("item_no"), 20), "center"), (2, desc, "left"),
                  (3, _txt(l.get("unit"), 12), "center"), (4, q, "right"),
                  (5, unit, "right"), (6, None, "right"),
-                 (7, note, "left"),
-                 (8, _txt(w.get("source_date"), 10), "center"), (9, src, "left")]
+                 (7, src, "left"), (8, note, "left")]
         for j, v, h in cells:
             c = sh.cell(row=r, column=j, value=v if v != "" else None)
-            c.font = F(10) if j <= 6 else F(9, color="404040") if j == 7 else F(9, color="595959")
-            c.alignment = Alignment(horizontal=h, vertical="top", wrap_text=(j in (2, 7)))
-        # a long description or note wraps; the row is sized for the longer
-        n = max(text_lines(desc, widths["B"], 10), text_lines(note, widths["G"], 9) if note else 1)
-        if n > 1:
+            c.font = F(10) if j <= 6 else F(9, color="595959")
+            c.alignment = Alignment(horizontal=h, vertical="top", wrap_text=(j == 2))
+        n = text_lines(desc, widths["B"], 10)
+        if n > 1:                    # a long description wraps; the row is sized for it
             sh.row_dimensions[r].height = 12.75 * n + 2
         # full precision in the cell (the format shows whole dollars, or
         # cents when there are any), so Excel's totals equal the page's
@@ -491,7 +509,6 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
         fc.alignment = Alignment(horizontal="right")
 
     total_row(sub, "Sub-Total", True)
-    _keep_border(sh.cell(row=sub, column=6), top=thin)
     formulas.append(("F%d" % sub, ("=SUM(F%d:F%d)" % (first, last))
                      if last >= first else "=0", sub_value))
     conts, total_value, r = [], sub_value, sub + 1
@@ -510,9 +527,7 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
             total_value += a
         note = _txt(w.get("note"))
         if note:
-            c = sh.cell(row=r, column=7, value=note)
-            c.font = F(9, color="404040")
-            c.alignment = Alignment(wrap_text=True, vertical="top")
+            sh.cell(row=r, column=8, value=note).font = F(9, color="595959")
         conts.append(r)
         r += 1
     if show_extra(t):
@@ -525,59 +540,51 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
         r += 1
     tot = r + 1
     total_row(tot, "Project Total", True, 11)
-    _keep_border(sh.cell(row=tot, column=6), top=thin, bottom=Side(style="double", color="000000"))
     formulas.append(("F%d" % tot, "=" + "+".join("F%d" % k for k in [sub] + conts),
                      total_value))
-    # the table: a line on every side of every cell, header to Project Total
-    # (A-G), and the working notes beside it (H-I) in a lighter one
-    _grid(sh, head, tot, 1, 7)
-    _grid(sh, head, last, 8, 9, "BFBFBF")
-    _keep_border(sh.cell(row=tot, column=6), bottom=Side(style="double", color="000000"))
-    # a blank interim-review box at the bottom right (C-F), where the team's
-    # OPCC puts it (user, 2026-11-21): the standard wording, no names
+    # no lines drawn inside the table or under the totals: the printout has
+    # none, and the gridlines show the cells on screen
+    # the interim-review box at the bottom right, from Units to Total Cost
+    # (C-F), laid out line for line as on the team's printout (user,
+    # 2026-11-21): left-aligned, the lines close together, about twice as
+    # wide as it is tall -- the seal goes there when the OPCC is submitted
     box = tot + 2
-    lines = (("INTERIM REVIEW ONLY", F(12, True), "center"),
-             ("This document is incomplete and is released for interim review "
-              "only. It is not to be used for construction, bidding or permit "
-              "purposes.", F(9), "center"),
-             ("Engineer: ________________________________", F(10), "left"),
-             ("P.E. No.: ______________     Date: ______________", F(10), "left"))
-    bw = sum(widths[c] for c in "DEFG")
-    for k, (text, font, align) in enumerate(lines):
+    lines = INTERIM_LINES
+    for k, text in enumerate(lines):
         r = box + k
-        sh.merge_cells(start_row=r, start_column=4, end_row=r, end_column=7)
-        c = sh.cell(row=r, column=4, value=text)
-        c.font = font
-        c.alignment = Alignment(horizontal=align, vertical="center", wrap_text=True)
-        n = text_lines(text, bw, font.sz or 10)
-        sh.row_dimensions[r].height = max(18, (font.sz or 10) * 1.3 * n + 6)
-        for j in range(4, 8):
+        sh.merge_cells(start_row=r, start_column=3, end_row=r, end_column=6)
+        c = sh.cell(row=r, column=3, value=text)
+        c.font = F(11, True) if k == 0 else F(10)
+        c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        sh.row_dimensions[r].height = 18 if k == 0 else 16
+        for j in range(3, 7):
             sides = {}
             if k == 0:
-                sides["top"] = thin
+                sides["top"] = med
             if k == len(lines) - 1:
-                sides["bottom"] = thin
-            if j == 4:
-                sides["left"] = thin
-            if j == 7:
-                sides["right"] = thin
+                sides["bottom"] = med
+            if j == 3:
+                sides["left"] = med
+            if j == 6:
+                sides["right"] = med
             if sides:
                 _keep_border(sh.cell(row=r, column=j), **sides)
-    end = box + len(lines)
-    # one frame around the printed block (A-G), thin like the grid: a cell
-    # with one medium side reads as a thick box in Apple's previews; only
-    # the title keeps its heavier rule
+    end = box + len(lines) - 1            # the box closes the frame's corner
+    # one heavy frame around the printed block (A-F), as on the team's OPCC
+    # (user, 2026-11-21); Excel, Google Sheets and print draw it as a frame
     for row in range(1, end + 1):
-        _keep_border(sh.cell(row=row, column=1), left=thin)
-        _keep_border(sh.cell(row=row, column=7), right=thin)
-    for col in range(1, 8):
-        _keep_border(sh.cell(row=1, column=col), top=thin)
-        _keep_border(sh.cell(row=end, column=col), bottom=thin)
-    sh.print_area = "A1:G%d" % end
+        _keep_border(sh.cell(row=row, column=1), left=med)
+        _keep_border(sh.cell(row=row, column=6), right=med)
+    for col in range(1, 7):
+        _keep_border(sh.cell(row=1, column=col), top=med)
+        _keep_border(sh.cell(row=end, column=col), bottom=med)
+    sh.print_area = "A1:F%d" % end
+    sh.page_setup.paperSize = sh.PAPERSIZE_LETTER     # US Letter, as printed (user)
     sh.page_setup.orientation = "portrait"
     sh.page_setup.fitToWidth = 1
     sh.page_setup.fitToHeight = 0
     sh.sheet_properties.pageSetUpPr.fitToPage = True
+    sh.print_options.gridLines = False
     sh.page_margins.left = sh.page_margins.right = 0.5
     sh.oddFooter.center.text = "Page &P of &N"
     return formulas
@@ -739,6 +746,7 @@ def _summary_page(sh, result: dict, ws: dict, t: dict):
         _keep_border(sh.cell(row=1, column=col), top=thin)
         _keep_border(sh.cell(row=end, column=col), bottom=thin)
     sh.print_area = "A1:D%d" % end
+    sh.page_setup.paperSize = sh.PAPERSIZE_LETTER
     sh.page_setup.orientation = "portrait"
     sh.page_setup.fitToWidth = 1
     sh.page_setup.fitToHeight = 0
@@ -1001,6 +1009,146 @@ def to_csv(result, ws, refs) -> bytes:
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
+_PDF_SUBS = {"–": "-", "—": "-", "‘": "'", "’": "'", "“": '"',
+             "”": '"', "…": "...", "•": "-", "≤": "<=", "≥": ">=",
+             "′": "'", "″": '"', " ": " "}
+
+
+def _latin1(v) -> str:
+    """The PDF's core font is Latin-1: common punctuation is mapped, the rest
+    replaced, so no description can stop the export."""
+    s = "" if v is None else str(v)
+    for a, b in _PDF_SUBS.items():
+        s = s.replace(a, b)
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
+def _usd(v, cents=False) -> str:
+    if v is None:
+        return ""
+    return ("$" + format(v, ",.2f")) if cents else ("$" + format(round(v), ","))
+
+
+def to_pdf(result, ws, refs=None) -> bytes:
+    """The OPCC as printed: the Excel export's first sheet, as a PDF (user,
+    2026-11-21: "the Excel's printed first page"). The title and project
+    block, ESTIMATED QUANTITIES as a gray band, the items, Sub-Total, the
+    contingency, Project Total, and the blank interim-review box at the
+    bottom right; a heavy frame on every page, the header row repeated,
+    page numbers. Letter, portrait. As on the team's printout (user,
+    2026-11-21: "this feel", without a logo or project specifics): the title
+    and project block in a bold serif, no lines inside the table. The
+    working notes (unit cost source, notes) stay out, as they stay outside
+    the Excel print area."""
+    from fpdf import FPDF
+    from fpdf.fonts import FontFace
+    t = totals(result, ws)
+
+    class _P(FPDF):
+        frame_bottom = None              # set on the last page: the box's bottom
+
+        def footer(self):
+            # the frame: down to the margin, or on the last page round the
+            # form only, closing under the interim-review box
+            bottom = self.frame_bottom or (self.h - self.b_margin)
+            self.set_line_width(1.6)
+            self.set_draw_color(0, 0, 0)
+            self.rect(self.l_margin, self.t_margin, self.epw, bottom - self.t_margin)
+            self.set_line_width(0.5)
+            self.set_y(-self.b_margin + 6)
+            self.set_font("helvetica", size=8)
+            self.cell(0, 10, "Page %d of {nb}" % self.page_no(), align="C")
+
+    pdf = _P(orientation="P", unit="pt", format="Letter")
+    pdf.set_margins(36, 36, 36)
+    pdf.set_auto_page_break(True, margin=46)
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    W, x0 = pdf.epw, pdf.l_margin
+    # title, with a heavy rule under it
+    pdf.set_font("times", "B", 14)
+    pdf.set_xy(x0, pdf.t_margin + 4)
+    pdf.cell(W, 22, OPCC_TITLE, align="C")
+    y = pdf.t_margin + 30
+    pdf.set_line_width(1.6)
+    pdf.line(x0, y, x0 + W, y)
+    pdf.set_line_width(0.5)
+    # the project block: the name on the left, date / prepared by / no. right
+    y += 10
+    pdf.set_font("times", "B", 16)
+    pdf.set_xy(x0 + 6, y)
+    pdf.multi_cell(W * 0.56, 19, _latin1(_txt(ws.get("project_name"), 160)) or " ", align="C",
+                   max_line_height=19)
+    labels = (("DATE:", _dt.date.today().strftime("%m/%d/%Y")),
+              ("PREPARED BY:", _txt(ws.get("prepared_by"), 60)),
+              ("PROJECT NO.:", _txt(ws.get("project_no"), 60)))
+    for k, (lab, val) in enumerate(labels):
+        pdf.set_xy(x0 + W * 0.60, y + k * 14)
+        pdf.set_font("times", "B", 10)
+        pdf.cell(W * 0.18, 14, lab)
+        pdf.set_font("helvetica", size=9)
+        pdf.cell(W * 0.22 - 6, 14, _latin1(val), align="R")
+    y = max(pdf.get_y(), y + 3 * 14) + 10
+    # ESTIMATED QUANTITIES, a gray band
+    pdf.set_xy(x0, y)
+    pdf.set_fill_color(191, 191, 191)
+    pdf.set_font("helvetica", "B", 9)
+    pdf.cell(W, 15, "  ESTIMATED QUANTITIES", fill=True)
+    pdf.set_fill_color(255, 255, 255)        # the table's cells stay white
+    pdf.set_y(y + 15)
+    # the items and the totals: the OPCC's six columns
+    num = (38, 58, 62, 66)                   # Units, Quantity, Unit Cost, Total Cost
+    cw = (38, W - 38 - sum(num)) + num
+    bold = FontFace(emphasis="BOLD")
+    pdf.set_font("helvetica", size=8.5)
+    with pdf.table(col_widths=cw, width=W, align="LEFT", line_height=10.5,
+                   text_align=("CENTER", "LEFT", "CENTER", "RIGHT", "RIGHT", "RIGHT"),
+                   headings_style=FontFace(emphasis="BOLD", fill_color=(255, 255, 255)),
+                   borders_layout="NONE", padding=(2, 7, 2, 7), repeat_headings=1,
+                   num_heading_rows=1) as table:
+        table.row([_latin1(h) for h in OPCC_HEADER[:6]])
+        for l, w, a in t["rows"]:
+            q = _f(l.get("quantity"))
+            unit = _opcc_unit(l, w, a)
+            cents = isinstance(unit, float) and abs(unit - round(unit)) > 0.004
+            qtxt = "" if q is None else (format(q, ",.0f") if float(q).is_integer() else format(q, ",.2f"))
+            table.row([_latin1(_txt(l.get("item_no"), 20)), _latin1(_txt(l.get("description"))),
+                       _latin1(_txt(l.get("unit"), 12)), qtxt, _usd(unit, cents), _usd(a)])
+        table.row(["", "", "", "", "", ""])
+        r = table.row()
+        for v, st in (("", None), ("Sub-Total", bold), ("", None), ("", None), ("", None),
+                      (_usd(t["subtotal"]), bold)):
+            r.cell(v, style=st)
+        for l, w, a in t["below"]:
+            table.row([_latin1(_txt(l.get("item_no"), 20)), _latin1(_below_label(l)), "", "", "", _usd(a)])
+        if show_extra(t):
+            table.row(["", _latin1(_extra_label(t)), "", "", "", _usd(t["contingency"] or 0.0)])
+        table.row(["", "", "", "", "", ""])
+        r = table.row()
+        for v, st in (("", None), ("Project Total", bold), ("", None), ("", None), ("", None),
+                      (_usd(t["your_opcc"]), bold)):
+            r.cell(v, style=st)
+    # the interim-review box at the bottom right, in a heavy line: from the
+    # Units column to Total Cost, the lines left-aligned and close together,
+    # as on the team's printout (user, 2026-11-21); the seal goes there
+    bw = sum(num)
+    bh = 4 + 14 + 12.5 * (len(INTERIM_LINES) - 1) + 8
+    if pdf.get_y() + 14 + bh > pdf.h - pdf.b_margin:
+        pdf.add_page()
+    bx, by = x0 + W - bw, pdf.get_y() + 14
+    pdf.set_line_width(1.6)
+    pdf.rect(bx, by, bw, bh)
+    pdf.set_line_width(0.5)
+    y = by + 4
+    for k, text in enumerate(INTERIM_LINES):
+        pdf.set_font("helvetica", "B" if k == 0 else "", 10 if k == 0 else 9)
+        pdf.set_xy(bx + 5, y)
+        pdf.cell(bw - 10, 14 if k == 0 else 12.5, text)
+        y += 14 if k == 0 else 12.5
+    pdf.frame_bottom = by + bh
+    return bytes(pdf.output())
+
+
 def to_xlsx(result, ws, refs) -> bytes:
     import io
     import openpyxl
@@ -1040,6 +1188,8 @@ def to_xlsx(result, ws, refs) -> bytes:
     # that do not calculate
     for ref, f, v in formulas:
         wb["OPCC"][ref] = f
+    for sh in wb.worksheets:               # every sheet prints on US Letter (user)
+        sh.page_setup.paperSize = sh.PAPERSIZE_LETTER
     buf = io.BytesIO()
     wb.save(buf)
     path = "xl/worksheets/sheet%d.xml" % (wb.sheetnames.index("OPCC") + 1)

@@ -95,10 +95,25 @@
             <div class="big">Drop a takeoff here, or click to choose</div>
             <div class="small">Excel (.xlsx) &middot; CSV &middot; PDF (text layer or scanned, read offline) &middot; Word (.docx)</div>
           </div>
-          <div class="claudebox local-only" id="claude-box">
-            <button class="btn sm" id="btn-claude" type="button">Read a PDF with Claude&hellip;</button>
-            <span class="muted-note" id="claude-note"></span>
-            <input type="file" id="claude-input" hidden accept=".pdf,application/pdf">
+          <!-- AI mode: the one place for reading with AI (user, 2026-11-21:
+               it replaces "Read a PDF with Claude"; files still go in through
+               the drop area above). Not built yet: nothing is read or sent. -->
+          <div class="aimode" id="ai-mode">
+            <button class="btn sm" id="btn-ai-mode" type="button" aria-expanded="false"
+                    aria-controls="ai-mode-panel">AI mode</button>
+            <span class="muted-note">Read drawings and documents by AI (coming later).</span>
+          </div>
+          <div class="aimode-panel" id="ai-mode-panel" hidden>
+            <div class="aimode-head">AI mode <span class="soon">coming later</span></div>
+            <p>Put the job&rsquo;s engineering drawings (plan sheets), specifications, other
+              documents, or a scanned or hard-to-read bid schedule in the drop area above. Then
+              press <b>Read by AI</b>: it will find the work to be done and how much of each (the
+              pay items and their quantities) and put them here as a takeoff for you to check
+              before you estimate.</p>
+            <div class="row-actions">
+              <button class="btn primary" id="btn-ai-read" type="button" disabled>Read by AI</button>
+              <span class="muted-note">Not available yet: this is where it will be.</span>
+            </div>
           </div>
           <input type="file" id="file-input" hidden
                  accept=".xlsx,.xlsm,.csv,.txt,.tsv,.pdf,.docx,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp">
@@ -322,9 +337,10 @@
   <h2><span class="secnum">4</span>Export</h2>
   <div class="body row-actions">
     <button class="btn" id="btn-export-xlsx">Download the OPCC (Excel)</button>
-    <span class="muted-note">Your OPCC in the usual layout (items, Sub-Total, contingency,
-      Project Total), then a summary next to the model&rsquo;s P50 / P80, every line, and the
-      past projects behind each price: their item as bid, its quantity and prices.</span>
+    <button class="btn" id="btn-export-pdf">Download the OPCC (PDF)</button>
+    <span class="muted-note">Excel: your OPCC in the usual layout (items, Sub-Total,
+      contingency, Project Total), then a summary next to the model&rsquo;s P50 / P80, every
+      line, and the past projects behind each price. PDF: the OPCC as it prints.</span>
   </div>
 </section>
 

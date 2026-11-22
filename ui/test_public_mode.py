@@ -115,7 +115,10 @@ class OffInPublicMode(PublicBase):
             page = " ".join(fh.read().split())
         self.assertIn("Files you upload are processed on this server and not "
                       "stored. Do not upload confidential documents.", page)
-        self.assertIn('class="claudebox local-only"', page)
+        # the Claude PDF button is folded into AI mode, which is on the
+        # public page too (a kept place, not built: nothing is sent)
+        self.assertNotIn('id="btn-claude"', page)
+        self.assertIn('id="btn-ai-mode"', page)
         self.assertIn("local-only", page.split('id="bidtab-fold"')[0][-80:])
 
     def test_page_is_marked_public(self):

@@ -1,17 +1,17 @@
 {
- "generated": "2026-11-21 15:46",
+ "generated": "2026-11-21 18:52",
  "markets": {
   "municipal": {
    "all": {
     "dollar_weighted": 0.4010336113973263,
-    "half_within": 0.4569149363367315,
+    "half_within": 0.4576624017877675,
     "label": "All lines",
-    "lettings": 234,
-    "lines": 10245,
-    "low_vs_median": 0.25,
-    "ratio": 0.953472828870071,
+    "lettings": 235,
+    "lines": 10328,
+    "low_vs_median": 0.2497852116235424,
+    "ratio": 0.9540288904382395,
     "share_of_dollars": 1.0,
-    "within_20": 0.2773060029282577
+    "within_20": 0.27749806351665374
    },
    "groups": {
     "LS:bonds_insurance": {
@@ -23,7 +23,7 @@
      "low_vs_median": 0.2647058823529411,
      "published": false,
      "ratio": 3.786123132765601,
-     "share_of_dollars": 0.0006897614865846871,
+     "share_of_dollars": 0.0006883460120757178,
      "within_20": 0.043478260869565216
     },
     "LS:site_prep": {
@@ -35,7 +35,7 @@
      "low_vs_median": 0.8437331639500425,
      "published": true,
      "ratio": 0.9746142609823587,
-     "share_of_dollars": 0.013497319869680176,
+     "share_of_dollars": 0.013469621726790906,
      "within_20": 0.1951219512195122
     },
     "LS:swppp_erosion": {
@@ -47,7 +47,7 @@
      "low_vs_median": 0.4943783545898497,
      "published": true,
      "ratio": 1.113625842107726,
-     "share_of_dollars": 0.0034732926697468055,
+     "share_of_dollars": 0.0034661650505163383,
      "within_20": 0.11764705882352941
     },
     "LS:traffic_control": {
@@ -59,19 +59,19 @@
      "low_vs_median": 0.5922978333333333,
      "published": true,
      "ratio": 1.403871612466482,
-     "share_of_dollars": 0.008753969229107142,
+     "share_of_dollars": 0.008736005018960446,
      "within_20": 0.09933774834437085
     },
     "adjust_to_grade": {
-     "dollar_weighted": 0.48035618985055106,
+     "dollar_weighted": 0.4793745208436071,
      "half_within": 0.47884376043440713,
      "label": "Adjust to grade",
      "lettings": 80,
      "lines": 179,
      "low_vs_median": 0.4285714285714286,
      "published": true,
-     "ratio": 1.065656903256525,
-     "share_of_dollars": 0.0020261878640629124,
+     "ratio": 1.0735266211067382,
+     "share_of_dollars": 0.0020220298799948763,
      "within_20": 0.27932960893854747
     },
     "asphalt_pavement": {
@@ -83,7 +83,7 @@
      "low_vs_median": 0.19282376502002663,
      "published": true,
      "ratio": 0.9797613470325635,
-     "share_of_dollars": 0.04384701337719417,
+     "share_of_dollars": 0.043757033969910694,
      "within_20": 0.3149171270718232
     },
     "barrier_free_ramp": {
@@ -94,8 +94,8 @@
      "lines": 209,
      "low_vs_median": 0.22706486085284006,
      "published": true,
-     "ratio": 0.9788544246157244,
-     "share_of_dollars": 0.008021018861986211,
+     "ratio": 0.9831714516629204,
+     "share_of_dollars": 0.00800455875518709,
      "within_20": 0.5550239234449761
     },
     "borrow_backfill": {
@@ -107,7 +107,7 @@
      "low_vs_median": 0.49126199731797326,
      "published": false,
      "ratio": 1.1129808583626768,
-     "share_of_dollars": 0.0016285789011157453,
+     "share_of_dollars": 0.001625236859025531,
      "within_20": 0.15789473684210525
     },
     "box_culvert": {
@@ -119,7 +119,7 @@
      "low_vs_median": 0.16557298659411734,
      "published": true,
      "ratio": 0.9241823310593891,
-     "share_of_dollars": 0.014891178757578505,
+     "share_of_dollars": 0.014860620246629706,
      "within_20": 0.4117647058823529
     },
     "bridge_concrete": {
@@ -131,7 +131,7 @@
      "low_vs_median": 0.06462259129138714,
      "published": false,
      "ratio": 0.8731790911761923,
-     "share_of_dollars": 0.032816817603376555,
+     "share_of_dollars": 0.03274947350010822,
      "within_20": 0.44
     },
     "bypass_pumping": {
@@ -143,7 +143,7 @@
      "low_vs_median": 0.575485892883961,
      "published": false,
      "ratio": 2.4503511256898,
-     "share_of_dollars": 0.0031022430305351644,
+     "share_of_dollars": 0.003095876850318155,
      "within_20": 0.09523809523809523
     },
     "cleaning_desilting": {
@@ -155,7 +155,7 @@
      "low_vs_median": 0.6666666666666667,
      "published": false,
      "ratio": 1.3337900492332913,
-     "share_of_dollars": 0.0007726628056322539,
+     "share_of_dollars": 0.0007710772075281664,
      "within_20": 0.21428571428571427
     },
     "conc_barrier": {
@@ -167,7 +167,7 @@
      "low_vs_median": 0.20337851076707114,
      "published": false,
      "ratio": 0.8606189736952043,
-     "share_of_dollars": 0.0013927627323285488,
+     "share_of_dollars": 0.001389904613713642,
      "within_20": 0.2
     },
     "conc_beam": {
@@ -179,7 +179,7 @@
      "low_vs_median": 0.3999999999999999,
      "published": true,
      "ratio": 0.9064029152759029,
-     "share_of_dollars": 0.004869891028402792,
+     "share_of_dollars": 0.0048598974193854285,
      "within_20": 0.2553191489361702
     },
     "conc_joints": {
@@ -191,7 +191,7 @@
      "low_vs_median": 0.1544141187944461,
      "published": false,
      "ratio": 1.6760345773344143,
-     "share_of_dollars": 0.00040756571121412197,
+     "share_of_dollars": 0.0004067293367771988,
      "within_20": 0.05555555555555555
     },
     "conc_mow_strip": {
@@ -203,7 +203,7 @@
      "low_vs_median": 0.042531747631525896,
      "published": false,
      "ratio": 0.9721845128965839,
-     "share_of_dollars": 0.0008991416427662211,
+     "share_of_dollars": 0.0008972964946968642,
      "within_20": 0.42857142857142855
     },
     "conc_pavement": {
@@ -215,7 +215,7 @@
      "low_vs_median": 0.13795454545454544,
      "published": true,
      "ratio": 1.008238613080393,
-     "share_of_dollars": 0.12467287967742151,
+     "share_of_dollars": 0.12441703575662363,
      "within_20": 0.40669856459330145
     },
     "concrete_misc": {
@@ -227,7 +227,7 @@
      "low_vs_median": 0.2695535714285713,
      "published": true,
      "ratio": 1.1322507996917124,
-     "share_of_dollars": 0.011305025658995807,
+     "share_of_dollars": 0.011281826370611665,
      "within_20": 0.19047619047619047
     },
     "concrete_repair": {
@@ -239,7 +239,7 @@
      "low_vs_median": 0.5151817052303724,
      "published": false,
      "ratio": 1.6929333321434847,
-     "share_of_dollars": 7.456158553670318e-05,
+     "share_of_dollars": 7.440857608962878e-05,
      "within_20": 0.0
     },
     "construction_exit": {
@@ -251,7 +251,7 @@
      "low_vs_median": 0.2426303727661101,
      "published": false,
      "ratio": 0.8915438587354567,
-     "share_of_dollars": 0.0004615646452456951,
+     "share_of_dollars": 0.0004606174584248975,
      "within_20": 0.5185185185185185
     },
     "construction_exit_remove": {
@@ -263,7 +263,7 @@
      "low_vs_median": 0.4482758620689655,
      "published": false,
      "ratio": 0.9239337995275267,
-     "share_of_dollars": 5.592675845304091e-05,
+     "share_of_dollars": 5.581198993885271e-05,
      "within_20": 0.5714285714285714
     },
     "contingency": {
@@ -275,7 +275,7 @@
      "low_vs_median": 0.2089408981575962,
      "published": true,
      "ratio": 0.9383192285199407,
-     "share_of_dollars": 0.0052002037100188645,
+     "share_of_dollars": 0.005189532259182394,
      "within_20": 0.2692307692307692
     },
     "crash_cushion": {
@@ -287,20 +287,20 @@
      "low_vs_median": 0.05660377358490565,
      "published": false,
      "ratio": 0.557425897019901,
-     "share_of_dollars": 3.970046095716041e-05,
+     "share_of_dollars": 3.961899078004536e-05,
      "within_20": 0.0
     },
     "curb_gutter": {
-     "dollar_weighted": 0.39417291388941456,
-     "half_within": 0.48034860721920736,
+     "dollar_weighted": 0.40699743171005354,
+     "half_within": 0.49040840538125985,
      "label": "Curb and gutter",
      "lettings": 98,
      "lines": 144,
      "low_vs_median": 0.36247960474871666,
      "published": true,
      "ratio": 1.0923934661085077,
-     "share_of_dollars": 0.006649996798708533,
-     "within_20": 0.2847222222222222
+     "share_of_dollars": 0.006636350196025761,
+     "within_20": 0.2777777777777778
     },
     "demo_other": {
      "dollar_weighted": 0.6588101134591606,
@@ -311,7 +311,7 @@
      "low_vs_median": 0.39497807891590275,
      "published": true,
      "ratio": 0.9437800670093714,
-     "share_of_dollars": 0.005123808292774673,
+     "share_of_dollars": 0.005113293614631103,
      "within_20": 0.23699421965317918
     },
     "demo_pavement": {
@@ -323,7 +323,7 @@
      "low_vs_median": 0.30434782608695654,
      "published": true,
      "ratio": 0.8802285972254478,
-     "share_of_dollars": 0.016240314964597862,
+     "share_of_dollars": 0.016206987861973093,
      "within_20": 0.2484076433121019
     },
     "demo_sidewalk": {
@@ -335,7 +335,7 @@
      "low_vs_median": 0.302863089238222,
      "published": true,
      "ratio": 1.0436717227576244,
-     "share_of_dollars": 0.0024314329485023343,
+     "share_of_dollars": 0.002426443352205918,
      "within_20": 0.25
     },
     "demo_structure": {
@@ -347,7 +347,7 @@
      "low_vs_median": 0.3436919184550917,
      "published": true,
      "ratio": 0.8898243992514739,
-     "share_of_dollars": 0.0013360337205934741,
+     "share_of_dollars": 0.0013332920168141178,
      "within_20": 0.14893617021276595
     },
     "demo_utility": {
@@ -359,7 +359,7 @@
      "low_vs_median": 0.44999999999999996,
      "published": true,
      "ratio": 0.9426107012176277,
-     "share_of_dollars": 0.006032398615286086,
+     "share_of_dollars": 0.006020019399232493,
      "within_20": 0.23322683706070288
     },
     "dewatering": {
@@ -371,7 +371,7 @@
      "low_vs_median": 0.4048890137679124,
      "published": false,
      "ratio": 2.108580036574203,
-     "share_of_dollars": 0.0005081958628636964,
+     "share_of_dollars": 0.0005071529831096977,
      "within_20": 0.14285714285714285
     },
     "drill_shaft": {
@@ -383,7 +383,7 @@
      "low_vs_median": 0.14733576642335788,
      "published": true,
      "ratio": 0.8010250676636486,
-     "share_of_dollars": 0.015692198175877595,
+     "share_of_dollars": 0.015659995875604737,
      "within_20": 0.2982456140350877
     },
     "driveway": {
@@ -395,7 +395,7 @@
      "low_vs_median": 0.20454545454545436,
      "published": true,
      "ratio": 0.9763678273335287,
-     "share_of_dollars": 0.015272120617201273,
+     "share_of_dollars": 0.015240780367198926,
      "within_20": 0.5263157894736842
     },
     "electrical_lighting": {
@@ -406,9 +406,9 @@
      "lines": 427,
      "low_vs_median": 0.1299999999999999,
      "published": true,
-     "ratio": 0.845066473828723,
-     "share_of_dollars": 0.019897561607834232,
-     "within_20": 0.2810304449648712
+     "ratio": 0.8459888216155685,
+     "share_of_dollars": 0.019856729390039653,
+     "within_20": 0.28337236533957844
     },
     "embankment_fill": {
      "dollar_weighted": 0.48812045886057276,
@@ -419,7 +419,7 @@
      "low_vs_median": 0.5687375497513916,
      "published": true,
      "ratio": 1.1529468789186794,
-     "share_of_dollars": 0.007058173162937401,
+     "share_of_dollars": 0.007043688932683406,
      "within_20": 0.2878787878787879
     },
     "encasement": {
@@ -430,9 +430,9 @@
      "lines": 166,
      "low_vs_median": 0.25,
      "published": true,
-     "ratio": 0.8793405975653369,
-     "share_of_dollars": 0.02798818606704019,
-     "within_20": 0.25301204819277107
+     "ratio": 0.8700615322840735,
+     "share_of_dollars": 0.02793075090329055,
+     "within_20": 0.2469879518072289
     },
     "erosion_control": {
      "dollar_weighted": 0.8448141836782979,
@@ -443,7 +443,7 @@
      "low_vs_median": 0.33000000000000007,
      "published": true,
      "ratio": 0.8204343750595815,
-     "share_of_dollars": 0.0037155853994495338,
+     "share_of_dollars": 0.0037079605660526142,
      "within_20": 0.26229508196721313
     },
     "excavation": {
@@ -455,7 +455,7 @@
      "low_vs_median": 0.3999999999999999,
      "published": true,
      "ratio": 0.9425686758167409,
-     "share_of_dollars": 0.026795163619720536,
+     "share_of_dollars": 0.026740176683214156,
      "within_20": 0.2549019607843137
     },
     "fence": {
@@ -467,7 +467,7 @@
      "low_vs_median": 0.27,
      "published": true,
      "ratio": 0.8646163155804562,
-     "share_of_dollars": 0.003935663773676948,
+     "share_of_dollars": 0.003927587312674323,
      "within_20": 0.1941747572815534
     },
     "fire_hydrant": {
@@ -479,7 +479,7 @@
      "low_vs_median": 0.16134866666666658,
      "published": true,
      "ratio": 0.6863818710750548,
-     "share_of_dollars": 0.005405325789515112,
+     "share_of_dollars": 0.005394233403209785,
      "within_20": 0.2835820895522388
     },
     "flex_base": {
@@ -491,7 +491,7 @@
      "low_vs_median": 0.26806885605041564,
      "published": true,
      "ratio": 0.9414409635936607,
-     "share_of_dollars": 0.02542243819692951,
+     "share_of_dollars": 0.025370268260040484,
      "within_20": 0.35344827586206895
     },
     "flowable_backfill": {
@@ -503,7 +503,7 @@
      "low_vs_median": 0.1933697139324737,
      "published": false,
      "ratio": 1.1115039898354893,
-     "share_of_dollars": 0.003711086191153177,
+     "share_of_dollars": 0.0037034705906792,
      "within_20": 0.3125
     },
     "gabion_mattress": {
@@ -515,7 +515,7 @@
      "low_vs_median": 0.07641733807770201,
      "published": false,
      "ratio": 0.971534511903401,
-     "share_of_dollars": 0.0017080831565883497,
+     "share_of_dollars": 0.0017045779620908689,
      "within_20": 0.5555555555555556
     },
     "gabion_wall": {
@@ -527,7 +527,7 @@
      "low_vs_median": 0.10824703924711665,
      "published": false,
      "ratio": 0.8712047850746125,
-     "share_of_dollars": 0.004192308302412873,
+     "share_of_dollars": 0.0041837051756056795,
      "within_20": 0.34615384615384615
     },
     "geotextile": {
@@ -539,7 +539,7 @@
      "low_vs_median": 0.3983724627417602,
      "published": false,
      "ratio": 1.0273672479261404,
-     "share_of_dollars": 0.0009828118324014268,
+     "share_of_dollars": 0.0009807949829209405,
      "within_20": 0.4166666666666667
     },
     "grading": {
@@ -551,20 +551,20 @@
      "low_vs_median": 0.4942294075104017,
      "published": false,
      "ratio": 2.479129645110089,
-     "share_of_dollars": 0.00421477835132871,
+     "share_of_dollars": 0.004206129113246714,
      "within_20": 0.0
     },
     "guardrail": {
      "dollar_weighted": 0.5888801863230395,
-     "half_within": 0.5409399046441503,
+     "half_within": 0.5888801863230395,
      "label": "Guardrail",
-     "lettings": 26,
-     "lines": 60,
-     "low_vs_median": 0.2210794475086142,
+     "lettings": 27,
+     "lines": 61,
+     "low_vs_median": 0.22169811320754707,
      "published": true,
-     "ratio": 0.6958283560445455,
-     "share_of_dollars": 0.0009468243608006114,
-     "within_20": 0.26666666666666666
+     "ratio": 0.6919095422756656,
+     "share_of_dollars": 0.0009523566432704934,
+     "within_20": 0.26229508196721313
     },
     "headwall": {
      "dollar_weighted": 3.0897189318621336,
@@ -575,7 +575,7 @@
      "low_vs_median": 0.4566994656871861,
      "published": true,
      "ratio": 0.7332111623238604,
-     "share_of_dollars": 0.003695090231237378,
+     "share_of_dollars": 0.003687507456419729,
      "within_20": 0.08333333333333333
     },
     "inlet_structure": {
@@ -587,8 +587,8 @@
      "low_vs_median": 0.17788758597624366,
      "published": true,
      "ratio": 0.9971497542174608,
-     "share_of_dollars": 0.016042132300957336,
-     "within_20": 0.4712230215827338
+     "share_of_dollars": 0.016009211893275612,
+     "within_20": 0.4748201438848921
     },
     "irrigation": {
      "dollar_weighted": 1.529959332435027,
@@ -599,7 +599,7 @@
      "low_vs_median": 0.16666666666666674,
      "published": true,
      "ratio": 1.2073079243485976,
-     "share_of_dollars": 0.005786295412868731,
+     "share_of_dollars": 0.005774421230535304,
      "within_20": 0.04
     },
     "landscape_material": {
@@ -611,7 +611,7 @@
      "low_vs_median": 0.16799999999999993,
      "published": false,
      "ratio": 0.9511421581428101,
-     "share_of_dollars": 0.0022517016134186653,
+     "share_of_dollars": 0.0022470808476937176,
      "within_20": 0.2
     },
     "landscape_planting": {
@@ -623,7 +623,7 @@
      "low_vs_median": 0.10597140454163156,
      "published": true,
      "ratio": 1.6119589058533275,
-     "share_of_dollars": 0.00206267233300034,
+     "share_of_dollars": 0.002058439478362174,
      "within_20": 0.17475728155339806
     },
     "lighting_assembly": {
@@ -635,7 +635,7 @@
      "low_vs_median": 0.14519354838709675,
      "published": false,
      "ratio": 0.7883988710374012,
-     "share_of_dollars": 0.0048990259232882406,
+     "share_of_dollars": 0.004888972525921086,
      "within_20": 0.18518518518518517
     },
     "manhole": {
@@ -647,7 +647,7 @@
      "low_vs_median": 0.21253571428571427,
      "published": true,
      "ratio": 0.9343231252968749,
-     "share_of_dollars": 0.019733717176249173,
+     "share_of_dollars": 0.019693221187166775,
      "within_20": 0.3028571428571429
     },
     "manhole_extra_depth": {
@@ -659,7 +659,7 @@
      "low_vs_median": 0.13048938742439042,
      "published": false,
      "ratio": 1.0284068520501801,
-     "share_of_dollars": 0.0006485677789311328,
+     "share_of_dollars": 0.0006472368389232158,
      "within_20": 0.42857142857142855
     },
     "masonry_fascia": {
@@ -671,7 +671,7 @@
      "low_vs_median": 0.37362134708209815,
      "published": false,
      "ratio": 0.9978110227953028,
-     "share_of_dollars": 0.001140568722644411,
+     "share_of_dollars": 0.0011382281368273847,
      "within_20": 0.125
     },
     "mobilization": {
@@ -683,7 +683,7 @@
      "low_vs_median": 0.3492716049382716,
      "published": true,
      "ratio": 1.4632581867460575,
-     "share_of_dollars": 0.047315582111563635,
+     "share_of_dollars": 0.04721848477913995,
      "within_20": 0.11219512195121951
     },
     "mowing_vegetation": {
@@ -695,32 +695,32 @@
      "low_vs_median": 0.5705151566103579,
      "published": false,
      "ratio": 1.1748096887023352,
-     "share_of_dollars": 0.0002247433267048101,
+     "share_of_dollars": 0.00022428212604893297,
      "within_20": 0.6
     },
     "needs_review": {
      "dollar_weighted": 0.15632782935134815,
-     "half_within": 0.5783349674651725,
+     "half_within": 0.8504173600086788,
      "label": "needs_review",
      "lettings": 1,
      "lines": 14,
      "low_vs_median": 0.32066902237716866,
      "published": false,
-     "ratio": 1.4371805350883697,
-     "share_of_dollars": 0.0021091024190943494,
+     "ratio": 1.5783349674651725,
+     "share_of_dollars": 0.0021047742842693453,
      "within_20": 0.21428571428571427
     },
     "other": {
-     "dollar_weighted": 2.8232424562700724,
-     "half_within": 1.0881108806430695,
+     "dollar_weighted": 2.7670993009738725,
+     "half_within": 0.980034946226114,
      "label": "Unclassified lines",
-     "lettings": 165,
-     "lines": 789,
-     "low_vs_median": 0.29200000000000004,
+     "lettings": 164,
+     "lines": 779,
+     "low_vs_median": 0.2941999999999998,
      "published": true,
-     "ratio": 0.9491482609555161,
-     "share_of_dollars": 0.03700305325736368,
-     "within_20": 0.15842839036755388
+     "ratio": 0.953555554331684,
+     "share_of_dollars": 0.03698072597373963,
+     "within_20": 0.15917843388960207
     },
     "painting": {
      "dollar_weighted": 0.03771502573452934,
@@ -731,20 +731,20 @@
      "low_vs_median": 0.30666666666666664,
      "published": false,
      "ratio": 17.642995735570675,
-     "share_of_dollars": 0.0010206720945960398,
+     "share_of_dollars": 0.0010185775512502368,
      "within_20": 0.2727272727272727
     },
     "pavement_marking": {
-     "dollar_weighted": 0.9066944301143345,
-     "half_within": 0.5789031238506896,
+     "dollar_weighted": 0.7899507696444521,
+     "half_within": 0.5954666564171964,
      "label": "Pavement marking",
-     "lettings": 89,
-     "lines": 609,
-     "low_vs_median": 0.20967741935483875,
+     "lettings": 93,
+     "lines": 681,
+     "low_vs_median": 0.20526315789473681,
      "published": true,
-     "ratio": 0.7943009220048851,
-     "share_of_dollars": 0.0035582764053126766,
-     "within_20": 0.1986863711001642
+     "ratio": 0.8012017425344032,
+     "share_of_dollars": 0.004817159905711866,
+     "within_20": 0.2011747430249633
     },
     "pavement_milling": {
      "dollar_weighted": 0.30407374276022003,
@@ -755,7 +755,7 @@
      "low_vs_median": 0.13578891983064212,
      "published": false,
      "ratio": 0.8123388453355591,
-     "share_of_dollars": 0.0017120481464932833,
+     "share_of_dollars": 0.0017085348153540098,
      "within_20": 0.3
     },
     "pavers": {
@@ -767,7 +767,7 @@
      "low_vs_median": 0.13636363636363624,
      "published": false,
      "ratio": 0.8703945398016533,
-     "share_of_dollars": 0.00400789955639772,
+     "share_of_dollars": 0.003999674858778431,
      "within_20": 0.2903225806451613
     },
     "pipe_bursting": {
@@ -779,7 +779,7 @@
      "low_vs_median": 0.2905982905982907,
      "published": false,
      "ratio": 0.6779534722686711,
-     "share_of_dollars": 0.007650036908315175,
+     "share_of_dollars": 0.007634338101630546,
      "within_20": 0.2
     },
     "pipe_fittings": {
@@ -791,7 +791,7 @@
      "low_vs_median": 0.30528846153846145,
      "published": true,
      "ratio": 1.18271024070259,
-     "share_of_dollars": 0.003121685414433005,
+     "share_of_dollars": 0.0031152793360782536,
      "within_20": 0.27692307692307694
     },
     "project_sign": {
@@ -803,7 +803,7 @@
      "low_vs_median": 0.33333333333333326,
      "published": true,
      "ratio": 1.0277898779474604,
-     "share_of_dollars": 0.00037665752407881856,
+     "share_of_dollars": 0.00037588457700317803,
      "within_20": 0.4177215189873418
     },
     "railing": {
@@ -815,20 +815,20 @@
      "low_vs_median": 0.1891210011904465,
      "published": false,
      "ratio": 0.8585946682521358,
-     "share_of_dollars": 0.00916257544970249,
+     "share_of_dollars": 0.009143772729867,
      "within_20": 0.4411764705882353
     },
     "relocate_reset": {
      "dollar_weighted": 0.962350731470252,
-     "half_within": 0.5809342812304348,
+     "half_within": 0.5774073757304514,
      "label": "Relocate / reset",
      "lettings": 81,
-     "lines": 190,
-     "low_vs_median": 0.41361585002028445,
+     "lines": 189,
+     "low_vs_median": 0.4159999999999999,
      "published": true,
-     "ratio": 0.874127581697178,
-     "share_of_dollars": 0.0024343968800482536,
-     "within_20": 0.22631578947368422
+     "ratio": 0.8736655015849678,
+     "share_of_dollars": 0.00242827990921173,
+     "within_20": 0.2275132275132275
     },
     "retaining_wall": {
      "dollar_weighted": 0.6249322280361544,
@@ -839,7 +839,7 @@
      "low_vs_median": 0.2996655088070195,
      "published": true,
      "ratio": 1.0030719474006484,
-     "share_of_dollars": 0.01602339792309516,
+     "share_of_dollars": 0.015990515960636636,
      "within_20": 0.1896551724137931
     },
     "riprap_conc": {
@@ -851,7 +851,7 @@
      "low_vs_median": 0.40669284172755393,
      "published": false,
      "ratio": 1.1154184410278243,
-     "share_of_dollars": 0.0038850246746748736,
+     "share_of_dollars": 0.0038770521312657766,
      "within_20": 0.48148148148148145
     },
     "riprap_stone": {
@@ -863,7 +863,7 @@
      "low_vs_median": 0.28620689655172415,
      "published": true,
      "ratio": 0.8771146174519466,
-     "share_of_dollars": 0.007841917970222542,
+     "share_of_dollars": 0.007825825400248477,
      "within_20": 0.2542372881355932
     },
     "rock_anchor": {
@@ -875,7 +875,7 @@
      "low_vs_median": 0.16015147456589363,
      "published": false,
      "ratio": 0.8492089776238013,
-     "share_of_dollars": 0.004196516588727597,
+     "share_of_dollars": 0.004187904826004771,
      "within_20": 0.16666666666666666
     },
     "safety_end_treatment": {
@@ -887,7 +887,7 @@
      "low_vs_median": 0.22062695924764886,
      "published": false,
      "ratio": 0.9092530694692796,
-     "share_of_dollars": 0.0004118171661621471,
+     "share_of_dollars": 0.0004109720672223023,
      "within_20": 0.21621621621621623
     },
     "sanitary_pipe": {
@@ -899,7 +899,7 @@
      "low_vs_median": 0.41335443037974673,
      "published": true,
      "ratio": 0.997172587135372,
-     "share_of_dollars": 0.02783057647299801,
+     "share_of_dollars": 0.027773464743315178,
      "within_20": 0.22137404580152673
     },
     "sawcut": {
@@ -911,7 +911,7 @@
      "low_vs_median": 1.25,
      "published": false,
      "ratio": 1.1095402792153697,
-     "share_of_dollars": 0.00015080557173962868,
+     "share_of_dollars": 0.00015049610035457796,
      "within_20": 0.2857142857142857
     },
     "seeding_sod": {
@@ -923,7 +923,7 @@
      "low_vs_median": 0.25,
      "published": true,
      "ratio": 0.91898746239917,
-     "share_of_dollars": 0.01904402625161585,
+     "share_of_dollars": 0.01900494559224071,
      "within_20": 0.32439678284182305
     },
     "sewer_service": {
@@ -935,7 +935,7 @@
      "low_vs_median": 0.3615145228215768,
      "published": true,
      "ratio": 1.2446309858170113,
-     "share_of_dollars": 0.003429483121192743,
+     "share_of_dollars": 0.0034224454044871826,
      "within_20": 0.19607843137254902
     },
     "shoring": {
@@ -947,32 +947,32 @@
      "low_vs_median": 0.7067471450442071,
      "published": false,
      "ratio": 0.9400487476567297,
-     "share_of_dollars": 0.002530348871701044,
+     "share_of_dollars": 0.002525156287892941,
      "within_20": 0.2727272727272727
     },
     "sidewalk": {
      "dollar_weighted": 0.19338275454458054,
-     "half_within": 0.233629162409541,
+     "half_within": 0.2306386994416314,
      "label": "Sidewalk",
      "lettings": 133,
      "lines": 226,
      "low_vs_median": 0.21073997885581153,
      "published": true,
      "ratio": 1.0711347367906665,
-     "share_of_dollars": 0.03642406714301592,
+     "share_of_dollars": 0.03634932052471861,
      "within_20": 0.4557522123893805
     },
     "signing": {
-     "dollar_weighted": 0.11331275677847397,
-     "half_within": 0.2724135422057412,
+     "dollar_weighted": 0.11773485471179024,
+     "half_within": 0.24328211729190863,
      "label": "Signs",
-     "lettings": 51,
-     "lines": 82,
-     "low_vs_median": 0.19999999999999996,
+     "lettings": 54,
+     "lines": 95,
+     "low_vs_median": 0.17500000000000004,
      "published": true,
-     "ratio": 1.0017674176965647,
-     "share_of_dollars": 0.0011143539539660752,
-     "within_20": 0.4024390243902439
+     "ratio": 1.0330162294780978,
+     "share_of_dollars": 0.0012074528744599772,
+     "within_20": 0.4421052631578947
     },
     "site_prep_clearing": {
      "dollar_weighted": 7.889964825900346,
@@ -983,7 +983,7 @@
      "low_vs_median": 1.0,
      "published": true,
      "ratio": 1.1556639572624146,
-     "share_of_dollars": 0.009525957149375082,
+     "share_of_dollars": 0.009506408726071195,
      "within_20": 0.1276595744680851
     },
     "storm_pipe": {
@@ -995,7 +995,7 @@
      "low_vs_median": 0.19999999999999996,
      "published": true,
      "ratio": 0.9062000059091313,
-     "share_of_dollars": 0.030128934225437245,
+     "share_of_dollars": 0.030067105985954516,
      "within_20": 0.3738601823708207
     },
     "subgrade_stab": {
@@ -1007,7 +1007,7 @@
      "low_vs_median": 0.17846443429539183,
      "published": true,
      "ratio": 0.817405738557559,
-     "share_of_dollars": 0.027110181623846333,
+     "share_of_dollars": 0.027054548232060296,
      "within_20": 0.30434782608695654
     },
     "surface_treatment": {
@@ -1019,7 +1019,7 @@
      "low_vs_median": 0.20307692307692315,
      "published": false,
      "ratio": 1.2452084734395448,
-     "share_of_dollars": 0.0010414250611222146,
+     "share_of_dollars": 0.0010392879301636287,
      "within_20": 0.15789473684210525
     },
     "surveying": {
@@ -1031,7 +1031,7 @@
      "low_vs_median": 0.4114285714285715,
      "published": false,
      "ratio": 1.1420647818730532,
-     "share_of_dollars": 0.0006423180649513796,
+     "share_of_dollars": 0.0006409999501170894,
      "within_20": 0.10344827586206896
     },
     "testing_inspection": {
@@ -1043,7 +1043,7 @@
      "low_vs_median": 0.3213667673305962,
      "published": true,
      "ratio": 1.015515282126415,
-     "share_of_dollars": 0.003294932648509821,
+     "share_of_dollars": 0.0032881710457479305,
      "within_20": 0.2676056338028169
     },
     "traffic_control": {
@@ -1055,20 +1055,20 @@
      "low_vs_median": 0.2923320575934365,
      "published": true,
      "ratio": 1.3065849189521266,
-     "share_of_dollars": 0.00556714721295089,
+     "share_of_dollars": 0.00555572274939229,
      "within_20": 0.2
     },
     "traffic_signal": {
-     "dollar_weighted": 0.5272981465386253,
-     "half_within": 0.3702713040144314,
+     "dollar_weighted": 0.565645360391698,
+     "half_within": 0.3898828777190584,
      "label": "Traffic signals",
-     "lettings": 24,
-     "lines": 250,
-     "low_vs_median": 0.11751662971175159,
+     "lettings": 25,
+     "lines": 258,
+     "low_vs_median": 0.11473098020457284,
      "published": true,
-     "ratio": 0.9947525457716679,
-     "share_of_dollars": 0.007335828613817233,
-     "within_20": 0.404
+     "ratio": 0.9900888048687561,
+     "share_of_dollars": 0.007951363592113979,
+     "within_20": 0.3953488372093023
     },
     "tree_install": {
      "dollar_weighted": 2.2188780775973185,
@@ -1079,7 +1079,7 @@
      "low_vs_median": 0.13665066936094972,
      "published": true,
      "ratio": 0.9365392276235497,
-     "share_of_dollars": 0.002421159150856045,
+     "share_of_dollars": 0.002416190637642639,
      "within_20": 0.29577464788732394
     },
     "tree_removal": {
@@ -1091,7 +1091,7 @@
      "low_vs_median": 0.32000000000000006,
      "published": true,
      "ratio": 0.9480121368033985,
-     "share_of_dollars": 0.0013029391510206555,
+     "share_of_dollars": 0.0013002653613254091,
      "within_20": 0.21739130434782608
     },
     "trench_safety": {
@@ -1103,7 +1103,7 @@
      "low_vs_median": 0.6875,
      "published": true,
      "ratio": 0.8932910670238753,
-     "share_of_dollars": 0.0015432793296563275,
+     "share_of_dollars": 0.0015401123326670286,
      "within_20": 0.1968503937007874
     },
     "trm": {
@@ -1115,7 +1115,7 @@
      "low_vs_median": 0.08892921960072586,
      "published": false,
      "ratio": 0.9166666666666666,
-     "share_of_dollars": 7.280914726483004e-05,
+     "share_of_dollars": 7.265973403434734e-05,
      "within_20": 0.6666666666666666
     },
     "trm_bundled": {
@@ -1127,7 +1127,7 @@
      "low_vs_median": 1.7999999999999998,
      "published": false,
      "ratio": 0.33147720378528,
-     "share_of_dollars": 2.307121127321775e-05,
+     "share_of_dollars": 2.3023866340101833e-05,
      "within_20": 0.0
     },
     "trm_permanent": {
@@ -1139,7 +1139,7 @@
      "low_vs_median": 0.40628571428571414,
      "published": false,
      "ratio": 3.196617959410634,
-     "share_of_dollars": 6.606755955512355e-05,
+     "share_of_dollars": 6.593198088301888e-05,
      "within_20": 0.0
     },
     "trm_temporary": {
@@ -1151,7 +1151,7 @@
      "low_vs_median": 0.10451977401129953,
      "published": false,
      "ratio": 0.9977550515934707,
-     "share_of_dollars": 0.0005359205524320282,
+     "share_of_dollars": 0.0005348207782411606,
      "within_20": 0.8
     },
     "valve_assembly": {
@@ -1163,7 +1163,7 @@
      "low_vs_median": 0.17823564470345277,
      "published": false,
      "ratio": 0.9070561537730776,
-     "share_of_dollars": 0.0028339599371369974,
+     "share_of_dollars": 0.0028281443064755636,
      "within_20": 0.2
     },
     "valve_hydrant": {
@@ -1175,7 +1175,7 @@
      "low_vs_median": 0.1574041665221222,
      "published": true,
      "ratio": 0.9125455952110404,
-     "share_of_dollars": 0.019726004133241156,
+     "share_of_dollars": 0.019685523972261625,
      "within_20": 0.4635416666666667
     },
     "video_survey": {
@@ -1187,7 +1187,7 @@
      "low_vs_median": 0.6842105263157894,
      "published": false,
      "ratio": 1.8309605396887452,
-     "share_of_dollars": 4.294950173797636e-05,
+     "share_of_dollars": 4.28613641337966e-05,
      "within_20": 0.13333333333333333
     },
     "water_pipe": {
@@ -1199,7 +1199,7 @@
      "low_vs_median": 0.262855324820928,
      "published": true,
      "ratio": 0.9765467819660206,
-     "share_of_dollars": 0.0779838863950696,
+     "share_of_dollars": 0.07782385397016697,
      "within_20": 0.28859060402684567
     },
     "water_service": {
@@ -1211,7 +1211,7 @@
      "low_vs_median": 0.23333333333333317,
      "published": true,
      "ratio": 0.8714178364111393,
-     "share_of_dollars": 0.020857565622794255,
+     "share_of_dollars": 0.020814763359936112,
      "within_20": 0.41496598639455784
     },
     "wingwall": {
@@ -1223,7 +1223,7 @@
      "low_vs_median": 0.520251929627604,
      "published": false,
      "ratio": 0.9300668858437549,
-     "share_of_dollars": 0.0009450691360058181,
+     "share_of_dollars": 0.0009431297391313224,
      "within_20": 0.29411764705882354
     }
    },
@@ -1237,9 +1237,9 @@
     "lettings": 807,
     "lines": 41159,
     "low_vs_median": 0.16181818181818186,
-    "ratio": 1.0038799801962075,
+    "ratio": 1.0038590671355974,
     "share_of_dollars": 1.0,
-    "within_20": 0.36599528657158825
+    "within_20": 0.36594669452610606
    },
    "groups": {
     "LS:swppp_erosion": {
@@ -1268,7 +1268,7 @@
     },
     "adjust_to_grade": {
      "dollar_weighted": 1.1428709307307963,
-     "half_within": 0.5273111473656953,
+     "half_within": 0.482818091259422,
      "label": "Adjust to grade",
      "lettings": 56,
      "lines": 89,
@@ -1400,7 +1400,7 @@
     },
     "conc_pavement": {
      "dollar_weighted": 0.08080418585386773,
-     "half_within": 0.189206790200509,
+     "half_within": 0.18511669984361512,
      "label": "Concrete pavement",
      "lettings": 83,
      "lines": 132,
@@ -1411,7 +1411,7 @@
      "within_20": 0.5151515151515151
     },
     "concrete_misc": {
-     "dollar_weighted": 0.4662462714515392,
+     "dollar_weighted": 0.4655375628407079,
      "half_within": 0.37633038848786105,
      "label": "Miscellaneous concrete",
      "lettings": 141,
@@ -1471,16 +1471,16 @@
      "within_20": 0.19
     },
     "curb_gutter": {
-     "dollar_weighted": 0.29708379246338956,
-     "half_within": 0.3296457908684731,
+     "dollar_weighted": 0.29748963322840094,
+     "half_within": 0.33529882240956566,
      "label": "Curb and gutter",
      "lettings": 160,
      "lines": 288,
      "low_vs_median": 0.21942843754183228,
      "published": true,
-     "ratio": 0.9052028258144353,
+     "ratio": 0.9044541884985074,
      "share_of_dollars": 0.0026661788605982775,
-     "within_20": 0.3541666666666667
+     "within_20": 0.3506944444444444
     },
     "demo_other": {
      "dollar_weighted": 0.26518542497696673,
@@ -1831,16 +1831,16 @@
      "within_20": 0.0
     },
     "mobilization": {
-     "dollar_weighted": 0.39680751100740186,
-     "half_within": 0.5083489012089297,
+     "dollar_weighted": 0.3968073085087278,
+     "half_within": 0.5064584675882366,
      "label": "Mobilization",
      "lettings": 806,
      "lines": 913,
      "low_vs_median": 0.25,
      "published": true,
-     "ratio": 1.0655403126493637,
+     "ratio": 1.0648143989410692,
      "share_of_dollars": 0.09756440320306183,
-     "within_20": 0.28148959474260676
+     "within_20": 0.28258488499452356
     },
     "mowing_vegetation": {
      "dollar_weighted": 0.2068910333718017,
@@ -1855,16 +1855,16 @@
      "within_20": 0.28824833702882485
     },
     "other": {
-     "dollar_weighted": 0.3097020310975591,
-     "half_within": 0.4409640971744986,
+     "dollar_weighted": 0.30995726495726483,
+     "half_within": 0.44022842514297045,
      "label": "Unclassified lines",
-     "lettings": 551,
-     "lines": 3758,
-     "low_vs_median": 0.17231800374971162,
+     "lettings": 550,
+     "lines": 3749,
+     "low_vs_median": 0.17200000000000015,
      "published": true,
-     "ratio": 0.9998436840350997,
-     "share_of_dollars": 0.10136784482605164,
-     "within_20": 0.2844598190526876
+     "ratio": 1.0008017756449936,
+     "share_of_dollars": 0.10135763905374595,
+     "within_20": 0.28434249133102163
     },
     "painting": {
      "dollar_weighted": 2.6371091487651412,
@@ -1880,15 +1880,15 @@
     },
     "pavement_marking": {
      "dollar_weighted": 0.25973827624395485,
-     "half_within": 0.3648228220144023,
+     "half_within": 0.3647364868147549,
      "label": "Pavement marking",
      "lettings": 423,
      "lines": 8266,
      "low_vs_median": 0.1200000000000001,
      "published": true,
-     "ratio": 1.133390329508104,
+     "ratio": 1.1329810177030406,
      "share_of_dollars": 0.01640644845355315,
-     "within_20": 0.317928865231067
+     "within_20": 0.3178078877328817
     },
     "pavement_milling": {
      "dollar_weighted": 0.20617867715838778,
@@ -2180,15 +2180,15 @@
     },
     "traffic_signal": {
      "dollar_weighted": 0.27854850381548335,
-     "half_within": 0.20413598150091028,
+     "half_within": 0.20454681722026424,
      "label": "Traffic signals",
      "lettings": 116,
-     "lines": 2257,
-     "low_vs_median": 0.10402857142857136,
+     "lines": 2266,
+     "low_vs_median": 0.10432494020586636,
      "published": true,
-     "ratio": 0.8945261570248284,
-     "share_of_dollars": 0.01453114510144648,
-     "within_20": 0.49268941072219763
+     "ratio": 0.8937425639263266,
+     "share_of_dollars": 0.014541350873752162,
+     "within_20": 0.4916151809355693
     },
     "tree_install": {
      "dollar_weighted": 0.0880204498327175,
@@ -2304,12 +2304,12 @@
  },
  "method": "Forward in time: every line of every scored letting priced from earlier lettings only, at market level (before the comparables blend and the competition discount), against the MEDIAN bidder's amount on the same line; lines with >= 3 bidders, not owner-set, not unpriced, not uncovered.",
  "source": {
-  "estimator_md5": "c65ca029b1b504341c80c267c62d5a9e",
-  "fwd_rec_json": "handoff/scratchpad/p50fix/round18/out/la/fwd_rec_x1.json",
-  "fwd_rec_json_md5": "4b8cc5fd554ee186234b494049e89e02",
-  "lines_csv": "handoff/scratchpad/p50fix/round18/out/la/mob_lines_x1.csv",
-  "lines_csv_md5": "0724f43bd6001ec79ee397adb0fed4fd",
-  "master_panel_md5": "63c93df1641b2b9e2a622500ded6383b"
+  "estimator_md5": "e4b357623ffa183d5cd4b4f48f5b8f4d",
+  "fwd_rec_json": "handoff/scratchpad/p50fix/round20/la/out/fwd_rec_G.json",
+  "fwd_rec_json_md5": "e798f19066e15d0c2fcd727aa3943998",
+  "lines_csv": "handoff/scratchpad/p50fix/round20/la/out/mob_lines_G.csv",
+  "lines_csv_md5": "043eb4b86952b3391104210922f55fe1",
+  "master_panel_md5": "0eed0124dd36281aea704110cae10d64"
  },
  "thresholds": {
   "min_lettings": 15,

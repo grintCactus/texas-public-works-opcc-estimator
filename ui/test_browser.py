@@ -469,8 +469,8 @@ class PageInteractions(unittest.TestCase):
                     self.assertAlmostEqual(o["F%d" % r], w["your_amount"], places=2, msg=d)
                     if l["status"] not in ("owner_set",) and w["your_unit"] is not None:
                         self.assertAlmostEqual(o["E%d" % r], w["your_unit"], places=4, msg=d)
-                    self.assertEqual(o.get("G%d" % r) or "", w["note"] or "", d)     # printed Notes
-                    self.assertEqual(o.get("I%d" % r) or "", w["source"] or "", d)
+                    self.assertEqual(o.get("G%d" % r) or "", w["source"] or "", d)
+                    self.assertEqual(o.get("H%d" % r) or "", w["note"] or "", d)     # beside the source
                     seen += 1
                 self.assertGreaterEqual(seen, 8)
                 rows = {v: int(c[1:]) for c, v in o.items() if c.startswith("B") and isinstance(v, str)}
@@ -501,9 +501,9 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(errors, [])
 
     def test_one_export_in_its_own_step(self):
-        """2026-11-21 (user): one export, in the Export step, as Excel only --
-        no worksheet toolbar, no CSV or JSON, no other download button. It
-        is the OPCC workbook."""
+        """2026-11-21 (user): the exports are in the Export step only -- the
+        OPCC workbook (Excel) and the OPCC as it prints (PDF); no worksheet
+        toolbar, no CSV or JSON, no other download button."""
         import zipfile
         for engine in self.engines:
             with self.subTest(engine=engine):
@@ -520,6 +520,12 @@ class PageInteractions(unittest.TestCase):
                 with zipfile.ZipFile(dl.value.path()) as z:
                     names = re.findall(r'<sheet name="([^"]+)"', z.read("xl/workbook.xml").decode())
                 self.assertEqual(names, ["OPCC", "Summary", "Lines", "References"])
+                # and the OPCC as it prints, as a PDF (user, 2026-11-21)
+                with page.expect_download() as dl2:
+                    page.click("#btn-export-pdf")
+                self.assertTrue(dl2.value.suggested_filename.endswith(".pdf"))
+                with open(dl2.value.path(), "rb") as fh:
+                    self.assertTrue(fh.read(5).startswith(b"%PDF"))
                 self.assertEqual(errors, [])
 
     def test_warnings_are_short_and_tick_to_gray(self):
@@ -587,6 +593,43 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(d.suggested_filename, "takeoff_template.xlsx")
                 with open(d.path(), "rb") as fh:
                     self.assertEqual(fh.read(2), b"PK")      # an .xlsx (zip)
+                self.assertEqual(errors, [])
+
+    def test_ai_mode_is_a_place_kept_in_the_upload_step(self):
+        """2026-11-21 (user): an "AI mode" button where files are uploaded:
+        drawings and documents go in through the one drop area, then "Read by
+        AI" lists the work and the quantities; it replaces "Read a PDF with
+        Claude". Not built yet: the window is kept, nothing is sent."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                browser = getattr(self.pw, engine).launch()
+                self.addCleanup(browser.close)
+                page = browser.new_page()
+                errors, posts = [], []
+                page.on("pageerror", lambda e: errors.append(str(e)))
+                page.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)
+                page.goto(self.url + "/")
+                page.click('#input-tabs button[data-pane="file"]')
+                btn = page.locator("#btn-ai-mode")
+                self.assertTrue(btn.is_visible())
+                self.assertEqual(btn.inner_text().strip(), "AI mode")
+                self.assertFalse(page.locator("#ai-mode-panel").is_visible())
+                btn.click()
+                panel = page.locator("#ai-mode-panel")
+                self.assertTrue(panel.is_visible())
+                self.assertEqual(btn.get_attribute("aria-expanded"), "true")
+                txt = panel.inner_text().lower()
+                for s_ in ("drawings", "quantities", "coming later", "read by ai", "drop area"):
+                    self.assertIn(s_, txt)
+                self.assertTrue(page.locator("#btn-ai-read").is_disabled())
+                # one way in for files: the drop area; the old Claude PDF
+                # button is folded into AI mode (user, 2026-11-21)
+                self.assertEqual(page.locator("#pane-file .dropzone").count(), 1)
+                self.assertEqual(page.locator("#btn-claude").count(), 0)
+                self.assertNotIn("with claude", page.locator("#pane-file").inner_text().lower())
+                btn.click()
+                self.assertFalse(panel.is_visible())
+                self.assertEqual(posts, [])
                 self.assertEqual(errors, [])
 
     def test_a_contingency_line_is_a_share_picked_from_a_list(self):

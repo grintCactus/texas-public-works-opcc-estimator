@@ -110,7 +110,8 @@ RATES = {
 }
 HEAVY = {"/api/estimate", "/api/references", "/api/worksheet/refs",
          "/api/export/csv", "/api/export/xlsx", "/api/worksheet/export/csv",
-         "/api/worksheet/export/xlsx", "/api/letting", "/api/letting/csv",
+         "/api/worksheet/export/xlsx", "/api/worksheet/export/pdf", "/api/letting",
+         "/api/letting/csv",
          "/api/bidders/suggest"}
 UPLOAD = {"/api/takeoff/file", "/api/takeoff/text"}
 #: Answered without the access code (container health checks).

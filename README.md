@@ -26,6 +26,7 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
 1. **Enter the takeoff.**
    - No takeoff yet? Download the blank takeoff template (Excel) at the top of this step. It is laid out like the OPCC it becomes, just not filled in. Fill in one pay item per row: item no., description, units and quantity; an allowance the bid form prints a dollar amount for goes in Total Cost. Then upload the file, or paste the rows with the header row.
    - Paste a bid schedule, or upload Excel, CSV, Word or PDF. Scanned PDFs are read with OCR.
+   - **AI mode** (coming later): the upload step keeps a place for reading a job's engineering drawings and documents by AI ("Read by AI"), to list the work to be done and the quantities as a takeoff to check. Files go in through the same drop area. It is not built yet; the button only shows where it will be.
    - Check each line's description, unit, quantity and the item type it was matched to. Change the type with the picker if it is wrong.
    - Lines the reader is unsure of are flagged, with the closest items from bid history to pick from. Corrections you make are remembered on your machine.
    - Lines it cannot read at all (stray symbols, garbled text, notes) are listed apart as "could not be read", with their original text; nothing is guessed from them. You can add any of them back.
@@ -54,7 +55,7 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
    - The estimate is laid out as an OPCC: the items, then the **subtotal**, then the **contingency** below it, then the **total**. This holds for P50, for P80 and for your own OPCC. A contingency given as a percentage stays that percentage of the subtotal at P50 and at P80.
    - Pick your own construction contingency from a list (0–25% of the subtotal): 10% by default, 0% when the schedule already carries a contingency line (then it is an additional construction contingency). Its row stays at 0% too, so changing it changes numbers, not the layout. The page shows how often an OPCC that high came in under the low bid on past jobs: in cities, P50 + 10% did on about 30% of jobs, and P80 on about 14%.
    - "Your OPCC" is shown next to the model's P50 and P80.
-6. **Export** (step 4) gives one Excel workbook; there are no other downloads. The first sheet is the OPCC itself, in the usual layout and with one total: a title, the project, date, prepared by and project no.; then item no., description, units, quantity, unit cost, total cost and your note on the line; then Sub-Total, Construction Contingency and Project Total, and a blank interim-review block for the engineer at the bottom right. It prints on portrait pages one page wide (columns A-G, the header repeated on each page). The date and the source of each unit cost sit beside the printed block as working notes. The totals are live formulas that also carry their values, so previews that do not calculate (Quick Look, phones, mail) still show the right numbers, and long descriptions wrap with their rows sized to fit. The OPCC and Summary sheets draw every grid line, so they read the same in Excel, Google Sheets and on paper. The Summary is one page in the same style: the project, your OPCC (Sub-Total, contingency, Project Total) and how it compares with the model's P50 and P80. Then come every line with the model's prices and your notes, and a references appendix: for each line, its past projects, each with its own item as bid (words, unit, quantity, and low, average and median bid).
+6. **Export** (step 4) gives the Excel workbook, or the OPCC as it prints as a PDF (US Letter); there are no other downloads. The first sheet is the OPCC itself, in the usual layout and with one total: a title, the project, date, prepared by and project no.; then item no., description, units, quantity, unit cost and total cost; then Sub-Total, Construction Contingency and Project Total, and a blank interim-review box at the bottom right, from Units to Total Cost, laid out as on a printed OPCC: "INTERIM REVIEW ONLY", the standard legend, and blanks for the engineer, P.E. serial no., date, company and firm registration no. The seal goes there when the OPCC is submitted. It prints on portrait pages one page wide (columns A-F, the header repeated on each page). The source of each unit cost and your note on the line sit beside the printed block as working notes. A heavy frame, a gray ESTIMATED QUANTITIES band and the interim-review box at the bottom right follow the usual OPCC. The totals are live formulas that also carry their values, so previews that do not calculate (Quick Look, phones, mail) still show the right numbers, and long descriptions wrap with their rows sized to fit. Printed, the OPCC looks like the usual paper OPCC on US Letter: no lines inside the table or under the totals, the title and project block in a bold serif; on screen the sheet's gridlines show the cells both ways, and they are not printed. The PDF is the same page. The Summary draws its own grid lines, and every sheet is set to US Letter. The Summary is one page in the same style: the project, your OPCC (Sub-Total, contingency, Project Total) and how it compares with the model's P50 and P80. Then come every line with the model's prices and your notes, and a references appendix: for each line, its past projects, each with its own item as bid (words, unit, quantity, and low, average and median bid).
 
 ![The estimate for a public creek-bank schedule: expected low bid (P50) and recommended OPCC (P80) with their ranges, and one line opened to the earlier public bids behind its price](assets/screenshot-estimate.png)
 
@@ -67,7 +68,7 @@ Or start the app on your own machine with `.venv/bin/python ui/run.py`, then ope
 **Your inputs stay yours.**
 - An engineer's estimate is never an input.
 - Your prices never feed back into the model.
-- Run locally, nothing leaves your machine. The one exception is the optional "Read with Claude" for difficult PDFs, which asks before sending each document.
+- Run locally, nothing leaves your machine.
 
 ## The goal
 
@@ -85,11 +86,11 @@ All figures are forward in time: each letting is priced from lettings dated befo
 |---|---|---|---|---|---|
 | **TxDOT** (DFW counties), 2023–26 | 807 | **16%** | 16% | 32% | **26% / 27% / 30%** |
 | TxDOT engineers' own estimates (same 451 lettings, official totals) | 451 | 21% | 14% | — | 19% / 22% / 23% |
-| **City / municipal** (DFW), 2024–26 | 234 | **20%** | 14% | 45% | **30% / 32% / 33%** |
+| **City / municipal** (DFW), 2024–26 | 235 | **20%** | 14% | 45% | **30% / 32% / 34%** |
 | Municipal engineers' own estimates | 140 | ~15% | 33% | — | 20% / 21% / 25% |
 | Locked public test set, municipal (last confirmation) | 56 | 14% | 20% | 31% | — |
 
-Municipal figures use the "covered" scope (see below). The discount uses each letting's actual number of bidders, which is not known when quoting. On the previous data build, a forecast bidder count from earlier lettings of the same market, work type and size cost TxDOT about 2 points of overshoot and left municipal unchanged. Figures are from the current data build: parser .33 (2026-11-21), on top of 63 more public bid tabs from smaller DFW cities and counties, many found inside city council agenda packets. Parser round 12 (.33) moved 637 lines to the right item type: trail excavation and grading out of sidewalk (a 400 CY "Excavation (Trail)" had been priced like concrete sidewalk), "Earthwork" to excavation, and pipe abandonment, plugs and grout fill to utility removal work. On the same 224 city jobs, overshoot went from 46.3% to 45.8%; nothing else moved. Round 18 (installed 2026-11-21) added two pricing rules. A bidder count above the discount table's top bin is now priced off the top bin, so 10 city jobs with 16–21 bidders get an estimate. Abandon, plug and grout-fill lines are priced only from abandonment history, never from new or removed pipe. On the same 224 city jobs, overshoot went from 45.8% to 45.5% and the P50 error from 20.2% to 19.9%; the P80 under rate did not change, and TxDOT did not move. Parser rounds 10 and 11 made three changes:
+Municipal figures use the "covered" scope (see below). The discount uses each letting's actual number of bidders, which is not known when quoting. On the previous data build, a forecast bidder count from earlier lettings of the same market, work type and size cost TxDOT about 2 points of overshoot and left municipal unchanged. Figures are from the current data build: parser .34b (2026-11-21), on top of 63 more public bid tabs from smaller DFW cities and counties, many found inside city council agenda packets. Parser round 12 (.33) moved 637 lines to the right item type: trail excavation and grading out of sidewalk (a 400 CY "Excavation (Trail)" had been priced like concrete sidewalk), "Earthwork" to excavation, and pipe abandonment, plugs and grout fill to utility removal work. On the same 224 city jobs, overshoot went from 46.3% to 45.8%; nothing else moved. Round 20 (installed 2026-11-21, parser .34b) taught the parser three item types it had left as "Other": flashing beacons, flashers, crosswalk lights, signal poles and mast arms are traffic signals; markings named by their line (stop bars, solid, broken or double yellow lines, raised markers, marked crosswalks) are pavement marking; signs named by an MUTCD code or a panel size are signs. The estimator did not change. On the 234 city jobs both builds score, the sum of |our line price − median bid| fell 0.25% (90% interval −$1.80M to −$0.19M), overshoot went from 45.3% to 44.6% and the P50 error from 19.7% to 19.4%; the P80 under rate did not change in any year, and TxDOT did not get worse. One more city job became scorable (235). Round 20 was registered after its first two arms had failed, so it carries a check on the first 40 city jobs bid after 2026-11-20. Round 18 (installed 2026-11-21) added two pricing rules. A bidder count above the discount table's top bin is now priced off the top bin, so 10 city jobs with 16–21 bidders get an estimate. Abandon, plug and grout-fill lines are priced only from abandonment history, never from new or removed pipe. On the same 224 city jobs, overshoot went from 45.8% to 45.5% and the P50 error from 20.2% to 19.9%; the P80 under rate did not change, and TxDOT did not move. Parser rounds 10 and 11 made three changes:
 - they read more table layouts;
 - they tell an engineer's column from a bidder's;
 - they recover units printed in odd places, about 8,500 lines.
@@ -106,7 +107,7 @@ On the lettings that both builds score, the change is within noise. That build c
 **Strengths**
 
 - **TxDOT is close to engineer level.**
-  - On 806 DFW TxDOT lettings, the median P50 error is 16%.
+  - On 807 DFW TxDOT lettings, the median P50 error is 16%.
   - On the 451 of them with an official engineer's estimate, our median error (17%) is lower than the engineers' (21%), whose estimates run about 20% high.
   - At an 80% not-under rate, the engineers still overshoot less: 23% vs our 31%.
 - **Standard items are priced close to the bidders' own spread.** On TxDOT, half of the asphalt, bridge concrete, concrete pavement, riprap, headwall, box culvert and storm pipe lines are within 14–20% of the median bid. In cities, the same holds for curb ramps, driveways and inlets (16–24%). See [Item-level accuracy](#item-level-accuracy).
@@ -123,7 +124,7 @@ On the lettings that both builds score, the change is within noise. That build c
 
 - **City (municipal) estimates are less accurate.**
   - The median P50 error is 20%, against about 15% for the engineers.
-  - At an 80% not-under rate the overshoot is about 36%, against the engineers' 25%.
+  - At an 80% not-under rate the overshoot is about 34%, against the engineers' 25%.
   - Almost all of this error comes from estimating the bidders' typical (median) price for the schedule. Very little comes from the step from the median bid to the low bid.
 - **Lump-sum items do not yet scale with job size.**
   - Mobilization, traffic control, site preparation and SWPPP / erosion-control lump sums are priced at about the same dollar amount on every job. Bidders price them as a share of the job (mobilization is typically about 5%).
@@ -218,10 +219,10 @@ How close the price of each kind of line item is, before the lines are added up.
   - water pipe (8% of city dollars, half within 44%);
   - mobilization (5%, runs 46% high);
   - asphalt (4%, half within 36%);
-  - unclassified lines (4%, half within 109%).
-  - Fire hydrants run 31% low, pavement marking 21% low, and miscellaneous concrete 13% high.
+  - unclassified lines (4%, half within 98%).
+  - Fire hydrants run 31% low, pavement marking 20% low, and miscellaneous concrete 13% high.
 
-#### City / municipal (DFW), 2024–26: 234 lettings, 10,245 lines
+#### City / municipal (DFW), 2024–26: 235 lettings, 10,328 lines
 
 Across all lines, half are within **46%** of the median bid (**40%** weighted by dollars); 28% are within ±20%. The low bidder is typically 25% from the median bidder on the same line.
 
@@ -230,11 +231,11 @@ Across all lines, half are within **46%** of the median bid (**40%** weighted by
 | ADA curb ramps | 209 | 98 | 0.8% | 16% | 16% | 0.98 | 56% | 23% |
 | Driveways | 133 | 89 | 1.5% | 18% | 14% | 0.98 | 53% | 20% |
 | Valves and hydrants | 192 | 82 | 2.0% | 22% | 37% | 0.91 | 46% | 16% |
-| Inlets | 278 | 70 | 1.6% | 23% | 24% | 1.00 | 47% | 18% |
 | Sidewalk | 226 | 133 | 3.6% | 23% | 19% | 1.07 | 46% | 21% |
+| Inlets | 278 | 70 | 1.6% | 23% | 24% | 1.00 | 47% | 18% |
 | Project signs | 79 | 73 | 0.0% | 24% | 35% | 1.03 | 42% | 33% |
-| Concrete pavement | 209 | 110 | 12.5% | 25% | 20% | 1.01 | 41% | 14% |
-| Signs | 82 | 51 | 0.1% | 27% | 11% | 1.00 | 40% | 20% |
+| Signs | 95 | 54 | 0.1% | 24% | 12% | 1.03 | 44% | 18% |
+| Concrete pavement | 209 | 110 | 12.4% | 25% | 20% | 1.01 | 41% | 14% |
 | Box culverts | 68 | 32 | 1.5% | 27% | 22% | 0.92 | 41% | 17% |
 | Storm pipe | 329 | 85 | 3.0% | 28% | 23% | 0.91 | 37% | 20% |
 | Water services | 147 | 58 | 2.1% | 28% | 15% | 0.87 | 41% | 23% |
@@ -245,7 +246,7 @@ Across all lines, half are within **46%** of the median bid (**40%** weighted by
 | Stone riprap | 59 | 45 | 0.8% | 36% | 36% | 0.88 | 25% | 29% |
 | Asphalt pavement | 181 | 89 | 4.4% | 36% | 29% | 0.98 | 31% | 19% |
 | Subgrade stabilization | 138 | 65 | 2.7% | 37% | 40% | 0.82 | 30% | 18% |
-| Traffic signals | 250 | 24 | 0.7% | 37% | 53% | 0.99 | 40% | 12% |
+| Traffic signals | 258 | 25 | 0.8% | 39% | 57% | 0.99 | 40% | 11% |
 | Seeding and sod | 373 | 188 | 1.9% | 39% | 56% | 0.92 | 32% | 25% |
 | Pavement removal | 157 | 95 | 1.6% | 40% | 47% | 0.88 | 25% | 30% |
 | Excavation | 153 | 114 | 2.7% | 40% | 37% | 0.94 | 25% | 40% |
@@ -256,21 +257,21 @@ Across all lines, half are within **46%** of the median bid (**40%** weighted by
 | Erosion control (unit-priced) | 183 | 81 | 0.4% | 44% | 84% | 0.82 | 26% | 33% |
 | Manholes | 175 | 69 | 2.0% | 45% | 69% | 0.93 | 30% | 21% |
 | Fire hydrants | 67 | 61 | 0.5% | 46% | 33% | 0.69 | 28% | 16% |
-| Casing / encasement | 166 | 75 | 2.8% | 46% | 161% | 0.88 | 25% | 25% |
+| Casing / encasement | 166 | 75 | 2.8% | 46% | 161% | 0.87 | 25% | 25% |
 | Miscellaneous concrete | 147 | 83 | 1.1% | 46% | 39% | 1.13 | 19% | 27% |
 | Sidewalk removal | 112 | 65 | 0.2% | 46% | 34% | 1.04 | 25% | 30% |
 | Adjust to grade | 179 | 80 | 0.2% | 48% | 48% | 1.07 | 28% | 43% |
-| Curb and gutter | 144 | 98 | 0.7% | 48% | 39% | 1.09 | 28% | 36% |
 | Utility removal / abandonment | 313 | 103 | 0.6% | 49% | 44% | 0.94 | 23% | 45% |
 | Sanitary sewer pipe | 131 | 50 | 2.8% | 49% | 51% | 1.00 | 22% | 41% |
+| Curb and gutter | 144 | 98 | 0.7% | 49% | 41% | 1.09 | 28% | 36% |
 | Traffic control (unit-priced) | 80 | 58 | 0.6% | 52% | 53% | 1.31 | 20% | 29% |
 | Pipe fittings | 65 | 39 | 0.3% | 52% | 49% | 1.18 | 28% | 31% |
-| Guardrail | 60 | 26 | 0.1% | 54% | 59% | 0.70 | 27% | 22% |
 | Sewer services | 51 | 32 | 0.3% | 55% | 61% | 1.24 | 20% | 36% |
-| Pavement marking | 609 | 89 | 0.4% | 58% | 91% | 0.79 | 20% | 21% |
-| Relocate / reset | 190 | 81 | 0.2% | 58% | 96% | 0.87 | 23% | 41% |
+| Relocate / reset | 189 | 81 | 0.2% | 58% | 96% | 0.87 | 23% | 42% |
+| Guardrail | 61 | 27 | 0.1% | 59% | 59% | 0.69 | 26% | 22% |
 | Other removals | 173 | 88 | 0.5% | 59% | 66% | 0.94 | 24% | 39% |
 | Retaining walls | 58 | 34 | 1.6% | 59% | 62% | 1.00 | 19% | 30% |
+| Pavement marking | 681 | 93 | 0.5% | 60% | 79% | 0.80 | 20% | 21% |
 | Trench safety | 127 | 85 | 0.2% | 65% | 80% | 0.89 | 20% | 69% |
 | Tree planting | 71 | 47 | 0.2% | 65% | 222% | 0.94 | 30% | 14% |
 | Contingency / allowance lines | 78 | 23 | 0.5% | 68% | 102% | 0.94 | 27% | 21% |
@@ -278,8 +279,8 @@ Across all lines, half are within **46%** of the median bid (**40%** weighted by
 | Structure demolition | 94 | 58 | 0.1% | 74% | 244% | 0.89 | 15% | 34% |
 | Headwalls | 60 | 42 | 0.4% | 83% | 309% | 0.73 | 8% | 46% |
 | SWPPP / temporary erosion control (lump sum) | 170 | 157 | 0.3% | 98% | 161% | 1.11 | 12% | 49% |
+| Unclassified lines | 779 | 164 | 3.7% | 98% | 277% | 0.95 | 16% | 29% |
 | Landscape planting | 103 | 23 | 0.2% | 100% | 94% | 1.61 | 17% | 11% |
-| Unclassified lines | 789 | 165 | 3.7% | 109% | 282% | 0.95 | 16% | 29% |
 | Traffic control (lump sum) | 151 | 141 | 0.9% | 119% | 242% | 1.40 | 10% | 59% |
 | Site preparation (lump sum) | 82 | 77 | 1.3% | 128% | 388% | 0.97 | 20% | 84% |
 | Irrigation | 75 | 44 | 0.6% | 136% | 153% | 1.21 | 4% | 17% |
@@ -301,15 +302,15 @@ Across all lines, half are within **30%** of the median bid (**26%** weighted by
 | Headwalls | 218 | 78 | 0.1% | 17% | 15% | 0.99 | 57% | 9% |
 | Concrete riprap | 252 | 192 | 0.5% | 17% | 10% | 1.02 | 57% | 15% |
 | Stone riprap | 277 | 197 | 0.9% | 18% | 19% | 0.94 | 55% | 14% |
-| Flowable backfill | 192 | 161 | 0.3% | 19% | 21% | 0.92 | 53% | 17% |
 | Concrete pavement | 132 | 83 | 8.1% | 19% | 8% | 0.92 | 52% | 12% |
+| Flowable backfill | 192 | 161 | 0.3% | 19% | 21% | 0.92 | 53% | 17% |
 | Box culverts | 362 | 98 | 2.1% | 19% | 20% | 0.94 | 51% | 15% |
 | Concrete beams | 64 | 55 | 0.1% | 19% | 19% | 0.95 | 55% | 25% |
 | Storm pipe | 634 | 150 | 1.9% | 19% | 16% | 1.01 | 52% | 14% |
 | Casing / encasement | 316 | 127 | 0.6% | 19% | 49% | 0.92 | 52% | 12% |
 | Bridge railing | 267 | 129 | 1.1% | 20% | 24% | 0.95 | 51% | 15% |
 | Lighting assemblies | 160 | 56 | 0.3% | 20% | 36% | 0.86 | 49% | 6% |
-| Traffic signals | 2257 | 116 | 1.5% | 20% | 28% | 0.89 | 49% | 10% |
+| Traffic signals | 2266 | 116 | 1.5% | 20% | 28% | 0.89 | 49% | 10% |
 | Inlets | 543 | 75 | 1.1% | 21% | 25% | 0.86 | 48% | 16% |
 | Signs | 1392 | 262 | 0.7% | 21% | 27% | 1.04 | 48% | 9% |
 | ADA curb ramps | 397 | 102 | 0.2% | 22% | 22% | 0.91 | 48% | 13% |
@@ -327,7 +328,7 @@ Across all lines, half are within **30%** of the median bid (**26%** weighted by
 | Concrete joints | 267 | 151 | 0.4% | 29% | 40% | 0.88 | 40% | 21% |
 | Concrete barrier | 855 | 181 | 2.0% | 30% | 24% | 1.01 | 36% | 25% |
 | Guardrail | 1690 | 289 | 0.8% | 30% | 24% | 1.22 | 33% | 11% |
-| Curb and gutter | 288 | 160 | 0.3% | 33% | 30% | 0.91 | 35% | 22% |
+| Curb and gutter | 288 | 160 | 0.3% | 34% | 30% | 0.90 | 35% | 22% |
 | Shoring | 113 | 109 | 1.3% | 34% | 48% | 0.94 | 31% | 27% |
 | Surface treatment | 360 | 261 | 0.2% | 34% | 33% | 1.08 | 33% | 29% |
 | Embankment / fill | 291 | 229 | 3.0% | 35% | 35% | 1.04 | 31% | 29% |
@@ -342,10 +343,10 @@ Across all lines, half are within **30%** of the median bid (**26%** weighted by
 | Excavation | 348 | 223 | 1.8% | 42% | 66% | 0.97 | 28% | 32% |
 | Fence | 277 | 122 | 0.3% | 43% | 49% | 1.04 | 31% | 25% |
 | Utility removal / abandonment | 622 | 188 | 0.9% | 44% | 271% | 0.91 | 28% | 41% |
-| Unclassified lines | 3758 | 551 | 10.1% | 44% | 31% | 1.00 | 28% | 17% |
+| Unclassified lines | 3749 | 550 | 10.1% | 44% | 31% | 1.00 | 28% | 17% |
 | Sidewalk removal | 252 | 151 | 0.1% | 47% | 57% | 0.96 | 24% | 22% |
-| Mobilization | 913 | 806 | 9.8% | 51% | 40% | 1.07 | 28% | 25% |
-| Adjust to grade | 89 | 56 | 0.0% | 53% | 114% | 0.91 | 25% | 43% |
+| Adjust to grade | 89 | 56 | 0.0% | 48% | 114% | 0.91 | 25% | 43% |
+| Mobilization | 913 | 806 | 9.8% | 51% | 40% | 1.06 | 28% | 25% |
 | Relocate / reset | 118 | 70 | 0.0% | 54% | 489% | 0.91 | 30% | 28% |
 | Manholes | 67 | 26 | 0.1% | 55% | 209% | 0.70 | 30% | 21% |
 | Crash cushions | 500 | 124 | 0.5% | 55% | 58% | 1.32 | 19% | 27% |

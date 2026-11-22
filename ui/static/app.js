@@ -369,7 +369,6 @@ function aboutRows() {
   const data = st.data || {};
   const up = st.upstream || {};
   const ocr = st.ocr || {};
-  const cr = st.claude_reader || {};
   const co = st.corrections || {};
   const pdfOcr = up.pdf_ocr_engines || [];
   const nb = PUBLIC ? Object.keys(browserCorrections()).length : co.entries;
@@ -388,14 +387,10 @@ function aboutRows() {
       : 'UNAVAILABLE: ' + (up.parser_error || '?')],
     ['OCR', pdfOcr.length ? 'scanned PDFs read offline (' + pdfOcr.join(', ') + ')'
       + (ocr.real ? '; images too' : '') : (up.pdf_ocr_error || ocr.error || 'not installed')],
-    PUBLIC ? null : ['Claude reading', cr.available ? cr.label + ' ('
-      + (cr.backend === 'api' ? 'API' : 'Claude login') + '), opt-in per document'
-      : 'off' + (cr.reason ? ': ' + cr.reason : '')],
     ['Corrections', (nb || 0) + ' remembered' + (PUBLIC ? ' (in this browser only)'
       : co.file ? ' (' + co.file + ', local only)' : '')],
     ['Mode', PUBLIC ? 'public demo: uploads are processed in memory and not stored'
-      : cr.available ? 'local: nothing leaves this machine unless you choose Read with Claude'
-        : 'local: nothing leaves this machine'],
+      : 'local: nothing leaves this machine'],
     ['Version', 'page ' + (st.version || '?')],
   ].filter(Boolean);
 }
@@ -551,6 +546,21 @@ function renderClaudeButton() {
     : 'Off \u2014 to turn it on see ui/README.md, \u201cSetting up Claude reading\u201d '
       + '(brew install anthropics/tap/ant, then ant auth login; or ANTHROPIC_API_KEY from the '
       + 'Console; or sign in to the claude CLI).';
+}
+
+/* AI mode: the one place for reading with AI (user, 2026-11-21: "leave a
+   window here"; it replaces "Read a PDF with Claude", and files still go in
+   through the one drop area). Not built yet: the button opens the panel
+   that says what it will do; nothing is read or sent. The Claude PDF reader
+   behind the old button stays in the code for when this is built. */
+function initAiMode() {
+  const btn = $('#btn-ai-mode'), panel = $('#ai-mode-panel');
+  if (!btn || !panel) return;
+  btn.addEventListener('click', () => {
+    const open = panel.hidden;
+    panel.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+  });
 }
 
 function initClaude() {
@@ -790,11 +800,6 @@ function renderParseNotes() {
         + '\u201d was read (' + p.method + ')' }),
       el('ul', { class: 'tight howbody' }, p.notes.map(n => el('li', { text: n }))),
     ]));
-  }
-  if (/^pdf/.test(p.method || '') && claudeStatus().available
-      && (!(p.lines || []).length || /ocr/.test(p.method || ''))) {
-    host.appendChild(notice('info', 'A scan or a hard PDF?', 'You can also read it with Claude '
-      + '(\u201cRead a PDF with Claude\u201d under Upload file) \u2014 it asks before anything is sent.'));
   }
   const fold = $('#skipped-fold');
   fold.innerHTML = '';
@@ -4047,12 +4052,13 @@ function initExport() {
   // the one export, here only (user, 2026-11-21): the OPCC workbook -- its
   // sheet in the delivered layout, a one-page summary next to the model's
   // P50 / P80, every line, and the past projects behind each price
-  $('#btn-export-xlsx').addEventListener('click', () => {
+  // Excel, and the OPCC as it prints as a PDF (user, 2026-11-21)
+  ['xlsx', 'pdf'].forEach(kind => $('#btn-export-' + kind).addEventListener('click', () => {
     if (!S.result) return;
     if (S.stale) toast('Exporting the last estimate \u2014 inputs changed since; re-estimate first '
       + 'if you want them in.', 'warn', 7000);
-    wsExport('xlsx');
-  });
+    wsExport(kind);
+  }));
 }
 
 /* ======================================================= BID TAB (staging) */
@@ -4089,6 +4095,7 @@ function boot() {
   initInput();
   initSortable();
   initClaude();
+  initAiMode();
   initWorksheet();
   initProject();
   initExport();

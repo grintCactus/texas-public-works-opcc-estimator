@@ -676,6 +676,16 @@ tr.checkrow > td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 #review-table td .clscell { padding-top: 3px; }
 .claudebox { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 9px; }
 #btn-claude.off { color: var(--ink-faint); }
+/* AI mode: kept for reading drawings and documents with AI (not built yet) */
+.aimode { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 9px; }
+.aimode-panel { margin-top: 9px; padding: 12px 14px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--panel-2); }
+.aimode-panel[hidden] { display: none; }
+.aimode-head { font-weight: 600; font-size: 14px; color: var(--ink); margin-bottom: 6px; }
+.aimode-head .soon { font-weight: 500; font-size: 12px; color: var(--ink-faint); margin-left: 6px;
+  border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; }
+.aimode-panel p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--ink-dim); }
+#btn-ai-mode[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
 
 /* ------------------------------------- project sources and full bid tabs */
 

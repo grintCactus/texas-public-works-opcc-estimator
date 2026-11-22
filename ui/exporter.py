@@ -374,15 +374,20 @@ TEMPLATE_HEAD_ROW = 8
 def takeoff_template_xlsx() -> bytes:
     """The blank takeoff workbook, in the OPCC's own layout: the title, the
     project block (date, prepared by, project no.), ESTIMATED QUANTITIES with
-    the OPCC's columns and TEMPLATE_ROWS blank lines in a thin grid, a unit
-    list and number checks; how to fill it in sits beside it (column H),
-    outside the printed form and above the header the reader looks for."""
+    the OPCC's columns and TEMPLATE_ROWS blank lines in a thin grid (a form
+    to fill in keeps its lines), a unit list and number checks; how to fill
+    it in sits beside it (column H), outside the printed form and above the
+    header the reader looks for. The OPCC's serif headings and gray band,
+    on US Letter."""
     import openpyxl
     from openpyxl.styles import Alignment, Border, Font, Side
     from openpyxl.worksheet.datavalidation import DataValidation
 
     def F(size=10, bold=False, color=None, italic=False):
         return Font(name="Arial", size=size, bold=bold, color=color, italic=italic)
+
+    def T(size, color=None, italic=False):     # the OPCC's serif headings
+        return Font(name="Times New Roman", size=size, bold=True, color=color, italic=italic)
     thin = Side(style="thin", color="000000")
     med = Side(style="medium", color="000000")
     wb = openpyxl.Workbook()
@@ -393,19 +398,22 @@ def takeoff_template_xlsx() -> bytes:
         ws.column_dimensions[col].width = width
     ws.merge_cells("A1:F1")
     ws["A1"] = TEMPLATE_TITLE
-    ws["A1"].font = F(14, True)
+    ws["A1"].font = T(14)
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 24
     ws.merge_cells("A3:C5")
     ws["A3"] = "(project name)"
-    ws["A3"].font = F(13, True, color="A6A6A6", italic=True)
+    ws["A3"].font = T(16, color="A6A6A6", italic=True)
     ws["A3"].alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for r, lab in ((3, "DATE:"), (4, "PREPARED BY:"), (5, "PROJECT NO.:")):
         ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
-        ws.cell(row=r, column=4, value=lab).font = F(10, True)
+        ws.cell(row=r, column=4, value=lab).font = T(10)
     ws.merge_cells("A7:C7")
     ws["A7"] = "ESTIMATED QUANTITIES"
     ws["A7"].font = F(10, True)
+    from openpyxl.styles import PatternFill
+    for j in range(1, 7):                      # the OPCC's gray band
+        ws.cell(row=7, column=j).fill = PatternFill("solid", fgColor="BFBFBF")
     head = TEMPLATE_HEAD_ROW
     first, last = head + 1, head + TEMPLATE_ROWS
     for j, name in enumerate(TEMPLATE_HEADER, start=1):
@@ -461,6 +469,7 @@ def takeoff_template_xlsx() -> bytes:
     ws.freeze_panes = "A%d" % first
     ws.print_title_rows = "%d:%d" % (head, head)
     ws.print_area = "A1:F%d" % last
+    ws.page_setup.paperSize = ws.PAPERSIZE_LETTER
     ws.page_setup.orientation = "portrait"
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0

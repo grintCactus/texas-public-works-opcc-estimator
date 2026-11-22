@@ -49,8 +49,9 @@ Routes (JSON in, JSON out unless noted):
   POST /api/worksheet/refs    {request} -> per line: the reference range
                               (low / median / high, escalated), the most
                               recent reference, the projects to pick from
-  POST /api/worksheet/export/csv|xlsx  {result, request, worksheet} -> the
-                              OPCC worksheet (the estimator's deliverable)
+  POST /api/worksheet/export/csv|xlsx|pdf  {result, request, worksheet} -> the
+                              OPCC worksheet (the estimator's deliverable); the
+                              PDF is the OPCC as printed
   GET  /api/worksheet/list    saved worksheets (ui/.local/worksheets/)
   GET  /api/worksheet/load?file=
   POST /api/worksheet/save    {name, worksheet} -> ui/.local/worksheets/
@@ -698,6 +699,13 @@ def _worksheet_export(req, kind):
         except (ep.BadRequest, ep.EngineNotReady) as e:
             log.warning("worksheet references failed: %s", e)
     stamp = time.strftime("%Y%m%d-%H%M")
+    if kind == "pdf":
+        try:
+            import fpdf  # noqa: F401
+        except ImportError:
+            raise ApiError(501, "PDF export needs fpdf2; use the Excel export.")
+        return FileReply(worksheet.to_pdf(result, ws, refs), "application/pdf",
+                         "opcc_%s.pdf" % stamp)
     if kind == "csv":
         return FileReply(worksheet.to_csv(result, ws, refs),
                          "text/csv; charset=utf-8", "opcc_worksheet_%s.csv" % stamp)
@@ -726,6 +734,11 @@ def r_worksheet_csv(req):
 @route("POST", "/api/worksheet/export/xlsx")
 def r_worksheet_xlsx(req):
     return _worksheet_export(req, "xlsx")
+
+
+@route("POST", "/api/worksheet/export/pdf")
+def r_worksheet_pdf(req):
+    return _worksheet_export(req, "pdf")
 
 
 @route("GET", "/api/worksheet/list")
