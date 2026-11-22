@@ -716,6 +716,10 @@ table.btgrid tr.tot > td { border-top: 2px solid var(--line); font-weight: 600; 
 /* ------------------------------------------------------- OPCC worksheet */
 
 #p-worksheet > h2, #p-similar > h2 { font-size: 15px; }
+/* the worksheet's content keeps off the panel's edges (user, 2026-11-21:
+   it sat flush against the left side) */
+#p-worksheet > .body { padding: 14px 18px 6px; }
+#p-worksheet > .tablewrap { padding: 0 18px 14px; }
 .resjump { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 10px 0 0;
   font-size: 12.5px; }
 .resjump .lab { color: var(--ink-dim); }
