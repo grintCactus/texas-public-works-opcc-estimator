@@ -855,10 +855,31 @@ class ReferenceIndex:
             by_unit[un].append(i)
         self.by_unit = dict(by_unit)
         self.keys = {r[1] for r in pool}
+        self._nc = None          # nc_rows(): built once, on first use
         #: the unit hint's evidence (set by the engine: it needs the
         #: lettings' availability dates)
         self.unit_evidence = None
         self.load_s = time.time() - t0
+
+    def nc_rows(self, cls, unit):
+        """Row indices of past public lines of one not-covered class priced
+        per `unit` (a pump per EA, a prefab bridge per LS, ...): the past
+        prices shown beside a not-covered line, never priced. Built once
+        with the estimator's own coverage rule."""
+        if self._nc is None:
+            E = _E()
+            idx = collections.defaultdict(list)
+            memo = {}
+            for i, (mk, pk, fam, un, sz, q, u, w, b, dn, ow, yr) in \
+                    enumerate(self.rows):
+                k = (dn, fam, un)
+                c = memo.get(k, 0)
+                if c == 0:
+                    c = memo[k] = E.line_coverage(dn, fam, un)
+                if c:
+                    idx[(c, un)].append(i)
+            self._nc = dict(idx)
+        return self._nc.get((cls, unit), [])
 
     def members(self, kind, key):
         """Row indices of one cell."""
@@ -1317,6 +1338,70 @@ class ProductionEngine:
         }
 
     # -- classification -------------------------------------------------------
+    def nc_hint(self, description, unit, cls, market, to_year=None,
+                before=None, n_examples=3):
+        """What past public jobs paid for a line like a not-covered one: the
+        lines of the same not-covered class and unit, per letting the median
+        bid, escalated to `to_year`; their spread and the closest few by
+        wording. A rough idea only, shown in a small box on hover (user,
+        2026-11-21), never priced into P50 / P80. `before`: only lettings
+        dated before it (the bid date). None while the reference index is
+        still loading."""
+        ri = self.refs
+        if ri is None or not cls or not unit:
+            return None
+        E = _E()
+        groups = {}
+        for i in ri.nc_rows(cls, unit):
+            mk, pk, fam, un, sz, q, u, w, b, dn, ow, yr = ri.rows[i]
+            date = self.panel.avail.get(pk) or E.NEVER
+            if date == E.NEVER or (before and date >= before):
+                continue
+            g = groups.get((pk, dn))
+            if g is None:
+                g = groups[(pk, dn)] = {"pk": pk, "mk": mk, "dn": dn, "yr": yr,
+                                        "tok": ri.tok[i], "us": [], "qs": []}
+            g["us"].append(u)
+            if q:
+                g["qs"].append(q)
+        out = {"unit": unit, "n_items": len(groups),
+               "n_jobs": len({g["pk"] for g in groups.values()}),
+               "to_year": to_year, "escalated": bool(to_year)}
+        if not groups:
+            return out
+        our = E.item_tokens.tokens(description or "")
+        esc, ents = {}, []
+        for g in groups.values():
+            y = g["yr"]
+            f = 1.0
+            if to_year and y:
+                if y not in esc:
+                    ee = E.escalation(self.tab, y, to_year, market)
+                    esc[y] = (ee or {}).get("factor") or 1.0
+                f = esc[y]
+            ents.append(dict(g, med=statistics.median(g["us"]) * f,
+                             q=statistics.median(g["qs"]) if g["qs"] else None,
+                             j=E.item_tokens.jaccard(our, g["tok"])))
+        meds = sorted(e["med"] for e in ents)
+        n = len(meds)
+
+        def qt(p):
+            k = (n - 1) * p
+            lo = int(k)
+            hi = min(lo + 1, n - 1)
+            return meds[lo] + (meds[hi] - meds[lo]) * (k - lo)
+        yrs = sorted(str(e["yr"]) for e in ents if e["yr"])
+        best = sorted(ents, key=lambda e: (-e["j"], -int(str(e["yr"] or 0)[:4] or 0)))
+        out.update(low=meds[0], high=meds[-1], p25=qt(0.25), median=qt(0.5),
+                   p75=qt(0.75), years=[yrs[0], yrs[-1]] if yrs else None,
+                   examples=[{"project": project_title(e["pk"], e["mk"]),
+                              "year": e["yr"],
+                              "item": self.panel.rawdesc.get((e["pk"], e["dn"]))
+                              or e["dn"],
+                              "quantity": e["q"], "unit_price": e["med"]}
+                             for e in best[:n_examples]])
+        return out
+
     def classify_one(self, description, unit_raw, family_override="",
                      market="municipal"):
         """The parser's classification of one line (plus the user's family
@@ -1339,6 +1424,9 @@ class ProductionEngine:
         cov = E.line_coverage(dn, fam, unit)
         c["coverage_class"] = cov
         c["coverage_label"] = COVERAGE_LABELS.get(cov, cov) if cov else None
+        c["nc_hint"] = (self.nc_hint(description, unit, cov, market,
+                                     str(_dt.date.today().year))
+                        if cov else None)
         lc = E.lowconf_class(fam, unit, dn)
         c["lowconf_class"] = lc
         c["lowconf_label"] = LOWCONF_LABELS.get(lc) if lc else None
@@ -1719,6 +1807,11 @@ class ProductionEngine:
         lines = []
         for c, it, t in zip(cls, items, r["trace"]):
             lines.append(self._line(c, it, t, s50, market, esc))
+        for ln in lines:
+            if ln["status"] in ("not_covered", "not_covered_whole") and ln.get("coverage_class"):
+                ln["nc_hint"] = self.nc_hint(ln["description"], ln["unit"],
+                                             ln["coverage_class"], market,
+                                             to_year, target.get("date"))
         unc = [ln for ln in lines if ln["status"] == "not_covered"]
         not_covered = {
             "lines": [{"row_id": ln["row_id"], "item_no": ln["item_no"],
@@ -2417,6 +2510,7 @@ class ProductionEngine:
             self.require()
             idx = ReferenceIndex()
             idx.unit_evidence = UnitEvidence(idx.rows, idx.fk, self.panel.avail)
+            idx.nc_rows("", "")            # the not-covered lines' past prices
             with self._lock:
                 self.refs = idx
                 self.refs_state.update(ready=True, loading=False,

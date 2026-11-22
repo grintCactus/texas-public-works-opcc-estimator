@@ -1146,13 +1146,10 @@ function clsCell(l) {
   ]);
   const badges = [];
   // not covered: a reminder until you give a vendor quote, then just what it is
-  if (c.coverage_class) badges.push(l.quote > 0
-    ? el('span', { class: 'badge info', title: 'Not covered: your vendor quote is used for this line, '
-      + 'outside P50/P80.', text: 'not covered: ' + c.coverage_label + ' \u00b7 your quote ' + money(l.quote) })
-    : el('span', { class: 'badge unc',
-      title: 'Not covered: specialty item with almost no comparable bid history. It is not '
-        + 'priced and not in P50/P80 — enter a vendor quote under Project details.',
-      text: 'not covered: ' + c.coverage_label }));
+  if (c.coverage_class) badges.push(hintPop(l.quote > 0
+    ? el('span', { class: 'badge info', text: 'not covered: ' + c.coverage_label + ' \u00b7 your quote ' + money(l.quote) })
+    : el('span', { class: 'badge unc', text: 'not covered: ' + c.coverage_label }),
+    () => ncHintBox(c.nc_hint, c.coverage_label)));
   if (c.lowconf_class) badges.push(el('span', { class: 'badge lowc',
     title: 'Low confidence: lump sums like this vary widely between bidders; see the '
       + 'low-confidence panel in the results.', text: c.lowconf_label }));
@@ -2178,6 +2175,79 @@ function ncOpen(r) {
     && ncNumber(l) === null);
 }
 
+// A small box beside a badge, on hover or focus (a tap on a phone): one
+// box for the page, placed in the viewport so no table clips it (user,
+// 2026-11-21: past prices for a not-covered line in a box, not a line).
+let hintAnchor = null;
+function placeHint() {
+  const box = $('#hint-pop');
+  if (!box || box.hidden) return;
+  const r = hintAnchor && document.body.contains(hintAnchor) ? hintAnchor.getBoundingClientRect() : null;
+  if (!r || r.bottom < 0 || r.top > window.innerHeight) { box.hidden = true; hintAnchor = null; return; }
+  const w = Math.min(360, window.innerWidth - 24);
+  box.style.width = w + 'px';
+  box.style.left = Math.min(Math.max(12, r.left), window.innerWidth - w - 12) + 'px';
+  box.style.top = (r.bottom + 6) + 'px';
+  const h = box.getBoundingClientRect().height;
+  if (r.bottom + 6 + h > window.innerHeight - 8) box.style.top = Math.max(8, r.top - h - 6) + 'px';
+}
+function hintPop(anchor, build) {
+  anchor.classList.add('hashint');
+  anchor.setAttribute('tabindex', '0');
+  const show = () => {
+    let box = $('#hint-pop');
+    if (!box) { box = el('div', { id: 'hint-pop', role: 'tooltip' }); document.body.appendChild(box); }
+    box.innerHTML = '';
+    box.appendChild(build());
+    hintAnchor = anchor;
+    box.hidden = false;
+    placeHint();
+  };
+  const hide = () => {
+    if (hintAnchor !== anchor) return;
+    const box = $('#hint-pop');
+    if (box) box.hidden = true;
+    hintAnchor = null;
+  };
+  anchor.addEventListener('mouseenter', show);
+  anchor.addEventListener('mouseleave', hide);
+  anchor.addEventListener('focus', show);
+  anchor.addEventListener('blur', hide);
+  anchor.addEventListener('click', e => { e.stopPropagation(); show(); });
+  return anchor;
+}
+// the box follows its badge when the page scrolls, and goes when it leaves
+document.addEventListener('scroll', placeHint, true);
+window.addEventListener('resize', placeHint);
+// a tap elsewhere closes it (phones have no hover)
+document.addEventListener('click', e => {
+  if (hintAnchor && !hintAnchor.contains(e.target)) { const box = $('#hint-pop'); if (box) box.hidden = true; hintAnchor = null; }
+}, true);
+
+// What past public jobs paid for a line like a not-covered one: a rough idea
+// only, never in P50 / P80.
+function ncHintBox(h, label) {
+  const unit = (h && h.unit) || 'unit';
+  const kids = [el('div', { class: 'hp-title', text: 'Past public bids: ' + (label || 'this kind of item') })];
+  if (!h) {
+    kids.push(el('div', { text: 'Still loading the past bids; try again in a moment.' }));
+  } else if (!h.n_items) {
+    kids.push(el('div', { text: 'No past public job priced a line like this per ' + unit + '.' }));
+  } else {
+    const y = h.years ? (h.years[0] === h.years[1] ? h.years[0] : h.years[0] + '\u2013' + h.years[1]) : '';
+    kids.push(el('div', { text: h.n_items + ' line' + (h.n_items === 1 ? '' : 's') + ' in ' + h.n_jobs
+      + ' past job' + (h.n_jobs === 1 ? '' : 's') + (y ? ', bid ' + y : '') + (h.escalated ? ', in ' + h.to_year + ' dollars' : '') + ':' }));
+    kids.push(el('div', { class: 'hp-num', text: h.n_items >= 4
+      ? 'middle half ' + money(h.p25) + ' \u2013 ' + money(h.p75) + ' per ' + unit + ', median ' + money(h.median)
+      : money(h.low) + (h.high !== h.low ? ' \u2013 ' + money(h.high) : '') + ' per ' + unit }));
+    if (h.examples && h.examples.length) kids.push(el('ul', { class: 'hp-ex' }, h.examples.map(e => el('li', {
+      text: e.project + (e.year ? ' (' + String(e.year).slice(0, 4) + ')' : '') + ': \u201c' + e.item + '\u201d, '
+        + (isNum(e.quantity) ? qtyFmt(e.quantity) + ' ' + unit + ' at ' : '') + money(e.unit_price) + ' per ' + unit }))));
+  }
+  kids.push(el('div', { class: 'hp-foot', text: 'A rough idea only, not in P50 / P80: size and scope vary a lot. Get a vendor quote.' }));
+  return el('div', {}, kids);
+}
+
 // One number per not-covered line (user, 2026-11-21: "fill one, the other
 // follows"): the vendor quote under Project details, the line's amount cell
 // in the takeoff and your price on the worksheet are the same number, kept on
@@ -2531,7 +2601,9 @@ function renderNotCovered(r) {
       .map((h, k) => el('th', { class: k >= 3 && k !== 4 ? 'num' : '', text: h })))),
     el('tbody', {}, nc.lines.map(l => el('tr', {}, [
       el('td', { text: l.item_no }), el('td', { text: l.description }),
-      el('td', { text: l.class_label }), el('td', { class: 'num', text: qtyFmt(l.quantity) }),
+      el('td', {}, hintPop(el('span', { text: l.class_label }),
+        () => ncHintBox((byId.get(l.row_id) || {}).nc_hint, l.class_label))),
+      el('td', { class: 'num', text: qtyFmt(l.quantity) }),
       el('td', { text: l.unit }),
       // the line's one number (setNcQuote), as it stands now
       el('td', { class: 'num', text: ncNumber(byId.get(l.row_id)) !== null
@@ -3265,6 +3337,10 @@ function resultRow(l, judg, isOpen) {
   if (judg.length) tags.push(el('span', { class: 'badge judg', title: 'The model is weak here: ' + judg.join('; '),
     text: 'needs your judgment: ' + judg.join(', ') }));
   if (l.status === 'owner_set') tags.push(el('span', { class: 'badge allow', text: 'owner-set' }));
+  if ((l.status === 'not_covered' || l.status === 'not_covered_whole') && l.coverage_class) {
+    tags.push(hintPop(el('span', { class: 'badge unc', text: 'not covered: ' + (l.coverage_label || 'specialty') }),
+      () => ncHintBox(l.nc_hint, l.coverage_label)));
+  }
   tr.appendChild(el('td', { class: 'dim nowrap' }, [chev, document.createTextNode(l.item_no || '')]));
   tr.appendChild(el('td', {}, [
     el('span', { class: 'ldesc', text: l.description }),

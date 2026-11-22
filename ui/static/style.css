@@ -883,3 +883,17 @@ select.cpct { width: 100%; padding: 3px 6px; font-size: 12.5px; }
 .cguide .cnow { margin-top: 5px; color: var(--ink); font-weight: 600; }
 .cguide .ctab { margin-top: 6px; }
 .cguide .ctab td, .cguide .ctab th { padding: 3px 10px 3px 0; }
+
+/* the small box beside a "not covered" badge: past public bids, a rough idea */
+.hashint { cursor: help; }
+span.hashint:not(.badge) { text-decoration: underline dotted; text-underline-offset: 3px; }
+.hashint:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+#hint-pop { position: fixed; z-index: 1000; padding: 10px 12px; background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); font-size: 12.5px;
+  line-height: 1.45; pointer-events: none; }
+#hint-pop[hidden] { display: none; }
+#hint-pop .hp-title { font-weight: 650; margin-bottom: 4px; }
+#hint-pop .hp-num { font-family: var(--mono); margin: 2px 0 0; }
+#hint-pop ul.hp-ex { margin: 6px 0 0 16px; padding: 0; color: var(--ink-dim); }
+#hint-pop ul.hp-ex li { margin: 2px 0; }
+#hint-pop .hp-foot { margin-top: 7px; color: var(--ink-faint); font-size: 12px; }

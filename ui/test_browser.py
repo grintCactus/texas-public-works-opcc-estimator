@@ -229,6 +229,29 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(page.evaluate("k => wsJudgment(S.result.lines.find(l => l.row_id === k))", k), [])
                 self.assertEqual(errors, [])
 
+    def test_not_covered_shows_past_bids_on_hover(self):
+        """2026-11-21 (user): the past public bids for a not-covered line
+        show in a small box when the pointer is on its "not covered" badge,
+        not as a line of their own; the line does not open."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                k = page.evaluate("() => S.result.lines.find(l => l.status === 'not_covered').row_id")
+                badge = 'tr[data-line="%s"] .badge.unc.hashint' % k
+                self.assertFalse(page.is_visible("#hint-pop"))
+                page.hover(badge)
+                page.wait_for_selector("#hint-pop:not([hidden])")
+                text = page.inner_text("#hint-pop")
+                self.assertIn("Past public bids", text)
+                self.assertIn("not in P50 / P80", text)
+                self.assertIn("per EA", text)
+                page.mouse.move(5, 5)
+                self.assertFalse(page.is_visible("#hint-pop"))
+                page.click(badge)                    # a tap: the box, no toggle
+                self.assertTrue(page.is_visible("#hint-pop"))
+                self.assertEqual(self.expanded(page, k), "false")
+                self.assertEqual(errors, [])
+
     def test_a_not_covered_line_has_one_number(self):
         """2026-11-21 (user): the vendor quote under Project details, the
         line's amount cell in the takeoff and its price on the worksheet are
