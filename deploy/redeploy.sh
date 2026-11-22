@@ -18,7 +18,7 @@
 #
 # Before this: deploy/tools/assemble_space.py and deploy/tools/check_package.sh.
 set -euo pipefail
-: "${DEPLOY_HOST:?set DEPLOY_HOST to the server's public IP}"
+: "${DEPLOY_HOST:?set DEPLOY_HOST to the public IP of the server}"
 : "${DEPLOY_KEY:?set DEPLOY_KEY to the SSH private key file}"
 U="${DEPLOY_USER:-ubuntu}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
