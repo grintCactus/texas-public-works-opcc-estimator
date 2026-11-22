@@ -3334,11 +3334,17 @@ function resultRow(l, judg, isOpen) {
     toggle();
   });
   const tags = [];
-  if (judg.length) tags.push(el('span', { class: 'badge judg', title: 'The model is weak here: ' + judg.join('; '),
-    text: 'needs your judgment: ' + judg.join(', ') }));
+  // a not-covered line has one badge of its own (with the past bids on
+  // hover); the judgment badge does not say it again
+  const ncBadge = (l.status === 'not_covered' || l.status === 'not_covered_whole') && l.coverage_class;
+  const shown = ncBadge ? judg.filter(j => j !== 'not covered') : judg;
+  if (shown.length) tags.push(el('span', { class: 'badge judg', title: 'The model is weak here: ' + judg.join('; '),
+    text: 'needs your judgment: ' + shown.join(', ') }));
   if (l.status === 'owner_set') tags.push(el('span', { class: 'badge allow', text: 'owner-set' }));
-  if ((l.status === 'not_covered' || l.status === 'not_covered_whole') && l.coverage_class) {
-    tags.push(hintPop(el('span', { class: 'badge unc', text: 'not covered: ' + (l.coverage_label || 'specialty') }),
+  if (ncBadge) {
+    const has = ncNumber(l) !== null;
+    tags.push(hintPop(el('span', { class: 'badge ' + (has ? 'info' : 'unc'),
+      text: has ? 'not covered \u00b7 your number in' : 'not covered: needs a quote' }),
       () => ncHintBox(l.nc_hint, l.coverage_label)));
   }
   tr.appendChild(el('td', { class: 'dim nowrap' }, [chev, document.createTextNode(l.item_no || '')]));

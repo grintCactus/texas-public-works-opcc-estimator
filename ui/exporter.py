@@ -345,78 +345,104 @@ def xlsx_available() -> bool:
 # Quantity / an amount column read for owner-set allowances only) and the
 # notes above the header are skipped, in a file and in a paste alike.
 
-TEMPLATE_HEADER = ["Item No.", "Description", "Unit", "Quantity",
-                   "Owner-set amount ($)"]
+#: The blank takeoff is laid out like the OPCC it becomes (user, 2026-11-21:
+#: "the same format as the output, just not filled in"): the same title and
+#: project block, the same columns. Fill in the first four; Unit Cost and
+#: Total Cost stay blank except an allowance's printed amount (Total Cost).
+TEMPLATE_TITLE = "OPINION OF PROBABLE CONSTRUCTION COSTS"
+TEMPLATE_HEADER = ["Item No.", "Description", "Units", "Quantity",
+                   "Unit Cost", "Total Cost"]
 TEMPLATE_NOTES = [
-    "Takeoff for the bid estimator",
-    "One pay item per row: the item number, the description as the bid form "
-    "words it, the unit and the quantity.",
-    "Owner-set amount: only for an allowance the bid form prints a dollar "
-    "amount for. Leave a contingency blank and pick its percentage on the "
-    "page.",
-    "Then copy the header row and your rows into the estimator's paste box, "
-    "or upload this file.",
+    "How to fill this in",
+    "One pay item per row: item no., the description as the bid form words "
+    "it, units and quantity.",
+    "Leave Unit Cost and Total Cost blank: the estimator prices every line.",
+    "Only for an allowance the bid form prints a dollar amount for, put that "
+    "amount in Total Cost.",
+    "Leave the contingency out: you pick yours on the page.",
+    "Then upload this file, or copy the header row and your rows into the "
+    "paste box.",
 ]
-#: The units offered in the Unit column's list (others can still be typed:
+#: The units offered in the Units column's list (others can still be typed:
 #: the list only warns).
 TEMPLATE_UNITS = ["LS", "EA", "LF", "SY", "SF", "CY", "CF", "TON", "GAL",
                   "AC", "MO", "DAY", "HR", "STA", "VF", "LB", "MI", "ALLOW"]
 TEMPLATE_ROWS = 300
+TEMPLATE_HEAD_ROW = 8
 
 
 def takeoff_template_xlsx() -> bytes:
-    """The blank takeoff workbook: a title, short notes, a header row and
-    TEMPLATE_ROWS bordered rows with a unit list and number checks, laid out
-    as a form (gridlines off, notes wrapped, the header kept on screen)."""
+    """The blank takeoff workbook, in the OPCC's own layout: the title, the
+    project block (date, prepared by, project no.), ESTIMATED QUANTITIES with
+    the OPCC's columns and TEMPLATE_ROWS blank lines in a thin grid, a unit
+    list and number checks; how to fill it in sits beside it (column H),
+    outside the printed form and above the header the reader looks for."""
     import openpyxl
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.styles import Alignment, Border, Font, Side
     from openpyxl.worksheet.datavalidation import DataValidation
 
+    def F(size=10, bold=False, color=None, italic=False):
+        return Font(name="Arial", size=size, bold=bold, color=color, italic=italic)
+    thin = Side(style="thin", color="000000")
+    med = Side(style="medium", color="000000")
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Takeoff"
     ws.sheet_view.showGridLines = False
-    for col, width in zip("ABCDE", (11, 60, 10, 13, 22)):
+    for col, width in zip("ABCDEFGH", (7, 62, 8, 11, 12, 14, 3, 90)):
         ws.column_dimensions[col].width = width
-    from worksheet import text_lines
-    ws.merge_cells("A1:E1")
-    ws["A1"] = TEMPLATE_NOTES[0]
-    # Arial throughout: Calibri, the default, is missing on a Mac without
-    # Office, where previews fall back to a serif
-    ws["A1"].font = Font(name="Arial", bold=True, size=14)
+    ws.merge_cells("A1:F1")
+    ws["A1"] = TEMPLATE_TITLE
+    ws["A1"].font = F(14, True)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 24
-    for i, text in enumerate(TEMPLATE_NOTES[1:], start=2):
-        ws.merge_cells(start_row=i, start_column=1, end_row=i, end_column=5)
-        c = ws.cell(row=i, column=1, value=text)
-        c.font = Font(name="Arial", size=10, color="4B5563")
-        c.alignment = Alignment(wrap_text=True, vertical="top")
-        ws.row_dimensions[i].height = 12.75 * text_lines(text, 11 + 60 + 10 + 13 + 22) + 4
-    head = len(TEMPLATE_NOTES) + 2            # one blank row, then the header
+    ws.merge_cells("A3:C5")
+    ws["A3"] = "(project name)"
+    ws["A3"].font = F(13, True, color="A6A6A6", italic=True)
+    ws["A3"].alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for r, lab in ((3, "DATE:"), (4, "PREPARED BY:"), (5, "PROJECT NO.:")):
+        ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
+        ws.cell(row=r, column=4, value=lab).font = F(10, True)
+    ws.merge_cells("A7:C7")
+    ws["A7"] = "ESTIMATED QUANTITIES"
+    ws["A7"].font = F(10, True)
+    head = TEMPLATE_HEAD_ROW
     first, last = head + 1, head + TEMPLATE_ROWS
-    thin = Side(style="thin", color="BFBFBF")
-    box = Border(left=thin, right=thin, top=thin, bottom=thin)
     for j, name in enumerate(TEMPLATE_HEADER, start=1):
         c = ws.cell(row=head, column=j, value=name)
-        c.font = Font(name="Arial", size=10, bold=True)
-        c.fill = PatternFill("solid", fgColor="D9D9D9")
-        c.border = box
-        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    ws.row_dimensions[head].height = 20
-    for r in range(first, last + 1):
-        for j in range(1, 6):
+        c.font = F(10, True)
+        c.alignment = Alignment(horizontal="center", vertical="bottom")
+    box = Border(left=thin, right=thin, top=thin, bottom=thin)
+    for r in range(head, last + 1):
+        for j in range(1, 7):
             c = ws.cell(row=r, column=j)
             c.border = box
-            c.font = Font(name="Arial", size=10)
-            if j == 2:
-                c.alignment = Alignment(wrap_text=True, vertical="top")
-            elif j in (1, 3):
-                c.alignment = Alignment(horizontal="center", vertical="top")
-        ws.cell(row=r, column=5).number_format = '"$"#,##0.00'
+            if r > head:
+                c.font = F(10)
+                if j == 2:
+                    c.alignment = Alignment(wrap_text=True, vertical="top")
+                elif j in (1, 3):
+                    c.alignment = Alignment(horizontal="center", vertical="top")
+                elif j >= 5:
+                    c.number_format = '"$"#,##0.00'
+    # the title's rule and a thin frame round the printed form (A-F)
+    for j in range(1, 7):
+        c = ws.cell(row=1, column=j)
+        c.border = Border(left=thin if j == 1 else None, right=thin if j == 6 else None,
+                          top=thin, bottom=med)
+    for r in range(2, head):
+        ws.cell(row=r, column=1).border = Border(left=thin)
+        ws.cell(row=r, column=6).border = Border(right=thin)
+    # how to fill it in: beside the form, one line each (no wrap: the title
+    # and project rows keep their height)
+    for k, text in enumerate(TEMPLATE_NOTES, start=1):
+        c = ws.cell(row=k, column=8, value=text)
+        c.font = F(10, k == 1, color=None if k == 1 else "595959")
     unit = DataValidation(
         type="list", formula1='"%s"' % ",".join(TEMPLATE_UNITS),
         allow_blank=True, showErrorMessage=True, errorStyle="warning",
-        errorTitle="Unit", error="Not one of the usual units. Keep it if "
-        "the bid form uses it.", showInputMessage=True, promptTitle="Unit",
+        errorTitle="Units", error="Not one of the usual units. Keep it if "
+        "the bid form uses it.", showInputMessage=True, promptTitle="Units",
         prompt="As on the bid form: LS, EA, LF, SY, CY, TON ...")
     qty = DataValidation(
         type="decimal", operator="greaterThanOrEqual", formula1="0",
@@ -426,14 +452,16 @@ def takeoff_template_xlsx() -> bytes:
     amt = DataValidation(
         type="decimal", operator="greaterThanOrEqual", formula1="0",
         allow_blank=True, showErrorMessage=True, errorStyle="warning",
-        errorTitle="Owner-set amount", error="An amount in dollars, only "
-        "for an allowance the bid form prints.")
-    for dv, col in ((unit, "C"), (qty, "D"), (amt, "E")):
+        errorTitle="Amount", error="Dollars, only for an allowance the bid "
+        "form prints an amount for.")
+    for dv, rng in ((unit, "C%d:C%d" % (first, last)), (qty, "D%d:D%d" % (first, last)),
+                    (amt, "E%d:F%d" % (first, last))):
         ws.add_data_validation(dv)
-        dv.add("%s%d:%s%d" % (col, first, col, last))
+        dv.add(rng)
     ws.freeze_panes = "A%d" % first
     ws.print_title_rows = "%d:%d" % (head, head)
-    ws.page_setup.orientation = "landscape"
+    ws.print_area = "A1:F%d" % last
+    ws.page_setup.orientation = "portrait"
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
