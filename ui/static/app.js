@@ -3228,6 +3228,9 @@ function wsDoc() {
     worksheet: { contingency_pct: S.ws.contingency, project_name: S.ws.name || '',
       prepared_by: S.ws.prepared_by || '', project_no: S.ws.project_no || '', round: S.ws.round || 'off',
       basis: S.ws.basis || 'p80', basis_multiplier: wsMult(),
+      // the user's own date for the OPCC (the server's clock is UTC)
+      today: (d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-'
+        + String(d.getDate()).padStart(2, '0'))(new Date()),
       lines: (r.lines || []).map(l => {
         const w = wsLine(l);
         const so = wsSource(l, w);

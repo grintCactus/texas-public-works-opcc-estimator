@@ -278,6 +278,17 @@ INTERIM_LINES = ("INTERIM REVIEW ONLY",
                  "TBPE Firm Registration No. " + "_" * 12)
 
 
+def _today(ws: dict) -> "_dt.date":
+    """The OPCC's date: the user's own day, sent by the page (the server runs
+    on UTC, a day ahead of Texas every evening); the server's date otherwise."""
+    v = str((ws or {}).get("today") or "")[:10]
+    try:
+        d = _dt.date.fromisoformat(v)
+    except ValueError:
+        return _dt.date.today()
+    return d if 2000 <= d.year <= 2100 else _dt.date.today()
+
+
 def _txt(v, n=300) -> str:
     return ("" if v is None else str(v))[:n]
 
@@ -439,7 +450,7 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     if n_name > 2:                           # three rows hold two lines at 16 pt
         for r in (3, 4, 5):
             sh.row_dimensions[r].height = round(n_name * 19.5 / 3 + 1, 1)
-    for r, lab, val in ((3, "DATE:", _dt.date.today()),
+    for r, lab, val in ((3, "DATE:", _today(ws)),
                         (4, "PREPARED BY:", _txt(ws.get("prepared_by"), 60)),
                         (5, "PROJECT NO.:", _txt(ws.get("project_no"), 60))):
         sh.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
@@ -648,7 +659,7 @@ def _summary_page(sh, result: dict, ws: dict, t: dict):
     kv("Work type", inp.get("work_type_label") or "")
     kv("Market", inp.get("market_label") or inp.get("market") or "")
     kv("Bid date", inp.get("bid_date") or "")
-    kv("Prepared", _dt.date.today(), "mm/dd/yyyy")
+    kv("Prepared", _today(ws), "mm/dd/yyyy")
     kv("Prepared by", _txt(ws.get("prepared_by"), 60))
     kv("Project no.", _txt(ws.get("project_no"), 60))
     m = _f(ws.get("basis_multiplier"))
@@ -873,7 +884,7 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
         ["Work type", inp.get("work_type_label") or ""],
         ["Market", inp.get("market_label") or inp.get("market") or ""],
         ["Bid date", inp.get("bid_date") or ""],
-        ["Prepared", _dt.date.today().isoformat()],
+        ["Prepared", _today(ws).isoformat()],
         [],
         # subtotal, then the contingency below it, then the total
         ["Subtotal (your line amounts)", _m(t["subtotal"])],
@@ -1083,7 +1094,7 @@ def to_pdf(result, ws, refs=None) -> bytes:
     pdf.set_xy(x0 + 6, y)
     pdf.multi_cell(W * 0.56, 19, _latin1(_txt(ws.get("project_name"), 160)) or " ", align="C",
                    max_line_height=19)
-    labels = (("DATE:", _dt.date.today().strftime("%m/%d/%Y")),
+    labels = (("DATE:", _today(ws).strftime("%m/%d/%Y")),
               ("PREPARED BY:", _txt(ws.get("prepared_by"), 60)),
               ("PROJECT NO.:", _txt(ws.get("project_no"), 60)))
     for k, (lab, val) in enumerate(labels):
