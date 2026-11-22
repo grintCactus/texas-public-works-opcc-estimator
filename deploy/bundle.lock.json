@@ -1,0 +1,12 @@
+{
+ "about": "The public data bundle this checkout uses. Read by deploy/tools/fetch_bundle.py; written by deploy/tools/release_bundle.py.",
+ "tag": "bundle-2026-11-21",
+ "asset": "opcc-public-bundle-2026-11-21.tar.gz",
+ "url": "https://github.com/grintCactus/texas-public-works-opcc-estimator/releases/download/bundle-2026-11-21/opcc-public-bundle-2026-11-21.tar.gz",
+ "sha256": "74f059f1e3e77fc0be8b460ade67dfe79cf5b7b7f46bdbac452e66f4ef3fb208",
+ "bytes": 20560866,
+ "built": "2026-11-21 20:08:28 PST",
+ "parser_version": "2026-11-21.34b-r20b-families",
+ "tables": 18,
+ "unpacked_bytes": 353127044
+}

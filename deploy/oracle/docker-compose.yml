@@ -1,0 +1,73 @@
+# Texas Public Works OPCC Estimator on an Oracle Cloud Always Free VM.
+#
+#   app    the estimator, built from ../space (the same image as the Hugging
+#          Face Space), reachable only inside this compose network;
+#   caddy  HTTPS in front: gets and renews a Let's Encrypt certificate for
+#          SITE_HOST (e.g. 203-0-113-10.sslip.io) and redirects HTTP to HTTPS.
+#
+# Settings come from .env next to this file (setup.sh writes it):
+#   SITE_HOST=<public IP with dashes>.sslip.io
+#   DEMO_ACCESS_CODE=          # optional; empty = open site
+#
+#   docker compose up -d --build        # setup.sh runs this
+#   docker compose logs -f app          # the server log
+name: opcc
+
+services:
+  app:
+    build:
+      context: ../space
+    image: opcc-estimator:local
+    init: true
+    restart: unless-stopped
+    environment:
+      BIDEST_PUBLIC: "1"
+      PORT: "7860"
+      # one reverse proxy (Caddy) in front: the client address is the last
+      # X-Forwarded-For entry, which Caddy sets
+      BIDEST_TRUSTED_PROXIES: "1"
+      # uploads are copied to RAM only (the tmpfs below), deleted after each
+      # request
+      BIDEST_TMPDIR: /tmp
+      DEMO_ACCESS_CODE: ${DEMO_ACCESS_CODE:-}
+    expose:
+      - "7860"
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 4g
+    pids_limit: 512
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_HOST: ${SITE_HOST:?set SITE_HOST in .env, e.g. 203-0-113-10.sslip.io}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:

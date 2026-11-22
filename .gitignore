@@ -1,6 +1,6 @@
-# Python environment and local tool binaries (rebuild with requirements.txt / tools/README.txt)
+# Python environment and local tool binaries (rebuild with requirements.txt)
 .venv/
-tools/
+/tools/
 __pycache__/
 *.pyc
 .DS_Store
@@ -25,6 +25,8 @@ reports/measurements/company_*
 
 # Files uploaded through the UI (include company files)
 ui/.inbox/
+# Saved worksheets and remembered corrections of this machine
+ui/.local/
 # UI caches (full copies of data tables, include company rows)
 ui/.cache/
 # Run logs (list every input file, including company files)
@@ -34,3 +36,10 @@ reports/measurements/*.log
 docs/HANDBOOK_internal.md
 # Record of a locked-test-set run (kept local)
 reports/measurements/holdout_confirm_*
+
+# Deploy: built artefacts (the assembled package, the bundle cut from a working copy) and run records
+deploy/space/
+deploy/bundle/
+deploy/tools/trace_production.json
+deploy/tools/assemble_report.json
+deploy/tools/scrub_parse_bidtabs.json

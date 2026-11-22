@@ -1,0 +1,11 @@
+# Only src/, ui/, data/ and requirements.txt go into the image.
+.git
+.gitattributes
+README.md
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+**/test_*.py
+ui/.cache
+ui/.inbox
+ui/.local

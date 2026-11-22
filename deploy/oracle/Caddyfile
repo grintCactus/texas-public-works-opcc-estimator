@@ -1,0 +1,21 @@
+# HTTPS for the estimator. {$SITE_HOST} comes from .env through
+# docker-compose.yml (e.g. 203-0-113-10.sslip.io, which resolves to
+# 203.0.113.10). Caddy gets the certificate from Let's Encrypt on first
+# start, renews it, and redirects http:// to https://.
+{$SITE_HOST} {
+	encode zstd gzip
+
+	# the app refuses more than 25 MB itself; stop larger bodies here
+	request_body {
+		max_size 26MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# Caddy sets X-Forwarded-For to the client address (and ignores one a
+	# client sends); the app reads it with BIDEST_TRUSTED_PROXIES=1
+	reverse_proxy app:7860
+}
