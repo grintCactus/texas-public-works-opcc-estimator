@@ -142,6 +142,30 @@ except Exception as e:  # noqa: BLE001
         return ""
 
 
+# An amount per 100 linear feet is not a per-foot price. Preserve the printed
+# unit at intake; build_items converts the quantity for the estimator.
+_GROUPED_LINEAR_UNIT = re.compile(
+    r"^(?:per\s+)?(\d+(?:[.,]\d+)?)\s*(?:l\.?\s*f\.?|ft\.?|linear\s+(?:feet|foot))$", re.I)
+
+
+def takeoff_unit(value):
+    raw = " ".join(str(value or "").split())
+    match = _GROUPED_LINEAR_UNIT.fullmatch(raw)
+    if match:
+        count = match.group(1)
+        if re.fullmatch(r"1(?:\.0+)?", count):
+            return "LF"
+        if re.fullmatch(r"100(?:\.0+)?", count):
+            return "100 LF"
+        return raw.upper()
+    return norm_unit(raw)
+
+
+def unresolved_linear_unit(value):
+    return bool(_GROUPED_LINEAR_UNIT.fullmatch(str(value or "").strip())
+                and takeoff_unit(value) not in ("LF", "100 LF"))
+
+
 def classify_line(description, unit_raw):
     """One takeoff line, classified by the parser's own per-line steps.
 
@@ -165,7 +189,8 @@ def classify_line(description, unit_raw):
     dn = norm_desc(desc)
     fam = item_family(dn)
     size_in = extract_size_in(dn)
-    unit = norm_unit(raw)
+    printed_unit = takeoff_unit(raw)
+    unit = "LF" if printed_unit == "100 LF" else printed_unit
     if raw and unit not in KNOWN_UNITS:
         u2 = unit_from_description(raw, desc)
         if u2:

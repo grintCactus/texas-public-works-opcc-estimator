@@ -2093,7 +2093,7 @@ function renderQuotesInto(box) {
     el('div', { class: 'qdesc' }, [
       el('div', { text: (l.item_no ? l.item_no + '  ' : '') + l.description }),
       el('div', { class: 'dim', text: l.cls.coverage_label + ' · ' + qtyFmt(l.quantity)
-        + ' ' + (l.cls.unit || '') }),
+        + ' ' + (l.cls.bid_form_unit || l.cls.unit || '') }),
     ]),
     el('input', { type: 'text', class: 'num', placeholder: 'quote $',
       value: l.quote > 0 ? qtyFmt(l.quote) : '', 'data-fk': focusKey('q', l.row_id),
@@ -2146,7 +2146,7 @@ function renderOwnerSetInto(box) {
         // next to it says the share)
         el('div', { class: 'dim', text: cont ? 'Contingency' + (l.amount > 0 ? note
           : l.amount_pct > 0 ? ' · worked out when you estimate' : note)
-          : qtyFmt(l.quantity) + ' ' + (l.cls.unit || '') + note }),
+          : qtyFmt(l.quantity) + ' ' + (l.cls.bid_form_unit || l.cls.unit || '') + note }),
       ]),
       cont ? contingencyControl(l, 'o') : el('input', { type: 'text', class: 'num', placeholder: 'amount $',
         title: 'The owner\u2019s amount from the bid form, or a share of the subtotal such as "10%"',
@@ -2697,7 +2697,8 @@ function historySummary(hp) {
   if (!refs.length) return '';
   return refs.length + ' recent project' + (refs.length === 1 ? '' : 's')
     + (availableHistory(hp) ? (hp.target_year ? ' · adjusted to ' + hp.target_year + ' prices' : '')
-      : refs.length < 3 ? ' · 3 required' : ' · price adjustment unavailable');
+      : hp.status === 'engineer_review' ? ' · engineer review'
+        : refs.length < 3 ? ' · 3 required' : ' · price adjustment unavailable');
 }
 function referenceRange(l) {
   const cell = el('td', { class: 'num money ref-range' });
@@ -3373,6 +3374,9 @@ function contingencyRow(l) {
   tr.appendChild(el('td', { class: 'dim nowrap', text: l.item_no || '' }));
   tr.appendChild(el('td', { class: 'desccell' }, [
     el('span', { class: 'ldesc', text: l.description }),
+    l.bid_form_unit ? el('div', { class: 'dim small',
+      text: 'Bid form: ' + qtyFmt(l.bid_form_quantity) + ' × ' + l.bid_form_unit
+        + ' = ' + qtyFmt(l.quantity) + ' LF. Worksheet prices are per LF.' }) : null,
     el('div', { class: 'dim small', text: what + ' \u00b7 ' + (sh ? sh.pct + '% of the subtotal'
       : 'the owner\u2019s fixed amount') }),
   ]));
@@ -3439,6 +3443,9 @@ function resultRow(l, judg, isOpen) {
   tr.appendChild(el('td', { class: 'dim nowrap' }, [chev, document.createTextNode(l.item_no || '')]));
   tr.appendChild(el('td', { class: 'desccell' }, [
     el('span', { class: 'ldesc', text: l.description }),
+    l.bid_form_unit ? el('div', { class: 'dim small',
+      text: 'Bid form: ' + qtyFmt(l.bid_form_quantity) + ' × ' + l.bid_form_unit
+        + ' = ' + qtyFmt(l.quantity) + ' LF. Worksheet prices are per LF.' }) : null,
     el('div', { class: 'dim small', text: l.pricing_mode === 'engineer'
       ? 'New item / Other · Enter your unit price; the model price is a generic reference only.'
       : l.family_label + (l.size_bucket ? ' · ' + l.size_bucket : '')

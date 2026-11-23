@@ -84,6 +84,7 @@ UNIT_PRICE_HEADERS = re.compile(
 
 #: Units we recognise. Anything else is kept verbatim and flagged.
 KNOWN_UNITS = {
+    "100 LF",
     "LS", "LF", "SY", "SF", "CY", "CF", "EA", "MO", "DAY", "HR", "TON", "LB",
     "GAL", "AC", "STA", "ALLOW", "ALW", "LOT", "VF", "HD", "CYC", "MI", "TGL",
     "MOS", "WEEK", "WK", "DAYS", "SET", "SETS", "TEST", "TESTS", "PAIR",
@@ -206,6 +207,9 @@ def _cells_by_content(cells):
     unit_i = desc_i = -1
     for i in nz:                                    # "1,745 SY" in one cell
         q2, u2 = _split_qty_unit(cs[i])
+        if upstream.takeoff_unit(cs[i]) == "100 LF" and any(
+                j != i and j != nz[0] and _looks_numeric(cs[j]) for j in nz):
+            continue
         if q2 is not None and not _looks_numeric(cs[i]):
             qty, unit, unit_i = q2, u2, i
             used.add(i)
@@ -213,7 +217,7 @@ def _cells_by_content(cells):
     if not unit:
         for i in reversed(nz):
             if _unit_score(cs[i]):
-                unit, unit_i = upstream.norm_unit(cs[i]).upper(), i
+                unit, unit_i = upstream.takeoff_unit(cs[i]).upper(), i
                 used.add(i)
                 break
     nums = [i for i in nz if i not in used and _num(cs[i]) is not None]
@@ -483,7 +487,7 @@ def _unit_score(v) -> bool:
     s = _txt(v)
     if not s or len(s) > 22:
         return False
-    u = upstream.norm_unit(s).upper()
+    u = upstream.takeoff_unit(s).upper()
     return u in KNOWN_UNITS
 
 
@@ -731,7 +735,8 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
             # a lone cell of text outside the description column (a heading,
             # a note, garbage): judged below, never dropped without a word
             desc = filled[0]
-        if qty is None or not unit:
+        if (qty is None or not unit) and not (ui is not None and
+                upstream.takeoff_unit(cell(ui)) == "100 LF" and qi is not None):
             # quantity and unit in one cell: "1,745 SY", "1745SY"
             for j in ([qi] if qi is not None else []) + ([ui] if ui is not None else []):
                 q2, u2 = _split_qty_unit(cell(j))
@@ -777,7 +782,7 @@ def _lines_from_grid(grid: Sequence[Sequence[str]], source: str,
         line = TakeoffLine(
             row_id="",
             description=desc,
-            unit=upstream.norm_unit(unit).upper() if unit else "",
+            unit=upstream.takeoff_unit(unit).upper() if unit else "",
             quantity=qty,
             item_no=item_no,
             confidence="low" if issues else "ok",
@@ -1062,12 +1067,18 @@ def _parse_free_line(raw: str) -> Optional[TakeoffLine]:
         else:
             split_parts.append(p)
     parts = [p for p in split_parts if p]
+    for i in range(1, len(parts) - 1):
+        if (upstream.takeoff_unit(parts[i] + " " + parts[i + 1]) == "100 LF"
+                and (i > 1 and _looks_numeric(parts[i - 1])
+                     or i + 2 < len(parts) and _looks_numeric(parts[i + 2]))):
+            parts[i:i + 2] = ["100 LF"]
+            break
 
     # a unit written in two words ("Lump Sum", "Sq. Yd.", "Cubic Yard",
     # "Linear Feet") -> one part, so it is read as the unit instead of
     # being left in the description
     def _nu(x):
-        return upstream.norm_unit(x).upper()
+        return upstream.takeoff_unit(x).upper()
 
     merged = []
     for p in parts:
@@ -1090,7 +1101,7 @@ def _parse_free_line(raw: str) -> Optional[TakeoffLine]:
     unit, unit_i = "", -1
     for i in range(len(parts) - 1, -1, -1):
         if _unit_score(parts[i]):
-            unit, unit_i = upstream.norm_unit(parts[i]).upper(), i
+            unit, unit_i = upstream.takeoff_unit(parts[i]).upper(), i
             break
 
     qty, qty_i = None, -1
@@ -1160,7 +1171,7 @@ def _split_qty_unit(s):
     u = m.group(2).strip()
     if q is None or not u or not _unit_score(u):
         return None, ""
-    return q, upstream.norm_unit(u).upper()
+    return q, upstream.takeoff_unit(u).upper()
 
 
 def _money_like(p):
@@ -1211,7 +1222,9 @@ def _pdf_bidtab(path, name):
     out = TakeoffParse(source=name, method="pdf/bid-tab parser")
     seen = set()
     for r in recs or []:
-        k = (r.get("item_no"), r.get("description"), r.get("unit"),
+        printed = upstream.takeoff_unit(r.get("unit_raw") or "")
+        unit = printed if printed == "100 LF" or upstream.unresolved_linear_unit(printed) else r.get("unit")
+        k = (r.get("item_no"), r.get("description"), unit,
              r.get("quantity"))
         if k in seen or not r.get("description"):
             continue
@@ -1219,12 +1232,12 @@ def _pdf_bidtab(path, name):
         issues = []
         if r.get("quantity") is None:
             issues.append("no quantity found")
-        if not r.get("unit"):
+        if not unit:
             issues.append("no unit found")
         out.lines.append(TakeoffLine(
             row_id="r%d" % (len(out.lines) + 1),
             description=_txt(r.get("description")),
-            unit=_txt(r.get("unit")), quantity=r.get("quantity"),
+            unit=_txt(unit), quantity=r.get("quantity"),
             item_no=_txt(r.get("item_no")),
             confidence="low" if issues else "ok", issues=issues))
     return out if out.lines else None

@@ -861,7 +861,7 @@ def to_parse(rows: List[dict], name: str, method: str, n_pages: int,
             continue
         hard, soft = [], []
         unit = r["unit"]
-        u = upstream.norm_unit(unit).upper() if unit else ""
+        u = upstream.takeoff_unit(unit).upper() if unit else ""
         if not unit:
             hard.append("no unit found")
         elif u not in takeoff.KNOWN_UNITS:
@@ -919,8 +919,8 @@ def _cross_check(p: takeoff.TakeoffParse, local) -> None:
             continue
         dq = (m.quantity is not None and l.quantity is not None and
               abs(m.quantity - l.quantity) > 0.005 * max(abs(l.quantity), 1e-9))
-        du = bool(m.unit and l.unit and upstream.norm_unit(m.unit).upper()
-                  != upstream.norm_unit(l.unit).upper())
+        du = bool(m.unit and l.unit and upstream.takeoff_unit(m.unit).upper()
+                  != upstream.takeoff_unit(l.unit).upper())
         if dq or du:
             differ += 1
             l.issues.append("the local reader read %s %s here"

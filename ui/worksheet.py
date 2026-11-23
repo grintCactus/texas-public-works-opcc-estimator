@@ -24,6 +24,7 @@ import json
 import os
 import re
 import tempfile
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 from typing import Any, Dict, List, Optional
 
 from exporter import P70_TEXT, recommended_basis
@@ -404,6 +405,16 @@ def _opcc_unit(l: dict, w: dict, a: Optional[float]) -> Optional[float]:
     return _f(w.get("your_unit"))
 
 
+def _printed_pay_line(line, worksheet_line, amount):
+    unit = line.get("unit")
+    quantity = _f(line.get("quantity"))
+    price = _opcc_unit(line, worksheet_line, amount)
+    if (line.get("bid_form_unit") == "100 LF" and unit == "LF"
+            and quantity is not None):
+        return "100 LF", quantity / 100, price * 100 if price is not None else None
+    return unit, quantity, price
+
+
 def _below_label(l: dict) -> str:
     pct = share_pct(l)
     return "%s (%s)" % (_txt(l.get("description"), 200) or "Contingency",
@@ -427,10 +438,10 @@ def opcc_rows(t: dict, ws: dict) -> list:
     """The OPCC as values (the CSV's first block)."""
     rows = []
     for l, w, a in t["rows"]:
-        q = _f(l.get("quantity"))
+        pay_unit, q, price = _printed_pay_line(l, w, a)
         rows.append([_txt(l.get("item_no"), 20), _txt(l.get("description")),
-                     _txt(l.get("unit"), 12), q if q is not None else "",
-                     _m(_opcc_unit(l, w, a)), _m(a),
+                     _txt(pay_unit, 12), q if q is not None else "",
+                     _m(price), _m(a),
                      _txt(price_source(w), 2000),
                      _txt(w.get("note"))])
     rows.append([""] * 8)
@@ -579,15 +590,14 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
     first = r = head + 1
     sub_value = 0.0
     for l, w, a in t["rows"]:
-        q = _f(l.get("quantity"))
-        unit = _opcc_unit(l, w, a)
+        pay_unit, q, unit = _printed_pay_line(l, w, a)
         desc = _txt(l.get("description"))
         note = _txt(w.get("note"))      # a working note, beside the source
         src = _txt(price_source(w), 2000)
         if unit is None and a is None:
             src = "No price yet" + (" (%s)" % src if src else "")
         cells = [(1, _txt(l.get("item_no"), 20), "center"), (2, desc, "left"),
-                 (3, _txt(l.get("unit"), 12), "center"), (4, q, "right"),
+                 (3, _txt(pay_unit, 12), "center"), (4, q, "right"),
                  (5, unit, "right"), (6, None, "right"),
                  (7, src, "left"), (8, note, "left")]
         for j, v, h in cells:
@@ -1189,7 +1199,10 @@ def _latin1(v) -> str:
 def _usd(v, cents=False) -> str:
     if v is None:
         return ""
-    return ("$" + format(v, ",.2f")) if cents else ("$" + format(round(v), ","))
+    # Use the same display rounding as the currency cells on the Excel print sheet.
+    with localcontext() as ctx:
+        ctx.rounding = ROUND_HALF_UP
+        return "$" + format(Decimal(str(v)), ",.2f" if cents else ",.0f")
 
 
 def to_pdf(result, ws, refs=None) -> bytes:
@@ -1272,12 +1285,11 @@ def to_pdf(result, ws, refs=None) -> bytes:
                    num_heading_rows=1) as table:
         table.row([_latin1(h) for h in OPCC_HEADER[:6]])
         for l, w, a in t["rows"]:
-            q = _f(l.get("quantity"))
-            unit = _opcc_unit(l, w, a)
+            pay_unit, q, unit = _printed_pay_line(l, w, a)
             cents = isinstance(unit, float) and abs(unit - round(unit)) > 0.004
             qtxt = "" if q is None else (format(q, ",.0f") if float(q).is_integer() else format(q, ",.2f"))
             table.row([_latin1(_txt(l.get("item_no"), 20)), _latin1(_txt(l.get("description"))),
-                       _latin1(_txt(l.get("unit"), 12)), qtxt,
+                       _latin1(_txt(pay_unit, 12)), qtxt,
                        _usd(unit, cents) if unit is not None else ("" if a is not None else "No price yet"),
                        _usd(a)])
         table.row(["", "", "", "", "", ""])

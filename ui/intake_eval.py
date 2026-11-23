@@ -148,8 +148,8 @@ def score(truth, parsed):
                 qt is not None and qp is not None
                 and abs(qt - qp) <= 0.005 * max(abs(qt), 1e-9)):
             q_ok += 1
-        if upstream.norm_unit(t.get("unit") or "") == \
-                upstream.norm_unit(p.get("unit") or ""):
+        if upstream.takeoff_unit(t.get("unit") or "") == \
+                upstream.takeoff_unit(p.get("unit") or ""):
             u_ok += 1
         if upstream.item_family(upstream.norm_desc(t["description"])) == \
                 upstream.item_family(upstream.norm_desc(p.get("description"))):
@@ -177,8 +177,8 @@ def assist(truth, parsed, pairs):
         q_ok = (qt is None and qp is None) or (
             qt is not None and qp is not None
             and abs(qt - qp) <= 0.005 * max(abs(qt), 1e-9))
-        u_ok = upstream.norm_unit(t.get("unit") or "") == \
-            upstream.norm_unit(p.get("unit") or "")
+        u_ok = upstream.takeoff_unit(t.get("unit") or "") == \
+            upstream.takeoff_unit(p.get("unit") or "")
         f_ok = c["family"] == fam_t
         cands = intake.history_candidates(p.get("description") or "", c["unit"])
         a = intake.assess(p, c, intake.best_match_score(cands))

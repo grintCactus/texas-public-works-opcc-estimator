@@ -58,6 +58,90 @@ def select(index, target=None, **kwargs):
 
 
 class HistoricalPrices(unittest.TestCase):
+    def test_quoted_type_letter_survives_read_items_and_existing_reference_rows(self):
+        for label in ('Type D', 'Type "D"', "Type 'D'", 'Type “D”', 'Type ‘D’'):
+            printed = '2-inch HMAC Surface Course ' + label
+            with self.subTest(label=label):
+                classified = hp.upstream.classify_line(printed, "SY")
+                self.assertEqual(classified["size_in"], 2)
+                self.assertEqual(hp._spec(printed), hp._spec(classified["desc_norm"]))
+                for text in (printed, classified["desc_norm"]):
+                    _, numbers, _, labels = hp._spec(text)
+                    self.assertEqual(numbers, {"2"})
+                    self.assertEqual(labels, {("type", "d")})
+        self.assertEqual(hp._spec('2" PVC Pipe SDR 26')[3], {("sdr", "26")})
+        self.assertEqual(hp._spec('2" Type 2 Aggregate')[3], {("type", "2")})
+        self.assertEqual(hp._spec('Type "D without a closing quote')[3], set())
+        self.assertNotEqual(hp._spec('Type "D"')[3], hp._spec('Type "C"')[3])
+        self.assertEqual(hp._spec('Type. "D" HMAC')[3], {("type", "d")})
+        self.assertEqual(hp._spec('Type"D"Crushed Stone')[3], {("type", "d")})
+        self.assertEqual(hp._spec('Type #247, Type "A"')[3],
+                         {("type", "247"), ("type", "a")})
+        compound = '4-inch Type "B" & 2-inch Type "D" HMAC'
+        for text in (compound, hp.upstream.classify_line(compound, "SY")["desc_norm"]):
+            self.assertEqual(hp._spec(text)[3], {("type", "b"), ("type", "d")})
+            self.assertEqual(hp._spec(text)[1], {"4", "2"})
+
+    def test_recent_bids_match_type_d_across_quoted_and_legacy_text(self):
+        def paving(key, printed):
+            classified = hp.upstream.classify_line(printed, "SY")
+            return rows(key, 22, description=printed, desc_norm=classified["desc_norm"],
+                        item_family="asphalt_pavement", unit="SY", material="asphalt",
+                        size_in=str(classified["size_in"]), size_bucket=classified["size_bucket"])
+
+        same = ['2-inch Type "D" HMAC Surface Course', '2-inch Type D HMAC Surface Course',
+                '2-inch Type “D” HMAC Surface Course']
+        data = [r for k, s in enumerate(same) for r in paving(str(k), s)]
+        data += paving("wrong-type", '2-inch Type "C" HMAC Surface Course')
+        data += paving("wrong-depth", '3-inch Type D HMAC Surface Course')
+        index = make_index(data)
+        for printed in same:
+            classified = hp.upstream.classify_line(printed, "SY")
+            for text in (printed, classified["desc_norm"]):
+                with self.subTest(text=text):
+                    target = item(description=text, family="asphalt_pavement", unit="SY",
+                                  material="asphalt", size_in=2, size_bucket=classified["size_bucket"])
+                    selected = select(index, target)
+                    self.assertEqual(selected["unit_price"], 22)
+                    self.assertEqual({r["key"] for r in selected["references"]}, {"0", "1", "2"})
+
+    def test_new_type_matches_need_three_independent_comparable_scopes_and_quantities(self):
+        printed = '2-inch Type "D" HMAC Surface Course'
+        target = item(description=printed, family="asphalt_pavement", unit="SY",
+                      material="asphalt", size_in=2, size_bucket="0-6 in")
+        def paving(key, quantity=100, text=printed):
+            return rows(key, 20, description=text, desc_norm=hp.upstream.norm_desc(text),
+                        item_family=target["family"], unit="SY", material="asphalt",
+                        size_in="2", size_bucket=target["size_bucket"], quantity=str(quantity))
+        for data, expected in [
+                (paving("a", 50) + paving("b", 200) + paving("c"), "available"),
+                (paving("a", 49) + paving("b") + paving("c"), "engineer_review"),
+                (paving("a") + paving("b") + paving("c", text=printed+" Transition"), "engineer_review"),
+                (paving("a::page1") + paving("a::page2") + paving("c"), "engineer_review")]:
+            result = select(make_index(data), target)
+            self.assertEqual(result["status"], expected)
+            self.assertEqual(len(result["references"]), 3)
+            if expected == "engineer_review":
+                self.assertIsNone(result["unit_price"])
+                self.assertIn("Enter your unit price", result["reason"])
+            else:
+                self.assertEqual(result["unit_price"], 20)
+
+    def test_existing_compatible_automatic_price_is_retained(self):
+        plain = "2 in Type D HMAC Surface Course"
+        target = item(description=plain, family="asphalt_pavement", unit="SY",
+                      material="asphalt", size_in=2, size_bucket="0-6 in")
+        def paving(key, value, text, qty):
+            return rows(key, value, description=text, desc_norm=hp.upstream.norm_desc(text),
+                        item_family=target["family"], unit="SY", material="asphalt",
+                        size_in="2", size_bucket=target["size_bucket"], quantity=str(qty))
+        original = paving("a", 10, plain, 100) + paving("b", 20, plain, 400) + paving("c", 40, plain, 500)
+        trusted = select(make_index(original), target)
+        extended = original + paving("d", 100, '2 in Type "D" HMAC Surface Course', 100)
+        checked = select(make_index(extended), target)
+        self.assertEqual(checked["unit_price"], trusted["unit_price"])
+        self.assertEqual([r["key"] for r in checked["references"]], [r["key"] for r in trusted["references"]])
+
     def test_earliest_valid_calendar_date_does_not_crash_reference_selection(self):
         result = select(make_index(rows("a", 20)), bid_date="0001-01-01")
         self.assertEqual(result["status"], "insufficient")

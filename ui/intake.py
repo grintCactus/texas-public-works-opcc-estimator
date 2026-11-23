@@ -159,7 +159,7 @@ class Corrections:
         family = str(family or "").strip()
         if not family or family in UNCLASSIFIED:
             raise ValueError("A correction needs a real item type.")
-        unit = upstream.norm_unit(str(unit or "")).upper() if unit else ""
+        unit = upstream.takeoff_unit(str(unit or "")).upper() if unit else ""
         with self._lock:
             self._load()
             old = self._entries.get(k) or {}
@@ -214,8 +214,8 @@ class BrowserCorrections:
                     known_families is not None and fam not in known_families):
                 continue
             unit = str(v.get("unit") or "").strip()
-            unit = upstream.norm_unit(unit).upper() if unit else ""
-            if unit and unit not in upstream.KNOWN_UNITS:
+            unit = upstream.takeoff_unit(unit).upper() if unit else ""
+            if unit and unit != "100 LF" and unit not in upstream.KNOWN_UNITS:
                 unit = ""
             try:
                 times = max(1, min(10 ** 6, int(v.get("times") or 1)))
@@ -237,7 +237,7 @@ class BrowserCorrections:
         family = str(family or "").strip()
         if not family or family in UNCLASSIFIED:
             raise ValueError("A correction needs a real item type.")
-        unit = upstream.norm_unit(str(unit or "")).upper() if unit else ""
+        unit = upstream.takeoff_unit(str(unit or "")).upper() if unit else ""
         return {"key": k, "family": family, "unit": unit,
                 "source": str(source or "picker")[:20], "last": _now()}
 
@@ -277,7 +277,7 @@ def suggestions(cands, unit: str, n: int = N_SUGGEST) -> List[dict]:
     """Top-n earlier public line items: same unit when the line has one,
     a real family, one per (family, unit, wording), in score order."""
     import engine_production as ep
-    u = upstream.norm_unit(unit).upper() if unit else ""
+    u = upstream.takeoff_unit(unit).upper() if unit else ""
     out, seen = [], set()
     for c in cands:
         if c.kind == "family":
@@ -402,7 +402,7 @@ def annotate(engine, lines: List[dict], classified: List[dict], market: str,
                 and not ln.get("keep_parser"):
             e = corrections.get(ln.get("description"))
             if e and e.get("family"):
-                fill_unit = bool(e.get("unit")) and not upstream.norm_unit(
+                fill_unit = bool(e.get("unit")) and not upstream.takeoff_unit(
                     str(ln.get("unit") or "")).upper()
                 if e["family"] != c.get("family_parser") or fill_unit:
                     ln2 = dict(ln, family=e["family"])

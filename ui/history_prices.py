@@ -33,6 +33,13 @@ _MATERIAL = re.compile(
 _LABEL = re.compile(r"\b(class|type|grade|sdr)\s*[-:]?\s*([a-z0-9]+)\b", re.I)
 
 
+# Existing reference tables encode both double-quote marks as "in".
+# Repair only a pair of delimiters around a single Type letter.
+_QUOTED_TYPE = re.compile(
+    r"""\btype\b\s*[-:.]?\s*(?:"([a-z])"|'([a-z])'|“([a-z])”|‘([a-z])’|in\s+([a-z])\s+in\b)""",
+    re.I)
+
+
 def _number(value):
     try:
         result = float(value)
@@ -53,9 +60,24 @@ def years_before(date, years):
     return date.replace(year=year, day=min(date.day, calendar.monthrange(year, date.month)[1]))
 
 
-def _spec(description, material=""):
+def _type_text(text):
+    label_text = _QUOTED_TYPE.sub(
+        lambda match: "type " + next(letter for letter in match.groups() if letter) + " ", text)
+    if label_text != text:
+        label_text = re.sub(r"\btype\s+#(?=\d)", "type ", label_text, flags=re.I)
+    return label_text
+
+
+def _type_letters(spec):
+    return {value for name, value in spec[3] if name == "type"}
+
+
+def _scope_words(description):
+    return " ".join(_type_text(upstream.norm_desc(description)).split())
+
+
+def _spec(description, material="", *, previous=False):
     text = str(description or "")
-    tokens = item_tokens.tokens(text)
     material_text = text + " " + str(material or "")
     material_text = re.sub(r"\bductile\s+iron\b", "dip", material_text, flags=re.I)
     material_text = re.sub(r"\breinforced\s+concrete\s+(?:storm\s+)?(?:sewer\s+)?pipe\b",
@@ -66,7 +88,13 @@ def _spec(description, material=""):
         materials -= {"concrete"}  # generic material metadata does not contradict RCP
     if "c900" in materials:
         materials = (materials - {"c900"}) | {"pvc"}
-    labels = frozenset((name.lower(), value.lower()) for name, value in _LABEL.findall(text))
+    label_text = text if previous else _type_text(text)
+    labels = frozenset((name.lower(), value.lower()) for name, value in _LABEL.findall(label_text))
+    # The public panel spells physical inch dimensions as "in".
+    token_text = text
+    if not previous and any(name == "type" and len(value) == 1 and value.isalpha() for name, value in labels):
+        token_text = re.sub(r"(\d)[\s-]*inch(?:es)?\b", r"\1 in", text, flags=re.I)
+    tokens = item_tokens.tokens(token_text)
     return tokens, item_tokens.numbers(tokens), materials, labels
 
 
@@ -84,6 +112,7 @@ class HistoryPriceIndex:
         item_identities = collections.defaultdict(set)
         self.index_rows = []
         self.by_family_unit = collections.defaultdict(list)
+        self.revised_type_families = set()
         self.excluded = collections.Counter()
         for row in rows:
             if row.get("source_set") != "external":
@@ -170,6 +199,10 @@ class HistoryPriceIndex:
                          max_unit=max(price for _, price in pairs), quantity_spread=1.0)
             group.pop("precisions")
             group["spec"] = _spec(group["description"], group["material"])
+            previous_spec = _spec(group["description"], group["material"], previous=True)
+            if previous_spec != group["spec"]:
+                group["previous_spec"] = previous_spec
+                self.revised_type_families.add((group["market"], family, group["unit"]))
             self.by_family_unit[(family, group["unit"])].append(group)
 
     @classmethod
@@ -179,6 +212,37 @@ class HistoryPriceIndex:
 
     def select(self, item, *, bid_date, market, status, pricing_mode="", owner="",
                owner_key=None, adjust=None):
+        args = dict(bid_date=bid_date, market=market, status=status, pricing_mode=pricing_mode,
+                    owner=owner, owner_key=owner_key, adjust=adjust)
+        current = self._select(item, **args)
+        if current["status"] == "ineligible":
+            return current
+        text, material = item.get("description"), item.get("material")
+        spec = _spec(text, material)
+        if ((market, item.get("family"), item.get("unit")) not in self.revised_type_families
+                and spec == _spec(text, material, previous=True)):
+            return current
+        previous = self._select(item, previous=True, **args)
+        if current == previous:
+            return current
+        expected = _type_letters(spec)
+        if previous["status"] == "available" and all(
+                _type_letters(_spec(ref["item"], ref["material"])) == expected
+                for ref in previous["references"]):
+            return previous
+        if current["status"] != "available":
+            return current
+        scope = _scope_words(text)
+        contracts = {ref["key"].split("::", 1)[0] for ref in current["references"]
+                     if 0.5 <= ref["quantity_ratio"] <= 2 and _scope_words(ref["item"]) == scope}
+        if len(contracts) < REQUIRED_PROJECTS:
+            current.update(status="engineer_review", unit_price=None,
+                           reason=("%d of 3 recent contracts match the stated work and quantity. "
+                                   "Enter your unit price." % len(contracts)))
+        return current
+
+    def _select(self, item, *, bid_date, market, status, pricing_mode, owner, owner_key, adjust,
+                previous=False):
         target_date = _date(bid_date)
         result = {
             "method": METHOD, "price_basis": PRICE_BASIS, "status": "ineligible",
@@ -208,7 +272,7 @@ class HistoryPriceIndex:
         result["status"] = "insufficient"
         earliest, recent = years_before(target_date, 2), years_before(target_date, 1)
         result["window_start"] = earliest.isoformat()
-        tokens, numbers, materials, labels = _spec(item.get("description"), item.get("material"))
+        tokens, numbers, materials, labels = _spec(item.get("description"), item.get("material"), previous=previous)
         size = _number(item.get("size_in"))
         bucket = item.get("size_bucket") or ""
         candidates = []
@@ -218,7 +282,8 @@ class HistoryPriceIndex:
             date = _date(ref["date"])
             if not (earliest <= date < target_date and ref["available_date"] < bid_date):
                 continue
-            their_tokens, their_numbers, their_materials, their_labels = ref["spec"]
+            ref_spec = ref.get("previous_spec", ref["spec"]) if previous else ref["spec"]
+            their_tokens, their_numbers, their_materials, their_labels = ref_spec
             if (numbers != their_numbers or materials != their_materials or labels != their_labels
                     or size != ref["size_in"] or bucket != ref["size_bucket"]):
                 continue
@@ -230,7 +295,7 @@ class HistoryPriceIndex:
             same_owner = bool(owner and owner_key and owner_key(ref["key"], ref["market"]) == owner)
             score = (2.0 ** (-age / 3.0)) * (0.2 + 0.8 * match) * math.exp(-0.5 * abs(math.log(ratio)))
             score *= 1.5 if same_owner else 1.0
-            candidate = {k: v for k, v in ref.items() if k not in ("spec", "description")}
+            candidate = {k: v for k, v in ref.items() if k not in ("spec", "previous_spec", "description")}
             candidate.update(word_match=match, score=score, age_years=age,
                              quantity_ratio=ratio, same_owner=same_owner,
                              within_12_months=date >= recent,

@@ -1416,6 +1416,9 @@ class ProductionEngine:
         E = _E()
         description = str(description or "")[:MAX_DESC_CHARS]
         c = upstream.classify_line(description, unit_raw)
+        printed_unit = upstream.takeoff_unit(unit_raw)
+        if printed_unit == "100 LF":
+            c["bid_form_unit"] = printed_unit
         fam_parser = c["family"]
         fo = str(family_override or "").strip()
         fam = fo or fam_parser
@@ -1731,6 +1734,17 @@ class ProductionEngine:
             c = self.classify_one(desc, it.get("unit"), it.get("family"),
                                   market)
             c["row_id"] = str(it.get("row_id") or "r%d" % (i + 1))
+            quantity = _f(it.get("quantity"), 0.0)
+            if upstream.takeoff_unit(it.get("unit")) == "100 LF":
+                c["bid_form_unit"] = "100 LF"
+                c["bid_form_quantity"] = quantity
+                quantity *= 100
+                if abs(quantity) > MAX_INPUT_NUMBER:
+                    raise BadRequest("Line %s: converted quantity is too large." % c["row_id"])
+            elif upstream.unresolved_linear_unit(it.get("unit")):
+                raise BadRequest("Line %s has an unconfirmed grouped unit. "
+                                 "Confirm its quantity and unit with the engineer "
+                                 "or deselect it before estimating." % c["row_id"])
             amount = _f(it.get("amount"))
             quote = _f(it.get("quote"))
             # an owner-set line given as a share of the other lines ("Owner's
@@ -1745,7 +1759,7 @@ class ProductionEngine:
                 "desc_norm": c["desc_norm"],
                 "family": c["family"],
                 "unit": c["unit"],
-                "quantity": _f(it.get("quantity"), 0.0),
+                "quantity": quantity,
                 "size_bucket": c["size_bucket"],
                 "size_in": c["size_in"],
                 "amount": amount if amount and amount > 0 else None,
@@ -2111,6 +2125,8 @@ class ProductionEngine:
                             "the estimator."))
         return {
             "row_id": c["row_id"], "item_no": it["item_no"],
+            **({"bid_form_unit": "100 LF", "bid_form_quantity": c["bid_form_quantity"]}
+               if "bid_form_quantity" in c else {}),
             "description": it["description"], "unit": it["unit"],
             "quantity": it["quantity"], "family": c["family"],
             "family_label": c["family_label"],
