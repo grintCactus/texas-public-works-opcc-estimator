@@ -17,6 +17,7 @@ A working aid for estimators who prepare an opinion of probable construction cos
 3. **If a private local configuration exists** (`data/local_config.json`, `.git/company_patterns.txt`, `.git/scan_private.json`: owner's machine only), never print, copy, summarize or commit what it holds. Work through the tools that read it (`deploy/tools/scan_public.py` prints counts only).
 4. **Engineer estimates are a yardstick, never an input.** They are not a feature, a target or a reference price. Rows flagged `is_engineer_estimate` never train.
 5. **Every accuracy figure is forward in time:** each letting is priced from lettings dated before it. Never report leave-one-out or in-sample figures as accuracy.
+   For current experiments exclude every lump-sum unit (including L.S. and Lump Sum) from unit-price errors, rankings and optimization. Keep its amount in the issued OPCC. For project accuracy, score P50/P70/P80 and the actual base low bidder on identical covered, non-LS lines. Use `src/opcc_accuracy.py` and the rules in `docs/HANDOFF.md`. A single EA is still a unit-priced item.
 6. **The locked public test set is not for development.** `data/test_holdout/public_holdout.csv` lists files that never train anything. It is opened only to confirm a decision registered beforehand in `data/test_holdout/REGISTRATIONS.md`, with `src/holdout_eval.py --confirm`, and every opening is logged. Develop on `--decoy`. Never choose between variants or tune on it. After four openings, new confirmations use lettings dated after 2026-11-20 instead.
 7. **Register before scoring.** A change to pricing, calibration or the parser's item rules is written down with its pass/fail rule before it is scored (`docs/METHOD.md`, "Adoption rule"). The P80 under rate is a hard floor in every track.
 8. **Model work is paused.** The owner stopped algorithm optimization on 2026-11-21 after round 20. Do not start a pricing round, a parser round or a data rebuild unless the owner asks for it. Fixes that leave every number identical (verified) are fine.
@@ -24,6 +25,16 @@ A working aid for estimators who prepare an opinion of probable construction cos
 10. **Ask the owner before any outward-facing act:** creating an account, registering as a vendor, filing a public-information request, sending a message or e-mail, posting anywhere, paying for anything, creating a repository or a release, changing visibility. Pushing commits to this repository and redeploying the site are part of normal work once the checks below pass.
 11. **Ask before deleting** data, downloads, caches or reports. Prefer moving aside.
 12. **Fetch with scripts, never through a browser's download dialog,** and throttle. A file that could not be fetched is "not fetched", not "does not exist".
+
+## Data Resource Researcher baseline
+
+An agent assigned to source collection is a **Data Resource Researcher**. Its entire role is to find public sources, download original documents and record provenance. This applies to continued City and County collection across Texas and takes precedence over pipeline routines elsewhere in the documentation for collection tasks.
+
+- Preserve original files unchanged. Record source URLs, publisher, page-supplied titles and dates, fetch status, file size and checksum. File-format checks and byte-identical duplicate checks are allowed.
+- Do not extract document text, run OCR, parse or classify bid-table contents, transcribe schedules, extract prices, split or rewrite PDFs, reconcile amounts, evaluate accuracy or draw pricing conclusions.
+- Do not merge collected documents into the active corpus, rebuild data, train or tune models, or deploy changes as part of collection. Content processing requires a separate explicit assignment; a request to continue collecting does not authorize it.
+- Report original documents collected and sources still not fetched. Do not report parsed rows, usable-price counts or model-readiness claims as collection results. Existing derived files are historical artifacts, not a reason to continue processing; retain them without deletion.
+- Keep the public-only, confidentiality, no-login, throttling and source-recording rules above. See `.cursor/rules/data-resource-researcher.mdc` for the persistent role rule.
 
 ## Set up a fresh checkout
 
@@ -51,6 +62,7 @@ Check the setup with a known answer (`docs/HANDOFF.md`, "Known-answer check"):
 ```bash
 .venv/bin/python ui/run.py --test                              # the UI regression suite (stdlib unittest)
 .venv/bin/python -m unittest ui/test_public_mode.py            # the public-mode rules
+.venv/bin/python -m unittest src.test_opcc_accuracy            # project scores on covered non-LS rows
 .venv/bin/python -m unittest ui/test_intake.py ui/test_fuzz.py # reading takeoffs
 .venv/bin/python src/parse_bidtabs.py --selftest               # the parser's rules
 ```
@@ -94,7 +106,7 @@ Check the setup with a known answer (`docs/HANDOFF.md`, "Known-answer check"):
 | Change the page or the exports | `ui/static/`, `ui/worksheet.py`, `ui/exporter.py`; then the UI suite and, if installed, the browser tests |
 | Update the public site | `deploy/README.md`, section A (code only) or B (after a data rebuild) |
 | Rebuild the tables from documents | `bash src/rebuild_all.sh` on a checkout that has the corpus under `data/external/` and `data/txdot/` (`docs/DATA.md`). Paused: owner's call. |
-| Score a pricing change | `src/holdout_eval.py --decoy SEED --compare-switch NAME` (paired, forward); register first (`docs/METHOD.md`). Needs a working copy's full tables. Paused: owner's call. |
+| Score a pricing change | Register the decision, freeze the complete forward predictions, then run `.venv/bin/python src/opcc_accuracy.py baseline.jsonl --compare candidate.jsonl` on verified public outcomes. Review unequal scopes and missing jobs before applying any adoption gate. `src/holdout_eval.py` reproduces earlier registered evaluations on their historical definitions. |
 | Refresh the README's accuracy tables | `ui/build_item_accuracy.py` and the steps in `docs/HANDOFF.md`, "After a data rebuild" |
 
 ## Documents

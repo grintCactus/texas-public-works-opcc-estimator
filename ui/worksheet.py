@@ -26,17 +26,24 @@ import re
 import tempfile
 from typing import Any, Dict, List, Optional
 
+from exporter import P70_TEXT, recommended_basis
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKSHEET_DIR_ENV = "BID_UI_WORKSHEETS"
 DEFAULT_DIR = os.path.join(HERE, ".local", "worksheets")
 MAX_BYTES = 8 * 1024 * 1024
 VERSION = 1
+HISTORY_TEXT = (
+    "Each starting price is the median of three matching public projects' "
+    "bidder medians within two years of the bid date, adjusted for inflation. "
+    "References records the original prices, dates and index factors. "
+    "Your rounding and edits remain in Your OPCC.")
 
 
 def _f(v) -> Optional[float]:
     try:
         x = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return x if x == x and abs(x) != float("inf") else None
 
@@ -139,12 +146,15 @@ def totals(result: dict, ws: dict) -> dict:
     cont = sub * c / 100.0 if c else 0.0
     yours = sub + sched + cont
     h = result.get("headline") or {}
-    p50, p80 = _f(h.get("p50")), _f(h.get("p80"))
+    p50, p70, p80 = (_f(h.get(k)) for k in ("p50", "p70", "p80"))
+    rec = recommended_basis(result)
+    recommended = p70 if rec == "p70" else p80
     hc = h.get("contingency") or {}
-    # P50 / P80 leave the not-covered lines out, your OPCC has your amounts
+    # Model figures leave the not-covered lines out; your OPCC has your amounts
     # for them (vendor quotes): the comparison adds those amounts to the
     # model's side too, so it compares like with like
     m50 = p50 + not_covered if p50 else p50
+    m70 = p70 + not_covered if p70 else p70
     m80 = p80 + not_covered if p80 else p80
 
     def diff(m):
@@ -158,13 +168,85 @@ def totals(result: dict, ws: dict) -> dict:
             "contingency_pct": c, "contingency": cont,
             "your_opcc": yours, "owner_set": owner_set, "quotes": quotes,
             "not_covered": not_covered,
-            "missing": missing, "p50": p50, "p80": p80,
-            "p50_split": split("p50"), "p80_split": split("p80"),
-            "model_p50": m50, "model_p80": m80,
-            "vs_p50": diff(m50), "vs_p80": diff(m80),
-            "suggested_contingency_pct": (100.0 * (p80 / p50 - 1))
-            if (p50 and p80) else None,
+            "missing": missing, "p50": p50, "p70": p70, "p80": p80,
+            "p50_split": split("p50"), "p70_split": split("p70"), "p80_split": split("p80"),
+            "model_p50": m50, "model_p70": m70, "model_p80": m80,
+            "vs_p50": diff(m50), "vs_p70": diff(m70), "vs_p80": diff(m80),
+            "recommended_basis": rec,
+            "suggested_contingency_pct": (100.0 * (recommended / p50 - 1))
+            if (p50 and recommended) else None,
             "rows": rows, "below": below}
+
+
+def price_basis_label(result: dict, ws: dict) -> str:
+    """Describe worksheet prices without reinterpreting saved model bases."""
+    if ws.get("basis") == "history":
+        return "recent matching public bid medians, adjusted for inflation"
+    rec = recommended_basis(result)
+    basis = ws.get("basis") if ws.get("basis") in ("p50", "p70", "p80") else rec
+    if basis == "p50":
+        return "the model's P50 (expected low bid)"
+    m = _f(ws.get("basis_multiplier"))
+    role = "recommended OPCC" if basis == rec else "baseline"
+    return "the model's %s (%s%s)" % (
+        basis.upper(), role, ", P50 x %.2f" % m if m and m > 1 else "")
+
+
+def price_source(w: dict) -> str:
+    """The saved selection is the audit trail, not today's reference order."""
+    if w.get("src") != "history":
+        return str(w.get("source") or w.get("src_label") or w.get("src") or "")
+    h = w.get("history_price") or {}
+    if h.get("status") != "available":
+        return h.get("reason") or "No recent matching historical price available"
+    refs = h.get("references") or []
+    sources = "; ".join("%s (%s)" % (p.get("project") or p.get("owner")
+                                    or "Public project", p.get("date") or "date unavailable")
+                        for p in refs)
+    label = "Median of %d matching public projects, adjusted for inflation" % len(refs)
+    return label + (": " + sources if sources else "")
+
+
+def _reference_identity(p: dict) -> tuple:
+    """A project can contain several pay items; its key alone is not unique."""
+    return tuple(str(p.get(k) if p.get(k) is not None else "")
+                 for k in ("key", "item_no", "item", "unit", "quantity"))
+
+
+def _export_references(w: dict, x: dict) -> list:
+    """Keep saved selected pay items even if current reference loading fails."""
+    h = w.get("history_price") or {}
+    selected = h.get("references") or []
+    use = ("Selected history median" if w.get("src") == "history"
+           and h.get("status") == "available" else "History evidence, not selected")
+    out, seen = [], set()
+    for p in selected:
+        key = _reference_identity(p)
+        if key not in seen:
+            out.append((p, use))
+            seen.add(key)
+    for p in x.get("picks") or []:
+        key = _reference_identity(p)
+        if key not in seen:
+            out.append((p, "Other reference"))
+            seen.add(key)
+    return out
+
+
+def _index_text(index: dict) -> str:
+    if not index:
+        return ""
+    parts = ["Public matched-bid index", str(index.get("market") or ""),
+             "Price years %s to %s" % (index["from_year"], index["target_year"])
+             if index.get("from_year") is not None and index.get("target_year") is not None else "",
+             "Available before %s" % index["as_of"] if index.get("as_of") else ""]
+    for step in index.get("steps") or []:
+        factor = _f(step.get("factor"))
+        parts.append("%s to %s: %s matches%s" % (
+            step.get("from_year"), step.get("to_year"), step.get("n_matched"),
+            ", factor %.8g" % factor if factor is not None else ""))
+    parts += [index.get("reason") or ""] + list(index.get("notes") or [])
+    return "; ".join(p for p in parts if p)
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +340,26 @@ def _m(v):
     return "" if v is None else round(float(v), 2)
 
 
+_INVALID_XML_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
+def _export_text(value):
+    """Copy export inputs, dropping only characters XML cannot represent.
+
+    User metadata and notes can bypass the takeoff reader's text cleanup.
+    Keep printable Unicode, tabs and line breaks, and leave numbers alone.
+    """
+    if isinstance(value, str):
+        return _INVALID_XML_TEXT.sub("", value)
+    if isinstance(value, dict):
+        return {key: _export_text(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_export_text(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_export_text(item) for item in value)
+    return value
+
+
 #: The deliverable's own sheet, laid out as an OPCC is (user, 2026-11-21,
 #: showing one: items, Sub-Total, Construction Contingency (10%), Project
 #: Total): the estimator's prices only, no model or reference columns.
@@ -329,7 +431,7 @@ def opcc_rows(t: dict, ws: dict) -> list:
         rows.append([_txt(l.get("item_no"), 20), _txt(l.get("description")),
                      _txt(l.get("unit"), 12), q if q is not None else "",
                      _m(_opcc_unit(l, w, a)), _m(a),
-                     _txt(w.get("source") or w.get("src_label")),
+                     _txt(price_source(w), 2000),
                      _txt(w.get("note"))])
     rows.append([""] * 8)
     rows.append(["", "Sub-Total", "", "", "", _m(t["subtotal"]), "", ""])
@@ -481,7 +583,7 @@ def _opcc_sheet(sh, t: dict, ws: dict) -> list:
         unit = _opcc_unit(l, w, a)
         desc = _txt(l.get("description"))
         note = _txt(w.get("note"))      # a working note, beside the source
-        src = _txt(w.get("source") or w.get("src_label"))
+        src = _txt(price_source(w), 2000)
         if unit is None and a is None:
             src = "No price yet" + (" (%s)" % src if src else "")
         cells = [(1, _txt(l.get("item_no"), 20), "center"), (2, desc, "left"),
@@ -662,9 +764,8 @@ def _summary_page(sh, result: dict, ws: dict, t: dict):
     kv("Prepared", _today(ws), "mm/dd/yyyy")
     kv("Prepared by", _txt(ws.get("prepared_by"), 60))
     kv("Project no.", _txt(ws.get("project_no"), 60))
-    m = _f(ws.get("basis_multiplier"))
-    kv("Prices start from", "the model's P50 (expected low bid)" if ws.get("basis") == "p50"
-       else "the model's P80 (recommended OPCC%s)" % (", P50 x %.2f" % m if m and m > 1 else ""))
+    rec = t["recommended_basis"]
+    kv("Prices start from", price_basis_label(result, ws))
     blocks = [(kv_first, r - 1)]
     r += 1
 
@@ -738,16 +839,22 @@ def _summary_page(sh, result: dict, ws: dict, t: dict):
     b2 = r - 1
     nc = " + not-covered lines" if t["not_covered"] else ""
     row("Expected low bid (P50)" + nc, t["model_p50"], vs=t["vs_p50"])
-    row("Recommended OPCC (P80)" + nc, t["model_p80"], vs=t["vs_p80"])
+    row("Recommended OPCC (%s)" % rec.upper() + nc,
+        t["model_" + rec], vs=t["vs_" + rec])
+    if rec == "p70":
+        row("P80 baseline" + nc, t["model_p80"], vs=t["vs_p80"])
     blocks.append((b2, r - 1))
     if t["not_covered"]:
-        note("P50 and P80 leave the not-covered lines out; your amounts for them "
-             "(%s) are added to both here." % ("$" + format(round(t["not_covered"]), ",")))
+        note("The model figures leave the not-covered lines out; your amounts for them "
+             "(%s) are added to each here." % ("$" + format(round(t["not_covered"]), ",")))
     r += 1
     head("NOTES")
-    note("P50 is the expected low bid: as likely to come in under it as over. P80 is "
-         "the cautious figure: on past jobs like this the low bid came in at or under "
-         "it about 4 times in 5.")
+    if ws.get("basis") == "history":
+        note(HISTORY_TEXT)
+    note("P50 is the expected low bid: as likely to come in under it as over. "
+         + ("P70 is " + P70_TEXT + "." if rec == "p70" else
+            "P80 is the cautious figure: on past jobs like this the low bid came in "
+            "at or under it about 4 times in 5."))
     note("Your prices and notes are output only: they never feed back into the "
          "estimator, its tables, training or calibration.", italic=True)
     end = r
@@ -810,7 +917,9 @@ def _tidy_sheet(sh, title_row=1, header_row=2):
             if isinstance(v, bool):
                 pass
             elif isinstance(v, (int, float)):
-                if "amount" in h:
+                if h == "inflation factor":
+                    c.number_format = "0.000000"
+                elif "amount" in h:
                     c.number_format = '"$"#,##0'
                 elif "$" in h:
                     c.number_format = '"$"#,##0.00'
@@ -885,6 +994,7 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
         ["Market", inp.get("market_label") or inp.get("market") or ""],
         ["Bid date", inp.get("bid_date") or ""],
         ["Prepared", _today(ws).isoformat()],
+        ["Prices start from", price_basis_label(result, ws)],
         [],
         # subtotal, then the contingency below it, then the total
         ["Subtotal (your line amounts)", _m(t["subtotal"])],
@@ -910,31 +1020,51 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
     s50, c50 = t["p50_split"]
     if s50 is not None:
         head_rows += [["  P50 subtotal", _m(s50)], ["  P50 contingency", _m(c50)]]
-    head_rows.append(["Model P80", _m(t["p80"])])
+    trial = t["recommended_basis"] == "p70"
+    if trial:
+        head_rows.append(["Model P70 (recommended OPCC, trial)", _m(t["p70"])])
+        s70, c70 = t["p70_split"]
+        if s70 is not None:
+            head_rows += [["  P70 subtotal", _m(s70)], ["  P70 contingency", _m(c70)]]
+        head_rows.append(["P70 note", P70_TEXT])
+    head_rows.append(["Model P80" + (" (baseline)" if trial else ""), _m(t["p80"])])
     s80, c80 = t["p80_split"]
     if s80 is not None:
         head_rows += [["  P80 subtotal", _m(s80)], ["  P80 contingency", _m(c80)]]
     nc = t["not_covered"]
     if nc:
         head_rows += [
-            ["  your amounts for the not-covered lines (outside P50 / P80)",
+            ["  your amounts for the not-covered lines (outside the model figures)",
              _m(nc)],
             ["Model P50 + not-covered lines", _m(t["model_p50"])],
-            ["Model P80 + not-covered lines", _m(t["model_p80"])],
         ]
+        if trial:
+            head_rows.append(["Model P70 + not-covered lines", _m(t["model_p70"])])
+        head_rows.append(["Model P80 + not-covered lines"
+                          + (" (baseline)" if trial else ""), _m(t["model_p80"])])
     vs = " + not-covered lines" if nc else ""
     head_rows += [
         ["Your OPCC vs P50" + vs, _m((t["vs_p50"] or {}).get("amount")),
          "" if not t["vs_p50"] else "%+.1f%%" % (100 * t["vs_p50"]["ratio"])],
-        ["Your OPCC vs P80" + vs, _m((t["vs_p80"] or {}).get("amount")),
+    ]
+    if trial:
+        head_rows.append(["Your OPCC vs P70" + vs, _m((t["vs_p70"] or {}).get("amount")),
+                          "" if not t["vs_p70"] else "%+.1f%%" % (100 * t["vs_p70"]["ratio"])])
+    head_rows += [
+        ["Your OPCC vs P80" + vs + (" (baseline)" if trial else ""),
+         _m((t["vs_p80"] or {}).get("amount")),
          "" if not t["vs_p80"] else "%+.1f%%" % (100 * t["vs_p80"]["ratio"])],
         ["Lines without your price", len(t["missing"])],
         [],
         ["Note", "Your prices and notes are output only; they never feed back "
                  "into the estimator, its tables, training or calibration."],
     ]
+    if ws.get("basis") == "history":
+        head_rows.append(["Historical starting prices", HISTORY_TEXT])
     out.append(("OPCC worksheet", None, head_rows))
     rmap = {x["row_id"]: x for x in ((refs or {}).get("lines") or [])}
+    history_columns = (ws.get("basis") == "history"
+                       or any(w.get("history_price") for l, w, a in t["rows"]))
     rows = []
     for l, w, a in t["rows"]:
         x = rmap.get(l.get("row_id")) or {}
@@ -945,12 +1075,18 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
                      _m(l.get("amount_p50")), _m(rg.get("low")),
                      _m(rg.get("median")), _m(rg.get("high")),
                      x.get("n_refs", ""), acc.get("text") or acc.get("tier") or "",
-                     _m(w.get("your_unit")) if l.get("status") != "owner_set"
-                     else "", _m(a), w.get("src_label") or w.get("src") or "",
+                     (_f(w.get("your_unit")) if w.get("src") == "history"
+                      else _m(w.get("your_unit"))) if l.get("status") != "owner_set"
+                     else "", _m(a), price_source(w),
                      w.get("note") or "", "; ".join(w.get("judgment") or [])])
+        if history_columns:
+            history = w.get("history_price") or {}
+            rows[-1] += [_f(history.get("unit_price")),
+                         "; ".join(history.get("evidence") or [])
+                         or history.get("reason") or ""]
     # below the items: SUBTOTAL, the contingency, TOTAL (your amounts and
     # the model's P50 side by side)
-    blank = [""] * 16
+    blank = [""] * (18 if history_columns else 16)
 
     def foot(label, model, yours, src=""):
         r = list(blank)
@@ -970,38 +1106,49 @@ def sections(result: dict, ws: dict, refs: Optional[dict]) -> list:
         rows.append(foot("%s (%g%% of the subtotal)" % (
             "Additional construction contingency" if t["below"]
             else "Construction contingency", t["contingency_pct"] or 0), None,
-            t["contingency"] or 0.0, "yours only: not in P50 / P80"))
+            t["contingency"] or 0.0, "yours only: not in the model figures"))
     rows.append(foot("PROJECT TOTAL", t["p50"], t["your_opcc"]))
-    out.append(("OPCC lines",
-                ["Item", "Description", "Qty", "Unit", "Model $/unit (P50)",
-                 "Model amount (P50)", "Reference low $/unit",
-                 "Reference median $/unit", "Reference high $/unit",
-                 "References", "Typical accuracy", "Your $/unit",
-                 "Your amount", "Your price from", "Note",
-                 "Needs your judgment"], rows))
+    headers = ["Item", "Description", "Qty", "Unit", "Model $/unit (P50)",
+               "Model amount (P50)", "Reference low $/unit",
+               "Reference median $/unit", "Reference high $/unit",
+               "References", "Model P50 historical accuracy", "Your $/unit",
+               "Your amount", "Your price from", "Note", "Needs your judgment"]
+    if history_columns:
+        headers += ["Historical starting $/unit", "History evidence"]
+    out.append(("OPCC lines", headers, rows))
     # each line's reference projects: the project, and its own item as it
     # was bid -- the words, unit, quantity and prices (user, 2026-11-21)
     rows = []
     for l, w, a in t["rows"]:
         x = rmap.get(l.get("row_id")) or {}
-        for k, pk in enumerate(x.get("picks") or [], 1):
+        for k, (pk, use) in enumerate(_export_references(w, x), 1):
             src = pk.get("source") or {}
             q = _f(pk.get("quantity"))
+            index = pk.get("index_evidence") or {}
+            # An unavailable history adjustment remains blank, never replaced
+            # by the older model reference's adjustment or its original price.
+            adjusted = (pk.get("adjusted_median") if "adjusted_median" in pk
+                        else pk.get("median_esc"))
+            target_year = index.get("target_year") or (refs or {}).get("to_year")
             rows.append([l.get("item_no"), l.get("description"), k,
                          pk.get("project"), pk.get("owner"), pk.get("date"),
                          pk.get("item") or "", pk.get("unit") or "",
                          q if q is not None else "",
-                         _m(pk.get("low_unit")), _m(pk.get("mean_unit")),
-                         _m(pk.get("median_unit")), _m(pk.get("median_esc")),
-                         pk.get("n_bids") or "", src.get("document") or "",
+                         _f(pk.get("low_unit")), _f(pk.get("mean_unit")),
+                         _f(pk.get("median_unit")), _f(adjusted),
+                         pk.get("n_bids") or "", use, pk.get("item_no") or "",
+                         target_year or "", _f(pk.get("escalation")),
+                         _index_text(index), "; ".join(pk.get("match_basis") or []),
+                         pk.get("key") or "", src.get("document") or "",
                          src.get("url") or "", src.get("mirror_url") or ""])
     out.append(("References appendix",
                 ["Item", "Description", "Rank", "Project", "Owner",
                  "Letting date", "Their item (as bid)", "Their unit",
                  "Their quantity", "Low bid $/unit", "Average bid $/unit",
-                 "Median bid $/unit",
-                 "Median bid in %s $" % ((refs or {}).get("to_year") or "bid-year"),
-                 "Bids", "Source document", "source_url", "mirror_url"],
+                 "Median bid $/unit", "Inflation-adjusted median $/unit",
+                 "Bids", "Reference use", "Their item no.", "Adjusted price year",
+                 "Inflation factor", "Index evidence", "Match evidence",
+                 "Reference key", "Source document", "source_url", "mirror_url"],
                 rows or [["(none)"]]))
     return out
 
@@ -1010,10 +1157,11 @@ def to_csv(result, ws, refs) -> bytes:
     import csv
     import io
     from exporter import safe_row      # text is never run as a formula
+    result, ws, refs = _export_text((result, ws, refs))
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["# OPCC worksheet -- the estimator's prices next to the "
-                "model's P50 / P80"])
+                "model's P50 / %s" % recommended_basis(result).upper()])
     for title, head, rows in sections(result, ws, refs):
         w.writerow([])
         w.writerow(["## " + title])
@@ -1057,6 +1205,7 @@ def to_pdf(result, ws, refs=None) -> bytes:
     the Excel print area."""
     from fpdf import FPDF
     from fpdf.fonts import FontFace
+    result, ws, refs = _export_text((result, ws, refs))
     t = totals(result, ws)
 
     class _P(FPDF):
@@ -1170,6 +1319,7 @@ def to_xlsx(result, ws, refs) -> bytes:
     import io
     import openpyxl
     from openpyxl.styles import Font
+    result, ws, refs = _export_text((result, ws, refs))
     wb = openpyxl.Workbook()
     first = True
     bold = Font(bold=True)

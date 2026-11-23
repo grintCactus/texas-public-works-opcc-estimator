@@ -1,11 +1,11 @@
 # Project history: Texas public-works OPCC estimator
 
-Covers 2026-11-17 to 2026-11-21. Written after round 20 was installed and algorithm work stopped.
+Covers 2026-11-17 to 2026-11-22. The first handoff followed Round 20. The next day's local worksheet work and single optimization round are recorded below.
 
 ## 1. How to read this file
 
 - **What it covers.** What the project tried, in what order, why, with what numbers, and what was decided: data harvesting, parsing, every pricing round, and the rules used to judge them. The web app and the public site have a short history of their own in section 12.
-- **Forward in time.** Every accuracy figure prices each letting using only lettings dated before it, unless the line says "leave-one-out" or "in-sample". "Municipal" means DFW city and county lettings bid in 2024–26. "TxDOT" means TxDOT lettings in the DFW counties bid in 2023–26.
+- **Forward in time.** Historical forward runs restrict reference bids and calibration records by letting date. Some use a full-period quantity-band adjustment. Strict as-of-opening comparisons must also date this adjustment, as described in the current evaluation scope in `docs/HANDOFF.md`. "Municipal" means DFW city and county lettings bid in 2024–26. "TxDOT" means TxDOT lettings in the DFW counties bid in 2023–26.
 - **Figures move with the data.** Data was added and the parser changed every day. Figures from different dates are on different data builds and different letting counts. Compare two figures only where the text says they are on the same lettings.
 - **Local reports.** File names such as `reports/p50_fix_round18.md` point to reports in the owner's working copy. They are not in the repository. The registrations in `data/test_holdout/REGISTRATIONS.md` are in the repository.
 - **Company data.** A private company test set exists. It never trains or tunes anything. Its results stay local and none are quoted here.
@@ -95,6 +95,14 @@ The first two days ran on a Windows PC. On 2026-11-19 at 13:27 the PC crashed fo
 - 16:36 round 19 reported (no arm passed). 16:36 round 20 started.
 - 17:28 round 20's registered arms F and F+C failed. 17:58 the addendum arm G passed track U. 18:00 the round-20 experiment run replaced the production parser file against its instructions; it was stopped before it wrote any data and the parser was restored.
 - 18:12 G was installed (parser .34b) with a full rebuild. 18:52 the install was verified and matched the expected figures.
+
+### 2026-11-22 (day 6)
+
+- The owner authorized isolated cleaning of the new statewide City/County
+  documents and one pricing experiment after verification. The owner's
+  three-project worksheet policy and the earlier P70 recommendation remained
+  separate decisions. Round 21 completed at 22:31 UTC. The original model and
+  published data bundle stayed in production.
 
 ## 3. Scoreboard over time
 
@@ -652,7 +660,7 @@ The owner changed what can go live: not only a more accurate total, but also, wi
 - **Lesson.** M_T pointed the wrong way: the jobs with the thinnest evidence had the lowest P50 error (16.9%), and those with the least thin evidence the highest (24.9%). S's premise does not hold in dollars: the fitted factors were mostly below 1 (small jobs 0.91–0.97). On small jobs 21% of the lines are under half of the bid median (together −$5.15M) while 24% are over 1.25× (together +$2.86M); the dollar-weighted centre is 0.986. The small-job shortfall comes from a few specialty lines matched to the wrong price history: a screening wall at 0.07×, a TxDOT-style retaining wall at 0.09×, solar crosswalk lights at 0.04×, pavement markings at 0.15–0.22×, an unpriced mow strip. No more rounds on banded P80 margins.
 - **Local report.** `reports/p50_fix_round19.md`.
 
-### Round 20: rules for specialty lines matched to the wrong price history (F, G), last round
+### Round 20: rules for specialty lines matched to the wrong price history (F, G)
 
 - **When.** 2026-11-21. Started 16:36. Main registration recorded 17:05:58 and scored 17:28. Addendum recorded 17:32:44 and scored 17:58:50. Installed 18:12; verified 18:52. 234 municipal and 807 TxDOT common lettings.
 - **Question.** Round 19 traced the small-job unders to a few specialty lines with the wrong price history. Can rules in the parser, the classifier and the price cells fix them, and does the capped-mobilization rule (C) then pass on top?
@@ -673,8 +681,760 @@ The owner changed what can go live: not only a more accurate total, but also, wi
 - **What each rule did (report only).** The three family rules were right but moved little money: 8 beacon and signal lines, 28 marking lines and 13 sign lines; their line error went from $1.21M to $0.38M, and lines off by more than 4× from 25 to 2. The new screening-wall family had one line in the window and flipped it from 0.07× to 2.72×: the new cell was too thin. Not sizing walls by height made things worse: 13 of 15 repriced lines moved farther; the height-banded cells carried information. TF was flat on municipal and good on TxDOT. C again fixed mobilization (58 lines, $16.01M → $4.65M), but one small job still became an under: its retaining wall is bid by the SY, and the SY retaining-wall cell actually holds sidewalk-type items.
 - **Incident.** At 18:00 the round's experiment run replaced the production parser file and started a full rebuild, against its instructions. It was stopped before it wrote `data/clean`. The .33 parser was restored from backup, and G was then installed by the INSTALL steps. Rule drawn from it: an experiment may only touch its own private directory; production is changed only by the install procedure.
 - **Lesson.** (1) Taking a class out of "other" changes the price of every line left in "other", because the fallback cell is the median of all unrecognised lines. (2) Fixing a line exposes whatever it was offsetting: under F, an 8-inch water main installed by pipe bursting, which had been priced far above the bids from a new-pipe cell, was priced almost exactly from its own family; the job's comparables price was low and had been propped up by that one line, so P80 ÷ low bid fell from 1.434 to 0.938. (3) "Not higher in any year" is a very strict reading for TxDOT: TxDOT improved significantly overall under F (unders 126 → 123) and still failed because 2024 had more unders, two of them at the line (1.003 → 1.000). Decide before the next registration whether TxDOT uses this reading or the one of rounds 16–18 (each year at most max(20%, B + 3 points)).
-- **After.** At 18:23 the owner decided to stop when this round finished. Round 20 is the last round.
+- **After.** At 18:23 the owner decided to pause optimization when this round finished.
 - **Local report.** `reports/p50_fix_round20.md`.
+
+### Round 21 — Recent municipal project medians (R3-B80)
+
+- **Question.** The owner set the local worksheet's starting unit price to the
+  adjusted median of three comparable projects' bidder medians. Round 21
+  tested that rule as a municipal model input on lines it could price, with
+  production prices as the fallback. The candidate recomputed the P50 level
+  from its own strictly earlier letting records and retained the original
+  dated P80 divisor and guard. The registration fixed one candidate and all
+  three adoption tracks in `docs/METHOD.md`, section 1.6.
+- **Public benchmark.** Ten reviewed City/County base schedules qualified for
+  the isolated check. The original model scored nine using the earlier frozen
+  public corpus. One lacked enough earlier calibration records. On the nine,
+  P80 fell below the actual low bid on one (11.11%). Conditional median
+  overshoot was 60.90% and median P50 absolute error was 38.12%. The four
+  complete matched scopes with printed engineer estimates had raw median
+  absolute errors of 14.53% for the engineer and 110.79% for P50. Those four
+  observations are a descriptive comparison. Matched not-under and prospective
+  validation remain open. All new documents stayed out of training and
+  calibration. Engineer estimates served only as a yardstick. The replay used
+  public bids and kept the locked holdout sealed.
+- **Replay checks.** All 2,252 original forward records and 2,217 original
+  margin records reproduced exactly. The baseline-against-itself check
+  returned zero changes across nine groups and 2,000 letting-level resamples
+  per group. The candidate added or lost zero lettings. Both arms had 235
+  municipal lettings in 2024–2026 and 807 TxDOT lettings in 2023–2026. In both
+  arms, 120 covered municipal lines and 32 covered TxDOT lines lacked prices,
+  and the coverage rules excluded 24 municipal and three TxDOT lines.
+- **Municipal result.** P80 unders fell from 32 to 30 (13.62% to 12.77%).
+  By year they moved from 8 to 7 of 71 in 2024, stayed at 12 of 83 in 2025,
+  and moved from 12 to 11 of 81 in 2026. Median P50 absolute error moved
+  from 19.52% to 19.43%. Conditional median P80 overshoot rose from 44.80%
+  to 46.54%, a change of +1.74 percentage points with a paired 90% interval
+  of −0.38 to +5.00 points.
+- **Unit prices.** The candidate replaced 1,549 prices on 161 municipal
+  lettings in the registered window. On all 9,598 lines with exact paired
+  item outcomes, the aggregate absolute amount error rose 3.23%, from
+  $307.81M to $317.75M. The increase was $9.95M with a paired 90% interval
+  of +$5.14M to +$15.20M. Median absolute log error rose from 0.3708 to
+  0.3743. The paired line set removes ambiguous item mappings and requires
+  three distinct bidders for the item median.
+- **Decision.** T failed on overshoot. U and U+ failed on unit prices. The
+  P80 under-rate conditions passed. TxDOT records and line traces were
+  identical, with P80 under on 125 of 807 (15.49%). Keep the original model
+  and calibration. Keep the independent local worksheet policy. No bundle
+  or public deploy changed.
+- **Rerun.** The first candidate aborted before paired scoring. It assigned
+  constants to seven early TxDOT lettings for which the original P80 margin
+  had too little history. Amendment 2 bound score availability to the
+  original margin records while preserving the candidate's own strictly
+  earlier P50 level and every invariant check. Twenty mechanical tests
+  passed. The amended baseline's first run stopped at the final fingerprint
+  check when a reporting script was added inside the fingerprinted directory.
+  The script was moved out of that directory. The frozen fingerprints
+  matched exactly and the full baseline, unseen benchmark, candidate and
+  report were rerun in a fresh output directory. Earlier evidence and
+  logs were retained. The source data, candidate and decision rules stayed
+  fixed throughout the retries.
+- **Local evidence.** `handoff/scratchpad/round21_recent_medians_2026-11-22/`
+  holds the registrations and first-attempt evidence. Under its
+  `run-amendment2-retry/` directory, `report.json` contains the paired scores
+  and decisions, `unseen-checkpoint.json` contains the separate public
+  benchmark, and `results-audit.json` records the independent reconciliation
+  of coverage counts, scored prices and report metrics.
+
+### Round 22 — The most recent comparable pay item
+
+On 2026-11-22 the owner asked to test the engineering worksheet practice of
+using the latest comparable pay item and rounding its bidder median **upward
+to two significant figures**. A $312 price becomes $320. The test first sought
+one exact item from the prior twelve months. If unavailable, it sought up to
+three comparable projects from the prior two years. Source prices required
+the same unit and comparable specifications, a quantity within a factor of
+two, three distinct real bidders, and dates strictly before opening. Prices
+were adjusted using the existing prior-date municipal bid-price index.
+
+- Of 235 historical municipal lettings, 77 had precise source dates matching
+  the forward replay. Of 3,134 rows in these 77, 236 received prices and 233
+  could be compared to a unique item with a known bidder median.
+- On the 110 recent exact matches, signed median error was **+0.75%** and
+  median absolute error **20.49%**. The existing unit-price method had
+  **19.79%** median absolute error on those same rows. On the 123 secondary
+  matches, signed median error was **+10.13%** and median absolute error
+  **28.00%**, compared with **26.23%** for the existing method. Of these 123,
+  102 had only one qualifying project.
+- On all 233 pairs the sum of absolute extended errors fell from $2.211M to
+  $1.987M. A descriptive 90% letting-cluster bootstrap interval for the change
+  ranged from a $785k reduction to a $301k increase. Keeping the same
+  references, rounding itself added $81k of absolute extended error across
+  these rows. The secondary tier already had a signed median error of +8.17%
+  before rounding.
+- No complete historical worksheet could be priced solely from matches. On
+  13 verifiable full baskets with at least one substitution, filling other
+  lines with existing pre-discount prices gave a median absolute error of
+  **28.47%** against the whole low bid, compared with **32.49%** using existing
+  prices on all lines. Two of the 13 mixed estimates fell below the low bid.
+  Historical fixed amounts derived from a bidder's price were excluded.
+- Separately, 10 reviewed statewide schedules contained 1,064 items. On 39
+  recent exact matches the signed median error was **+12.76%**, with **30.43%**
+  median absolute error. Across both tiers 42 matched items accounted for only
+  1.87% of the combined low-bid dollars. No purely matched full estimate was
+  available. One full mixed estimate contained a substitution, too few to
+  establish full-project performance statewide.
+
+The results support testing recent exact items as one source of price evidence.
+They do not establish the error of an entire worksheet made only of latest
+prices. The existing worksheet and production model continued in use. Local
+registration, paired records, source references and attribution arithmetic are
+in `handoff/scratchpad/round22_latest_pay_item/`.
+
+### Round 23 — Recent exact bid evidence in the municipal estimate
+
+The candidate uses the geometric mean of the existing market unit price and
+the most recent qualifying exact item's price. The latter is the median of
+at least three bidders on one strictly earlier project, adjusted for price
+changes and rounded upward to two significant figures. It requires the same
+unit and specifications, comparable quantity and an opening within a year.
+
+Before candidate scores were inspected, the owner excluded lump sums from
+all unit-price comparisons. The baseline and candidate used the same 8,700
+eligible municipal pay items after 898 LS items were removed. Full-project
+totals included the original scope. An independent check found zero LS lines
+among the 233 historical and 42 statewide scored pairs in Round 22.
+
+- On the 110 comparable items in 32 projects to which the new rule applied,
+  median absolute unit-price error fell from 19.79% to 16.31%. Across all
+  8,700 items it moved from 32.65% to 32.64%. The sum of quantity times
+  absolute unit-price error fell by $135,821 (0.053%). The paired 90% interval
+  from 2,000 project-level resamples was a reduction of $17,078 to $277,647.
+- Across 235 municipal projects the median absolute P50 error was 19.52%
+  with either rule on the registered scope. P80 equaled or exceeded the
+  comparison bid on 203 of 235 projects in both runs. Fifteen comparison
+  bids covered only the in-scope portion of the contract, and 64 projects
+  had at least one unpriced in-scope line. These two groups overlap. On the
+  162 full contracts with every line priced, P80 met or exceeded the full low
+  bid on 145 projects with either rule. Of those contracts, 102 also had no
+  retrospectively identified fixed amount. Both rules covered 89 of those
+  102. The historical totals use the actual bidder count. Independent trials
+  below used five bidders specified before opening the target prices.
+  On the registered scope, when P80 met or exceeded the comparison bid, its median
+  overshoot went from 44.80% to 44.55%. All 807 TxDOT comparisons were
+  identical.
+- The candidate passed the registered unit-price improvement track (U) in
+  development. Independent confirmation is pending. The report and the
+  pre-score amendment are in
+  `handoff/scratchpad/round23_latest_exact_blend/`, under
+  `physical-results/report.json` and `OWNER_SCOPE_AMENDMENT.json`.
+
+Two independently sealed batches from five additional agencies then tested
+the same frozen rule. Of 18 source documents, five furnished a complete,
+verified bid schedule for this exercise. They contained 67 items, of which
+18 were lump sums and two had no comparable model price. On the 47 paired
+non-LS items the median absolute unit-price error was 48.93% for both arms.
+Only two items qualified for the recent exact blend. On those two items its
+median absolute error was 56.58%, compared with 54.38% using the original
+price. The sum of absolute errors times quantity increased by $78.48.
+Only two projects had prices for every line. No project in the batch was
+eligible for the registered post-2026-11-20 confirmation, and none printed
+an engineer estimate. The small independent comparison did not establish
+an improvement. Evidence is in
+`handoff/scratchpad/fresh_city_county_validation/delivery18-results.json`.
+
+### Round 24 — Two older exact pay items when the past year has none
+
+When no recent exact reference qualified, the candidate took the two most
+recent eligible projects with the exact item 12 to 24 months before opening.
+It took the median of their separately inflation-adjusted bidder medians,
+rounded it upward to two significant figures, and blended it with the
+existing price in the same way as Round 23. The schedule, unit, quantity and
+three-bidder checks stayed the same. Before scoring, 14 additional lines in
+eight historical projects qualified.
+
+The median absolute unit-price error on those 14 lines fell from 43.75% to
+32.52%. Eleven lines improved, reducing their combined absolute extended
+error by $13,534. Three worsened by a combined $28,104. The largest was a
+2,466 SY flexible-base line. Its bid median was $37.20/SY. The older
+references moved its price from $38.63 to $44.39/SY and added $14,197 of
+error. Across all 14 lines, the increase was $14,570. The paired 90% interval
+for the change across all 8,700 non-LS lines went from a reduction of $12,151
+to an increase of $45,623. The registered incremental unit-price gate failed.
+The extension was not adopted.
+
+The P80 coverage count and median absolute P50 error on the registered
+235-project scope stayed at 203/235 and 19.52%. The separate P70 diagnostic
+used each arm's empirical 30th percentile of price ratios from strictly
+earlier openings. On the 162 complete contracts, incumbent P70 covered
+134 (82.72%) and Round 23 and Round 24 each covered 133 (82.10%). P80
+covered 145 (89.51%) in all three. On that complete scope the incumbent
+P70 and P80 had conditional median overshoots of 32.24% and 44.33%.
+These comparisons used actual historical bidder counts. The additional
+five-project check used five bidders specified before scoring. Only two
+complete scopes were priced there, so it cannot establish P70 or P80
+coverage. The experiment and the P70 calculations are filed under
+`handoff/scratchpad/round24_older_exact/` and
+`handoff/scratchpad/p70_recent_item_analysis/`.
+
+### Round 25 — Source evidence for dates and comparable scope
+
+The date audit verified nine Forney and Highland Park openings against official
+documents and archived evidence that each document was available by a given
+date. Two opening dates changed. Seven existing dates were confirmed. Forney
+CIP 283 opened on May 7, 2026. Its May 20 letter recommended an award, and the
+reviewed council packet was publicly available by May 27. The three dates
+serve different purposes.
+
+Three of the nine had ordinary competitive base bids for scope review. Four
+were best-value cases and the other two had only one or two bidders. On 294
+non-LS target lines in the three ordinary cases, the initial source-verified
+reference pool supplied zero eligible recent exact treatments at the verified
+opening dates. The larger historical pool, using its existing availability
+assumptions, identified 11 potential matches. Ten depend on the publication
+history of four specific bid tabs. The remaining cross-year match lacks an
+independently supported inflation adjustment. No error or coverage result
+was calculated from these leads in the first pass. A second source audit
+established that the North Richland Hills and Farmers Branch bid tabs were
+already public before the Wycliffe Avenue opening. Repeating the strictly
+dated search recovered six recent exact references on that one project.
+Frisco's observed publication evidence fell after the target date and the
+Richardson source had not been fetched. These six references alone cannot
+calibrate a project P50, P70 or P80. The two source packets are in
+`data/processed/historical_bid_dates_v1/` and
+`data/processed/historical_bid_dates_v2/`.
+
+A separate retrospective unit check sealed six worksheet prices before
+reading their target bid columns. All six historical medians were verified
+against the original bid tabs, rounded upward to two significant figures
+and compared with the median of the three responsive bids on the Wycliffe
+base item. The median absolute percentage error was 44.20%. Five prices were
+low. Project signs were close ($760 versus $750 each). Monthly barricades,
+signs and traffic handling were $3,600 versus $56,150 per month. This one
+line accounted for $1,103,550 of the $1,120,479 in absolute extended error
+on the six items. The pay unit for this service was MO. It remains in the
+non-LS comparison. These are six items on one historical job. See the
+original-tab checks and sealed predictions in
+`handoff/scratchpad/round25_verified_opening/wycliffe_six/`.
+
+### Round 26 — Age and quantity as weights for a recent exact price
+
+The owner asked that a newer bid at a more comparable quantity carry more
+weight. Round 26 tested one rule against Round 23. The recent price's weight
+was the average of its age similarity and quantity similarity. Age similarity
+decreased from one to zero across the preceding year. Quantity similarity was
+one at equal quantities and zero if one quantity was twice the other. The
+input items, prices, scopes, dates and rounding were otherwise identical.
+
+The 110 matched non-LS prices had median absolute unit-price error of 20.39%
+under the variable weight, compared with 16.31% at the fixed equal weight.
+The quantity-weighted absolute dollar error increased by $37,024 relative to
+Round 23 (paired 90% interval, $5,256 to $69,991). The increase included
+$18,731 on the 59 lines receiving more weight and $18,293 on the 51 receiving
+less. Age and quantity alone did not improve the choice of weight. The arm
+failed its registered line gate, so the project replay was not run. The
+registration and report are in `handoff/scratchpad/round26_recency_quantity_weight/`.
+
+### Round 27 — Apply the cross-year bid index in proportion to elapsed time
+
+The existing matched-bid index compares prices by calendar year and uses
+only bids already available by the target opening. This experiment applied
+the cross-year factor as an annual growth rate over the actual time between
+the two openings. This is a hypothesis because the measured index compares
+two sets of bids and the target year's set is incomplete. The exact reference,
+upward rounding rule and equal-weight blend were the same as in Round 23.
+
+There were 36 cross-year lines in 14 historical projects, with source ages
+of 149 to 349 days. After rounding, prices changed on 20 lines in five
+projects. Median absolute error on those 20 fell from 11.16% to 9.53%, while
+aggregate absolute extended error increased by $2,645 relative to Round 23.
+The 90% project-level interval ranged from a $2,164 reduction to a $10,656
+increase. The incremental line gate failed. The registered full-project
+stage was therefore skipped. No cases measured a reference just a few days
+across New Year. Evidence is in
+`handoff/scratchpad/round27_elapsed_inflation/`.
+
+**Independent Laredo schedules.** In the two sealed schedules, seven of
+45 base items had lump-sum units and two vertical-foot items did not pass the
+original unit check. Both arms supplied the same unit prices on the 36
+matched physical items, with median absolute error of 67.78%. The first
+schedule had 33 comparable items with a printed engineer unit price. Its
+median absolute error against actual bidder medians was 42.22% for the
+engineer and 67.98% for the model. No recent exact source changed a price.
+This is one project's engineer comparison.
+
+The source-data correction later mapped two “Vertical Foot” entries to VF.
+In a separately labelled post-disclosure replay, the 9-item Laredo manhole
+base then had a model price on every line. The frozen incumbent P70 was
+$4.86M and the verified low base bid was $1.79M, before the separately
+printed five-percent addition. For the applied liner the estimate came from
+a broader manhole/VF price group. For removal of existing coating it came
+from a typical schedule-line amount. Neither price had a recent exact
+public reference. The base total illustrates the importance of reporting
+what supports a price even when every line has a value. Original and
+corrected assessments are retained separately in
+`handoff/scratchpad/fresh_city_county_validation/collection230710/` and
+`collection230710_vf/` beneath the same parent.
+
+**Historical engineer unit-price yardstick.** The 8,700 audited municipal
+non-LS pairs were joined to explicitly flagged engineer rows by project, item
+number, normalized description, unit and quantity. There were 2,096 unique
+positive engineer matches across 32 projects. Each arm was compared to the
+same item's observed bidder median. Median absolute percentage errors were
+33.51% for engineers, 32.93% for the incumbent and 32.87% for Round 23.
+Quantity times absolute unit error summed to $40.54M, $48.59M and $48.57M
+respectively. Engineers had a lower sum than Round 23 on 25 of 32 projects.
+Within each project's paired sample, the largest fifth of lines by original
+estimated value accounted for $5.63M of the $8.03M difference. Only 21 lines
+had both an engineer estimate and a Round 23 recent exact substitution.
+These are unit-price comparisons. Absolute errors cannot cancel here as
+overestimates and underestimates can in a contract total. Registration and
+per-item evidence are in `handoff/scratchpad/municipal_engineer_unit_comparison/`.
+
+**Additional independent pay items on held municipal schedules.** Five
+previously held Texas bid tabs were registered for a separate unit check.
+Source review identified 475 eligible non-LS items on three projects.
+There were positive model and bidder-median prices on 474, covering Baytown
+(330), Helotes (63) and League City (81). Both models had a median absolute
+unit-price error of 42.45% on these rows. Only five Baytown rows used a
+recent exact reference. Their aggregate absolute extended error fell by
+$3,173, and their median absolute percentage error fell from 35.38% to
+34.37%. On League City's 81 items with comparable printed engineer estimates,
+the engineer's median absolute error was 16.67% versus 42.42% for the model.
+Pricing used the reviewed subset of each schedule, so these comparisons
+measure unit accuracy only. All five whole contracts remain held. See
+`handoff/scratchpad/fresh_city_county_validation/held_statewide_items/`.
+
+In Baytown the decrease in extended error on ductile iron fittings alone was
+$4,982. The other four substitutions together increased error by $1,809.
+A retrospective direct-price comparison on the same 474 rows found five
+exact matches in the preceding year. On those five, the unblended, rounded
+recent bidder median had a median absolute error of 35.00%, compared with
+35.38% for the original market price and 34.37% for the blend. Ten more had
+an exact source only in the second year. Their direct-price error was 41.27%
+versus 27.85% for the original price. A further seven had similar wording
+only. In total, 22 rows could be priced by the historical worksheet rule,
+including 20 based on a single matching project. On those 22 its median
+absolute error was 39.32% versus 31.71% for the original model. Filling the
+other 452 rows with the original model added $52,393 in absolute extended
+error across the 474 items. These were already disclosed outcomes.
+
+### Round 28 — Agreement among three previously selected projects
+
+This test screened the three references the existing worksheet had already
+selected. Each had to support the same measured pay item within a factor of
+two in quantity and have at least three distinct bidders. Their three
+inflation-adjusted interquartile price ranges had to overlap. Of 439 recorded
+three-project matches on the verified-date historical cohort, 64 already had
+a Round 23 exact match. Among the remaining 375, seven lacked enough bidders
+in a reference, 324 had at least one out-of-range quantity and 43 lacked
+sufficiently clear scope or specifications. One line met the rule. Its
+absolute extended error increased by $3.25. The incremental gate failed.
+This count describes the original three selections. It does not establish
+how many suitable references exist in the full source pool. Evidence is in
+`handoff/scratchpad/round28_three_project_iqr/`.
+
+### Round 29 — Qualify source projects before ranking them
+
+Round 28 could discard a line when one of the first three references failed
+a scope or quantity check even though another qualifying source existed.
+Round 29 applied the same bidder, date, unit, specification and quantity
+checks to the full two-year source pool before selecting three distinct
+projects. It then checked whether their bidder price ranges overlapped.
+Eight new lines had three qualifying projects. Six lines across five projects
+also passed the range check. Five of those lines were missed by Round 28.
+
+Compared with Round 23, the six substitutions reduced aggregate absolute
+extended error by $4,315, with a project-paired 90% interval spanning a
+$12,339 reduction to a $1,576 increase. That interval failed the registered
+improvement condition. The experiment ended at the unit-price stage. The
+registration, source selection and results are in
+`handoff/scratchpad/round29_rank_qualified_projects/`.
+
+### Round 30 — Check the most recent bidders' price range before substituting
+
+With the same 110 recent exact matches and the same two-significant-figure
+rounding as Round 23, use the recent median in the equal-weight blend only
+if the original market price is outside the middle 50% of actual prices
+on that historical item. The original market price fell inside the range
+on 56 items, below it on 33 and above it on 21. All historical item medians,
+bidder counts, units and dates were reproduced. Median absolute unit error
+on the 110 rose from 16.31% for the fixed blend to 18.41% for the range
+rule. Absolute extended error increased by $14,567 compared with the blend
+(90% paired interval from an $11,379 reduction to a $46,757 increase).
+The proposed rule failed its incremental line gate, and its project totals
+were not scored. Evidence is in
+`handoff/scratchpad/round30_recent_bidder_range/`.
+
+### Round 31 — Separate finished concrete pavement from flexible base
+
+The concrete pavement on Frisco's King Road was priced using two earlier
+flexible-base bids. Round 31 excluded a candidate price group only when
+the target was clearly a finished surface and every source in that group
+was positively identified as incompatible. It preserved ambiguous or
+combined work and used the estimator's normal fallback. Three non-LS
+prices changed across the 235 development projects, with no lost prices.
+Frisco's 29,271 SY line moved from $21.77 to $77.98/SY against a bidder
+median of $84.81/SY. Its absolute extended error fell by $1,645,329.
+The other two changes increased that error by $49,266 in total. Against
+Round 23, the net decrease of $1,596,063 had a paired 90% interval from a
+$4,850,375 reduction to a $92,072 increase. The incremental gate failed.
+The full-project replay did not follow. Inputs, source checks and results
+are in `handoff/scratchpad/round31_pavement_material/`.
+
+### Round 32 — Carry the nominal water-pipe diameter into reference selection
+
+The original reference for Grand Prairie's 24-inch PVC line came from two
+8-inch pipe items. This experiment required an explicit target diameter on
+a water-pipe LF item, checked the source descriptions, and searched for a
+same-diameter replacement when every contributor to the selected price group
+had a conflicting diameter. The check distinguished nominal carrier size from
+depth, length, pressure class and the dimensions of an assembly. Twenty-nine
+lines across 20 projects had confirmed conflicts. Twenty-six replacement
+prices across 17 projects had a comparable bidder median for scoring.
+
+On the 26, median absolute unit-price error fell from 37.78% to 32.68%.
+On the 4,520 LF discovery line the price moved from $109.34 to $334.60/LF
+against $433/LF. Aggregate absolute extended error on all 8,700 lines fell
+by $143,188 versus Round 23. Its project-paired 90% interval extended from
+a $2.457M reduction to a $1.872M increase. Excluding the entire discovery
+letting, the error increased by $874,992. The candidate failed the unit
+gate, so it was not scored on contract totals. Evidence is in
+`handoff/scratchpad/round32_water_pipe_diameter/`.
+
+### Round 33 — Recent pipe bids with the same material and construction method
+
+Of the 29 same-diameter groups selected in Round 32, 13 included a known
+different material and 23 included a quantity outside a factor of two.
+Conservative date bounds showed that at least 25 contained a source more
+than two years old and eight consisted entirely of such sources. These are
+overlapping counts.
+The two largest increases in absolute extended error were $545,142 and
+$398,195. In both cases the target was PVC and the replacement group also
+included ductile iron. With a fixed requirement for the same explicit pipe
+diameter, material and installation method, an opening within 24 months and
+a comparable quantity, one job supplied a replacement. Rockwall's 16-inch
+open-cut PVC item had a five-bidder source 21 days earlier at 1.42 times
+the target quantity. Its blended estimate moved from $133.13 to $163.18/LF,
+against a $206.25 bidder median. The absolute extended error decreased by
+$12,318. The incremental paired 90% interval was a $36,954 reduction to no
+change. Its upper bound did not pass the registered gate. This one job
+does not establish an improvement on other lettings. The case evidence and
+registered results are in `handoff/scratchpad/round33_water_pipe_specs/`.
+
+The worksheet's default price follows a separate three-project rule. Replaying
+the 29 water-pipe cases and the three pavement substitutions through the local
+worksheet reference API, both with automatic and confirmed item types (64
+line results), reproduced every frozen selection and status. All 32 defaults
+were blank. Twenty-four had no reference, six had one and two had two.
+All ten partial references were within two years; seven differed in quantity
+by more than a factor of two. A partial suggestion did not populate a
+worksheet price. See `handoff/scratchpad/worksheet_product_reference_audit/`.
+
+### Round 34 — Traffic-control work per month
+
+The known Wycliffe monthly traffic-control error prompted a test on other
+municipal schedules. Earlier bids had to cover the same traffic-control
+service and the same kinds of paving and pipe work. The trial compared
+planned paving area or pipe length per month, using the corresponding
+physical unit for each type of work. Lump sums did not enter the test.
+Of 42 monthly traffic-control items, one belonged to the discovery project,
+30 lacked a precise archived opening date and seven lacked an unambiguous
+scope. Four could be checked. Two had an earlier bid with the same printed
+service, but the projects involved different types of work. None met all
+conditions. The trial reproduced the Round 23 prices on 8,447 non-lump-sum
+items in 234 other projects. No performance gain could be established.
+See `handoff/scratchpad/round34_monthly_traffic_scope/`.
+
+### Round 35 — Prefer a verified recent bid from the same public owner
+
+This trial selected the latest recent and exactly matching item from the
+same confirmed purchasing authority when available. It kept Round 23 if
+no such independent procurement could be identified. Of the 110 original
+recent substitutions, 51 had evidence of distinct procurements from the
+same owner. Round 23 had already chosen every one. All 8,700 non-LS prices
+matched the comparator. Refining the mapping of the Legistar platform to
+its individual municipalities changed no selection. No whole-project replay
+or promotion followed. See `handoff/scratchpad/round35_local_owner/`.
+
+### Round 36 — Match the specified asphalt surface treatment
+
+Burnet County's chip seal was estimated at $20.93/SY against a bidder
+median of $3.25/SY. Its 35 reference projects included 34 concrete
+surface treatments and one high-friction treatment. No reference was chip
+seal. Three distinct Calhoun County treatments shared one $25.19/SY
+estimate built from 13 concrete surface treatments. This prompted a trial
+requiring the same printed application, binder or aggregate specification,
+payment unit, similar quantity and a verified earlier opening date. Of 22
+historical municipal treatment items, 19 lacked sufficient specification
+and the other three lacked verified openings. All 8,700 eligible non-LS
+unit prices reproduced Round 23. The two counties identified the problem.
+They provide no independent confirmation of a replacement price. See
+`handoff/scratchpad/round36_surface_treatment/`.
+
+**Chronology of the external recent-price comparisons.** The review traced
+71 source selections on 68 previously seen non-LS items. For 53 items across
+nine projects, each selected original price table was already public when
+the target opened. Median absolute unit errors were 18.48% for the incumbent,
+18.42% for Round 23 and 33.86% for the direct recent price. The direct
+method reduced absolute quantity-weighted dollar error by $80,975 against
+Round 23. Only three projects improved. Removing the Fort Bend project
+reversed that difference to a $160,410 increase. In the nested 14-item
+group where the original opening and required time window were also verified,
+the three median errors were 25.71%, 26.82% and 36.40%. Six of those items
+were in the same year and required no escalation. The full-period historical
+quantity calibration still limits this comparison. The item evidence and
+all three nested samples are in
+`handoff/scratchpad/external_publication_verified_units/cut2/RESULTS.md`.
+
+The published-source subset also isolates the owner's upward rounding rule.
+Keeping the original donors and inflation adjustment, direct-price median
+absolute error was 34.38% before rounding and 33.86% afterward. Across the
+14 items with verified dates and windows, upward rounding raised the value
+of the basket by $25,350 but changed the sum of absolute errors by $9.
+These are rounding effects on specific physical items. See
+`handoff/scratchpad/external_direct_rounding/RESULT.md`.
+
+**Estimating across a calendar-year boundary.** A separately registered
+trial projected prices to a January opening from the preceding November 22,
+using only comparisons between two earlier twelve-month periods. Of 475
+eligible physical items opening in the first 90 days of 2024–26, 22 had a
+recent exact reference using recorded openings as a proxy for availability.
+Keeping that last price and projecting the trend both had a 23.54% median
+absolute unit error. Projecting raised summed absolute extended error by
+$1,340. The January 1–15 subset covered one project. No pairs qualified
+under the stricter requirement for prior publication of the actual dated
+source. All 14 physical items at the future Van Zandt dam lacked an eligible
+direct reference even before allowing for inflation. The trial supplied
+no basis to change January prices. See
+`handoff/scratchpad/future_year_price_trial/RESULT.md`.
+
+**Engineer totals on the same bid scope.** Of 235 historical municipal
+records, two met all registered checks for a complete priced scope, a
+precise date, a fully reconciled contractor basket, no retrospective fixed
+amount and a matching engineer price for every line. The printed base
+totals were then independently checked in the original municipal documents.
+At Farmers Branch the lowest of six base bids was $211,103.50, and the
+engineer's base was $259,558.63. The $15,000 alternate was separate in both
+columns. In Kennedale the low bid was $642,878.50 and the engineer's estimate
+before contingency was $771,110.00. The city received seven bids. Its tab
+named six firms and labelled the seventh populated column “Contractor 7”.
+The frozen model backtest used six named bidders for that case. These two
+contracts do not establish an engineer comparison at a common not-under
+rate. The protocol, exact scope and printed-source receipts are in
+`handoff/scratchpad/municipal_engineer_project_comparison/` and
+`data/processed/municipal_engineer_project_sources_v1/`.
+
+Both schedules were replayed with a pre-opening assumption of five bidders.
+Before changing that assumption, the two frozen models reproduced all 12
+archived P50/P70/P80 figures across the two jobs to the cent at six bidders.
+With five bidders, original and Round 23 P70 were $760,427 and $757,402
+in Kennedale, and $344,322 and $356,820 in Farmers Branch, respectively.
+The latter forecast went farther above the actual base bid when recent
+prices were blended. At Kennedale's actual seven bidders the corresponding
+P70 values were $758,771 and $755,753. These are historical scenarios on
+verified base bid scopes. See the five-bidder results beneath the project
+comparison directory.
+
+Official documents supplied four more opening dates for reviewing earlier
+whole-project comparisons. Only Frisco's Meadow Hill Drive had a common
+complete, ordinary base. Its 66 items and seven submitted bids reconciled
+to the $1,958,894.31 low; the engineer estimated $2,610,431. Replaying
+the two models with five bidders assumed, on the verified April 9 date,
+gave P70 of $2,326,685 and $2,326,831. The historical corpus convention
+supplied the strictly earlier calibration dates; individual publication
+times could not be proven for the full calibration pool. See
+`data/processed/engineer_source_four/RESULT.md`.
+
+**New historical Weatherford unit test.** Frozen predictions on 36
+eligible non-LS items from the Franklin water project had median absolute
+unit-price error of 30.28% for both arms. Only the fire hydrant assembly
+changed. The target had 33 assemblies, with a ten-bidder median of $7,225
+each. The original price was $6,552.43 and the Round 23 blend was $6,820.72.
+A Justin bid tab for 31 assemblies was independently located in a council
+packet published August 14, 2025, before Weatherford opened on February 3,
+2026. Its 12 named contractors' unit prices and extensions were reconciled
+to the original two pages. Their median was $6,650.53. The historical
+matched-bid price index multiplier was 1.052665, yielding $7,000.78.
+Rounding up to two significant figures gave a direct worksheet reference
+of $7,100, 1.73% below the target median. The blended estimate was 5.60%
+low and the original estimate 9.31% low. The construction allowance and
+unresolved printed quantity prevented a whole-contract accuracy result.
+Details are in `handoff/scratchpad/fresh_city_county_validation/weatherford_franklin/`
+and `data/processed/weatherford_prior_source_dates/`.
+
+**Recent bids across the external public projects.** A retrospective comparison
+of 21 distinct reviewed projects found 1,546 eligible non-lump-sum items on
+19 jobs. Each target was the median of at least three original contractors.
+Only 68 items on 11 jobs had a qualified recent reference. The original
+model, the Round 23 blend and direct use of the rounded historical price
+had median absolute errors of 25.19%, 20.53% and 32.92% on those same
+68 items. For the 47 with exact matches in the preceding year the figures
+were 25.03%, 20.29% and 31.67%. The other 1,478 physical items had no
+qualifying direct price. Ten projects had their Round 23 forecasts
+reconstructed after outcomes were known. This is not a prospective
+confirmation or a comparison of whole OPCCs.
+
+Individual large quantities explain why the comparison by dollars gives
+a different answer. On the Williamson County Ronald Reagan project,
+1,224 LF of 36-inch Class III concrete pipe had a five-bidder median of
+$195/LF. The Frisco comparison 110 days earlier had 1,143 LF and five
+bidder prices with a median of $181/LF. The rounded direct price was
+$190/LF, the blend $242.45/LF and the original $309.39/LF. The blended
+rate reduced absolute line error by $81,930. Across all 68 items direct
+pricing saved $56,293 relative to the blend in summed absolute extended
+error. Leaving out one project at a time changed that difference from a
+$157,317 reduction to a $184,881 increase. Source row identifiers, all
+project contributions and exclusions are recorded in
+`handoff/scratchpad/external_recent_price_pool/`.
+
+**Whole base bids on the external projects.** Of the 21 reviewed cases,
+four met the complete prebid input, full model coverage and matching
+printed base requirements. All 14 LS lines counted toward the four
+totals. All four P50, P70 and P80 forecasts exceeded their respective
+low bids under both models. The median P70 overshoot was 253.3% for the
+original and 253.2% for the blend. Only Williamson County had a matching
+printed engineer total. The four cases do not establish a common-risk
+engineer benchmark. See `handoff/scratchpad/external_project_totals/`.
+
+These historical reconstructions use the engine's published quantity-band
+multipliers, fitted across the full development period. The Round 23
+historical calibration records share that limitation. On Frisco's Edgewood
+streambank job, removing this table lowered the recent-blend P70 by
+$3,919.60 under the five-bidder assumption. The original two-bidder tab
+cannot supply an item-level benchmark requiring three contractors.
+
+The largest source of error on Williamson's Ronald Reagan Boulevard job
+was the payment unit for video-detection cable. Item 238 printed EA for
+13,503 units of VIVDS cabling. The five-bidder median was $3.20. The
+model took $10,619.51 from the general traffic-signal EA group. TxDOT
+Special Specification 6306 measures the communications cable by the foot.
+In a historical sensitivity assuming the engineer confirms LF for this
+line, all other 304 line traces stayed identical, and the recent-blend
+P70 fell from $215.27 million to $59.95 million against a $52.16 million
+actual base low. The original scored record retains the printed unit. A
+local intake and result warning asks the user to verify the contract unit
+before using the EA price. See `handoff/scratchpad/vivds_unit_resolution/`.
+
+### Round 37 — Blend the medians of three recent projects
+
+The direct comparison first located 24 non-LS items across 17 municipal
+projects with three eligible historical references. Across those items,
+using three medians instead of the latest alone lowered the median absolute
+unit error from 31.45% to 22.98% and absolute extended error by $9,004.
+Direct use of three nevertheless cost $19,300 more in absolute error than
+Round 23. An independent reconstruction of all contractor columns on one
+source showed that two of the 24 relied on an incomplete table. Omitting
+both left 22 items and the same $9,004 saving over the latest alone.
+
+In a project replay with quantity factors computed at each opening and
+strictly earlier calibration, P80 covered 203 of 235 historical comparisons
+with either direct-three or Round 23. Direct-three increased the summed
+absolute project errors by $21,507 at P50, $27,182 at P70 and $29,200 at
+P80 relative to Round 23. Full and partially covered bases are identified
+in the report. Only two original engineer totals could be linked for a
+project yardstick. These data cannot verify performance against engineers
+at the same coverage.
+
+Round 37 registered a geometric blend of the incumbent and the
+three-project price for the remaining 22 physical items. All other items
+kept Round 23. Across 8,700 physical items, median absolute unit error
+was 32.58%, compared with 32.64% for Round 23. The new blend saved
+$3,261 in absolute extended error. The project-level 90% interval ranged
+from a $17,297 saving to an $11,564 increase. That missed the registered
+improvement threshold. See `handoff/scratchpad/round37_three_project_blend/`
+and `handoff/scratchpad/three_versus_one_projects/`.
+
+Across 1,546 separately reviewed external physical items only one had
+three qualifying references under the historical opening-date proxy.
+On that Baytown trench-safety item a missing horizontal continuation in
+the Mansfield historical panel changed the corrected three-source forecast
+from $2.00 to $1.40/LF. The actual three-source history involved different
+utility scopes. The target median was $2.00/LF, and the latest-only
+prediction was $1.10/LF. See `handoff/scratchpad/three_versus_one_external/RESULT.md`.
+
+An additional historical external case, Frisco's FY2026 erosion contract,
+had all 114 bidder extensions and three complete base bids reconciled.
+The low base was $642,655. The frozen Round 23 P70 was $5,434,916.
+Median absolute error on its 29 non-LS items was 38.93%. Two existing
+joint-sealing lines used a price pool containing pavement reconstruction,
+and two riprap lines specified a reinforced concrete toe wall absent
+from the selected historical descriptions. Together these four physical
+lines explain 76.78% of summed absolute line error. None of that
+percentage apportions the whole-project error. The nine lump sums stayed
+in the contract sum. See `handoff/scratchpad/historical_flood_bank_validation/FRISCO.md`.
+
+Recomputing quantity multipliers for the Frisco opening from 2,110
+strictly earlier recorded sources gave the same individual prices and
+project totals. Recomputing the prior calibration as well put Round 23
+P70 at $5,419,823. With 121 fully priced prior contracts and no
+inferred fixed amount, P70 was $5,252,200. Neither history choice
+accounts for the gap to the $642,655 actual base. See
+`handoff/scratchpad/frisco_prior_quantity/RESULT.md`.
+
+Using the repaired six-contractor Mansfield median on the two affected
+historic selections gave $76,073 summed absolute physical-line error for
+latest-direct and $69,138 for three-direct. The latter was still greater
+than Round 23's $56,564 on the 24 shared items. The restored source was
+absent from all 163 archived Round 23 direct references. The pooled
+market-price inputs remained frozen for this diagnostic. See
+`handoff/scratchpad/dated_source_repair/RESULT.md`.
+
+Of 329 independently measurable items on four other complete external
+contracts, one unit rate changed with date-specific quantity factors.
+Rebuilding the earlier municipal calibration lowered the Round 23 median
+P70 overshoot on these four from 253.21% to 251.83%. All four priced
+complete contracts stayed above their actual base lows. Reconstructing
+the six whole-contract pricing stages showed that the line-estimate sum
+already exceeded the base low on each of the four and on the newly
+reviewed Frisco erosion job. Project comparables moved the Wichita Falls
+five-bidder total upward from $237,931 to $338,239, and Calhoun County's
+downward from $803,520 to $550,752. See
+`handoff/scratchpad/external_project_totals/STAGES.md`.
+
+The City of Frisco's earlier concrete joint-sealant procurement
+2409-134 had three contractors, three named road segments and seven
+optional quantity bands. All 30 official rates use lane-miles. The
+quantity of actual joints in LF was not reported. The source also
+requires work without backer rod and includes traffic control in its
+price. It supplies zero same-scope LF prices for the later erosion
+job. See `handoff/scratchpad/new_joint_seal_references/FRISCO.md`.
+
+### Rounds 38–41 — Evidence for unit prices and the covered project subtotal
+
+The owner changed the project score to the original low bidder's covered,
+non-lump-sum subtotal. The revised development replay scored 174 of 235
+municipal schedules. The incumbent P80 reached that subtotal on 134 of 174.
+The following retrospective experiments kept the model and public release
+unchanged. The historical panel reconstructs winning extensions from quantities
+and unit prices. Independent publication dates are available for a smaller subset.
+
+- **Round 38.** Of 110 previously eligible unit-price replacements, one had
+  an independently verified target opening, a matching complete bidder column
+  and a reference published before the target date. Its substitution increased
+  the absolute extended error by $441.24 against the incumbent.
+- **Round 39.** Recalibrating the upper percentiles on previous scoped outcomes
+  raised P80 coverage from 95/125 to 102/125 on jobs with enough calibration
+  history. Among jobs it covered, the median overshoot rose from 42.36% to
+  47.00%. P70 and P80 quantile losses both increased. The uncertainty change
+  failed its registered tests.
+- **Round 40.** Of 40 covered-subtotal P80 underestimates, 38 were already low
+  when the unadjusted market unit prices were extended. A search over 243
+  documented source positions for 6,035 comparable item positions found one
+  fully eligible direct replacement. It increased absolute extended error by
+  $474.33 against the Round 23 candidate.
+- **Round 41.** A conditional calibration used the predeclared 25% threshold
+  for the share of modeled variable cost excluded from the score. Of 57
+  triggered targets, 12 had the required 40 earlier comparable histories.
+  P80 coverage moved from 134/174 to 136/174, below the 80% floor. None of
+  the eight independently timed targets had enough verified priors. The
+  experiment qualified for neither adoption nor independent confirmation.
+
+The registered inputs, forecasts and results are in the corresponding
+`round38_source_certified_blend`, `round39_scoped_calibration`,
+`round40_unit_underbid` and `round41_scope_exposure` local study directories.
 
 ## 6. Parser rounds (versions .18 to .34b)
 
@@ -925,7 +1685,7 @@ Taken together, the owner's decisions define the problem: the objective (at leas
 
 ## 11. What could be done next
 
-Algorithm work is stopped by the owner's decision of 2026-11-21 18:23. These are the candidate steps the sources name, each with the reason it might pay.
+Algorithm work is paused after the single Round 21 exception to the owner's 2026-11-21 decision. These are the candidate steps the sources name, each with the reason it might pay.
 
 1. **Run the prospective checks.** Collect 40 new DFW municipal lettings dated after 2026-11-20, then check rounds 11, 13, 18 and round 20 arm G. Check T1 at 100 new TxDOT lettings or on 2027-03-31. Check the guard target and the narrow carry on 2027 lettings. Why: rounds 11 and 13 showed development overshoot gains of 13.2 and 5.2 points and can only be switched on this way; it is also the only clean test, since every rule so far was found on the 2024–26 lettings.
 2. **Restart from the capped-mobilization rule (C).** One small job blocks it: a retaining wall bid by the SY, matched to a cell that holds sidewalk-type items. Why: C cuts the line error of 58 mobilization lines from $16.01M to $4.65M; on its own it lowered the line error sum by 3.3% in round 19.

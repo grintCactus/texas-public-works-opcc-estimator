@@ -190,9 +190,10 @@ def compare(a, b):
         walk(x, y, "")
         hx = (x["result"].get("headline") or {})
         hy = (y["result"].get("headline") or {})
-        same_headline += (hx.get("p50") == hy.get("p50")
-                          and hx.get("p80") == hy.get("p80"))
-    print("schedules %d; P50 and P80 identical in %d" % (len(A), same_headline))
+        same_headline += (x.get("status") == y.get("status") == 200
+                          and all(k in hx and k in hy and hx[k] == hy[k]
+                                  for k in ("p50", "p70", "p80")))
+    print("schedules %d; P50, P70 and P80 identical in %d" % (len(A), same_headline))
     print("leaves compared: %s" % dict(c))
     allowed = {k: n for k, n in diffs.items()
                if k.startswith("string: ") and k.endswith(BY_DESIGN)}

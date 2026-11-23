@@ -13,12 +13,8 @@ data/*
 # Working area: scratch runs and data snapshots (tens of GB)
 handoff/
 
-# Outputs built mostly from company files (kept local)
-reports/opcc_benchmark.md
-reports/opcc_analysis.md
-reports/segment_and_company_test.md
-reports/streambank_opcc_accuracy.md
-reports/measurements/company_*
+# Reports, QA exports and run logs are local working material.
+/reports/
 
 # Local Claude Code state
 .claude/
@@ -29,13 +25,9 @@ ui/.inbox/
 ui/.local/
 # UI caches (full copies of data tables, include company rows)
 ui/.cache/
-# Run logs (list every input file, including company files)
-reports/measurements/*.log
 
 # Internal handbook (mentions company projects; kept local)
 docs/HANDBOOK_internal.md
-# Record of a locked-test-set run (kept local)
-reports/measurements/holdout_confirm_*
 
 # Deploy: built artefacts (the assembled package, the bundle cut from a working copy) and run records
 deploy/space/

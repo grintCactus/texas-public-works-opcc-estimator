@@ -400,3 +400,57 @@ To publish the whole pipeline, content that named private test files left the co
 
 Older md5 values in this file refer to the same logic.
 
+## Round 23 prospective municipal confirmation (2026-11-22 23:05 UTC)
+
+The frozen Round 23 candidate passed development track U. Its development
+registration has SHA-256
+`ddaca2bda918b53d9c4935a5855f2bc04800d506300e615b7ffef6ff49e812ff`.
+The owner's amendment to exclude lump-sum units from all item metrics has
+SHA-256 `8e517e31de5896f34e26b1cbc3292daa43b28321d829b8b1ff8f30013293637b`.
+
+Compare this single rule with the original estimate on the first 40 independently
+verified, scorable DFW municipal lettings opening after 2026-11-20. Log each
+source and any exclusion at intake. Seal both predictions before scoring each
+letting, use only evidence available before its opening, and evaluate the
+decision once the cohort is complete. Keep complete schedules, including LS,
+for the project metrics. For unit-price metrics require the same known
+physical unit and item, a positive quantity, and at least three distinct
+actual bidder unit prices. Exclude LS and its source spellings from both arms
+before all item statistics. Report how many pairs and projects the rule
+actually changed. Report a printed engineer estimate separately when present.
+
+Apply track U on this cohort. P80 must meet or exceed the low bid on at least
+80% of projects, with no increase in its under rate overall or in any
+represented opening year. For the sum of absolute unit-price errors times
+quantity, the upper end of the paired 90% interval must be below zero and the
+median absolute log unit-price error must not increase. Use 2,000 project-level
+resamples, seed 20261119. For median absolute P50 error and median conditional P80
+overshoot, the lower ends of the paired intervals must be at most zero, and
+the point increases at most 0.5 and 1.0 percentage points respectively.
+Require identical TxDOT predictions and matching project scope and price
+availability. Keep the incumbent if confirmation fails or the data cannot
+establish improvement. Report older or non-DFW independent replays separately.
+The four-opening locked set stays sealed.
+
+
+## Project accuracy on covered, non-lump-sum work (2026-11-22 Central)
+
+Registered before rescoring the public line receipts. This owner-directed change
+supersedes the project-score scope of earlier registrations for future comparisons.
+Keep their original receipts. Issue the forecast on the complete bid schedule.
+For P50, P70 and P80 include only covered, non-LS lines on both sides. Keep the
+original base low bidder throughout. Use its extended amounts on the retained
+lines. Score any printed engineer benchmark on those identical lines. Require
+the same eligible positions across both arms for an adoption comparison.
+
+Keep specified fixed amounts at face value. At each forecast percentile allocate
+the balance of the issued estimate in proportion to covered variable market
+amounts, then sum the retained lines. A job with no eligible lines, no positive
+actual subtotal, unresolved eligible prices, or missing winning extensions has
+no score. Count every disposition. Do not change model fitting, forecasts, or
+the worksheet to implement a metric. Report signed and absolute percentage error
+and the share at or above the actual, one vote per scored letting. Apply the
+existing P80 floor of 80% on this scope. Historical whole-bid coverage does
+not establish that floor here. First replay the five already-reviewed historical
+city/county schedules with date-specific quantity and calibration forecasts.
+This descriptive replay cannot confirm an adoption decision.

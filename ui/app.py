@@ -194,12 +194,32 @@ def _json_body(body: bytes) -> dict:
         return {}
     if len(body) > MAX_JSON_BYTES:
         raise ApiError(413, "Request body too large.")
+    def finite_float(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("Numbers must be finite.")
+        return number
+
+    def invalid_constant(value):
+        raise ValueError("Numbers must be finite.")
+
     try:
-        d = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as e:
+        d = json.loads(body.decode("utf-8"), parse_float=finite_float,
+                       parse_constant=invalid_constant)
+    except (UnicodeDecodeError, ValueError, RecursionError) as e:
         raise ApiError(400, "Body is not valid JSON: %s" % e)
     if not isinstance(d, dict):
         raise ApiError(400, "Body must be a JSON object.")
+    # A request has only a few levels; refuse pathological nesting before
+    # later helpers turn values into strings or walk them recursively.
+    pending = [(d, 0)]
+    while pending:
+        value, depth = pending.pop()
+        if isinstance(value, (dict, list)):
+            if depth > 64:
+                raise ApiError(400, "Request is nested too deeply; simplify it.")
+            children = value.values() if isinstance(value, dict) else value
+            pending.extend((child, depth + 1) for child in children)
     return d
 
 
@@ -570,16 +590,27 @@ def r_estimate(req):
                 "nor a feature of this estimate -- it is only a backtest "
                 "baseline. Feeding it in would recycle the very bias the tool "
                 "exists to remove." % k)
+    items = payload.get("items")
+    if items is not None and not isinstance(items, list):
+        raise ApiError(400, "items must be a list of objects "
+                            "({description, unit, quantity, ...}).")
     # the OPCC worksheet's prices are output only: refused, never read
     bad = [k for k in WORKSHEET_FIELDS if k in payload] + sorted({
-        k for it in (payload.get("items") or []) if isinstance(it, dict)
+        k for it in (items or []) if isinstance(it, dict)
         for k in WORKSHEET_FIELDS if k in it})
     if bad:
         raise ApiError(400, "'%s' belongs to the OPCC worksheet: the "
                             "estimator's own prices are output only and never "
                             "an input to the estimate." % bad[0])
     try:
-        return ENGINE.estimate(payload)
+        result = ENGINE.estimate(payload)
+        if any(line.get("status") == "priced"
+               and intake.cabling_unit_conflict(line.get("description"), line.get("unit"))
+               for line in result.get("lines", [])):
+            result["alerts"].append({"code": "cable_unit", "level": "caution",
+                                     "placement": "above_headline", "title": "Check the VIVDS cabling unit.",
+                                     "text": intake.CABLE_UNIT_REVIEW})
+        return result
     except ep.EngineNotReady as e:
         raise ApiError(503, str(e))
     except ep.BadRequest as e:
@@ -685,6 +716,41 @@ def r_worksheet_refs(req):
         raise ApiError(400, str(e))
 
 
+def _validate_worksheet_export_numbers(result, worksheet):
+    """Refuse unsafe output values before any worksheet multiplication."""
+    numeric_fields = {"quantity", "your_unit", "your_amount", "fixed_amount",
+                      "quote", "contingency_pct", "basis_multiplier", "pct",
+                      "p50", "p70", "p80", "p70_multiplier",
+                      "subtotal", "contingency", "your_opcc",
+                      "unit_price_p50", "amount_p50", "raw", "unit_price",
+                      "median_unit", "adjusted_median", "escalation", "factor"}
+    pending = [(result, ""), (worksheet, "")]
+    while pending:
+        value, field = pending.pop()
+        if isinstance(value, dict):
+            pending.extend((item, key) for key, item in value.items())
+            continue
+        if isinstance(value, list):
+            pending.extend((item, field) for item in value)
+            continue
+        if isinstance(value, bool):
+            if field in numeric_fields:
+                raise ApiError(400, "A worksheet quantity or price must be a number.")
+            continue
+        if isinstance(value, (int, float)):
+            number = value
+        elif isinstance(value, str) and field in numeric_fields:
+            try:
+                number = float(value)
+            except (ValueError, OverflowError):
+                continue  # missing prices keep their existing flags
+        else:
+            continue
+        if abs(number) > ep.MAX_INPUT_NUMBER or not math.isfinite(number):
+            raise ApiError(400, "A worksheet quantity, price or total is too large "
+                                "or not finite; enter a smaller number.")
+
+
 def _worksheet_export(req, kind):
     import worksheet
     d = req.json()
@@ -692,6 +758,7 @@ def _worksheet_export(req, kind):
     ws = d.get("worksheet") if isinstance(d.get("worksheet"), dict) else None
     if result is None or ws is None:
         raise ApiError(400, "Send {result, request, worksheet}.")
+    _validate_worksheet_export_numbers(result, ws)
     refs = None
     if isinstance(d.get("request"), dict) and ENGINE.refs_state.get("ready"):
         try:

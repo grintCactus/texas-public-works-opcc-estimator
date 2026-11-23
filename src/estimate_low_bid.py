@@ -121,6 +121,7 @@ import collections
 import contextlib
 import csv
 import datetime as _dt
+import hashlib
 import math
 import os
 import re
@@ -1581,6 +1582,21 @@ class Tables:
         self.calib = {}
         for r in _read("estimator_calibration.csv"):
             self.calib[r["market"]] = r
+        # The optional P70 trial leaves published P50/P80 fields untouched.
+        trial = _read("estimator_p70_calibration.csv")
+        if trial:
+            with open(os.path.join(CLEAN, "estimator_calibration.csv"), "rb") as f:
+                base_sha = hashlib.sha256(f.read()).hexdigest()
+            for r in trial:
+                c = self.calib.get(r.get("market"))
+                p30 = _f(r.get("p30"))
+                if (c is not None and r.get("base_calibration_sha256") == base_sha
+                        and r.get("train_scope") == "public_external_only"
+                        and p30 and math.isfinite(p30) and p30 > 0):
+                    c["p30"] = p30
+                    c["p70_calibration_n"] = r.get("n")
+                else:
+                    self.notes.append("P70 trial calibration is unavailable or does not match the base tables")
 
         # F1 / V2 / T1 for a NEW schedule: attach_v2f1f2() loads them
         self.size_cells = None
@@ -2573,6 +2589,14 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
             lvl = _f(c.get("not_under_level"))
             if lvl:
                 out["not_under_level"] = lvl
+        # P70 uses the empirical p30, never a blend of P50/P80 amounts.
+        # The nominal 30% under target does not use the P80 guard.
+        p30 = _f(c.get("p30"))
+        if (c.get("quantiles_basis") == "centred" and p30
+                and math.isfinite(p30) and p30 > 0):
+            out["p70_multiplier"] = 1.0 / p30
+            out["expected_low_p70"] = out["expected_low"] / p30
+            out["p70_calibration_n"] = _f(c.get("p70_calibration_n") or c.get("n"))
         out["calibration_n"] = _f(c.get("n"))
         out["calibration_market"] = c.get("market")
     else:
@@ -2585,6 +2609,8 @@ def estimate(tab, items, n_bidders, market="municipal", to_year=None,
         out["uncovered_quoted_n"] = n_q
         if n_q == len(uncov):
             out["complete_total"] = out["expected_low"] + quoted
+            if out.get("expected_low_p70"):
+                out["complete_total_p70"] = out["expected_low_p70"] + quoted
             if out.get("expected_low_p80"):
                 out["complete_total_p80"] = out["expected_low_p80"] + quoted
         elif n_q:
@@ -4010,7 +4036,8 @@ def calibrate_forward(write=True, per_letting=None, fitted=None):
                          "over_share_centred": round(
                              sum(1 for x in cen if x >= 1.0) / len(cen), 6),
                          "p10": round(q(.10), 6), "p20": round(q(.20), 6),
-                         "p25": round(q(.25), 6), "p75": round(q(.75), 6),
+                         "p25": round(q(.25), 6), "p30": round(q(.30), 6),
+                         "p75": round(q(.75), 6),
                          "p80": round(q(.80), 6), "p90": round(q(.90), 6),
                          "quantiles_basis": "centred",
                          "level_correction": round(lc, 6),
@@ -4521,6 +4548,17 @@ def _selftest():
     chk("13 not-under estimate = estimate / p20",
         round(r13["expected_low_p80"] / r13["expected_low"], 6),
         round(1 / 0.8, 6))
+
+    # P70 is independent of the guarded P80 baseline and absent without p30.
+    chk("13 no p30, no invented P70", "expected_low_p70" in r13, False)
+    t7.calib["municipal"]["p30"] = "0.9"
+    r13p70 = estimate(t7, items, 4, "municipal", "2026")
+    chk("13 P70 divides by the centred p30",
+        round(r13p70["expected_low_p70"] / r13p70["expected_low"], 6),
+        round(1 / 0.9, 6))
+    chk("13 P70 leaves P50/P80 unchanged",
+        (r13p70["expected_low"], r13p70["expected_low_p80"]),
+        (r13["expected_low"], r13["expected_low_p80"]))
 
     # 14 a year past the index's last row is carried flat -- never priced
     #    at its vintage with the escalation silently dropped -- and said so
@@ -5675,6 +5713,9 @@ def run_schedule(path, n_bidders, market="municipal", to_year=None,
     if r["expected_low"] is not None:
         print("EXPECTED LOW BID                             %18.2f%s"
               % (r["expected_low"], cov_note))
+        if r.get("expected_low_p70"):
+            print("P70 TRIAL OPCC (nominal 70%% target)          %18.2f   [x%.3f]%s"
+                  % (r["expected_low_p70"], r["p70_multiplier"], cov_note))
         if r.get("expected_low_p80"):
             print("NOT-UNDER ESTIMATE (low bid at or below it in 80%% of "
                   "lettings)  %12.2f   [x%.3f]%s"

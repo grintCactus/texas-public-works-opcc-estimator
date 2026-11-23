@@ -25,12 +25,13 @@
 <div id="app">
 
 <header class="topbar">
-  <div class="brand">Bid Estimator <span>expected low bid (P50) &middot; recommended OPCC (P80)</span></div>
+  <div class="brand">Bid Estimator <span>Texas public works</span></div>
   <nav class="jump" id="jump">
     <a href="#sec-input"><span class="num">1</span>Takeoff</a>
     <a href="#sec-project"><span class="num">2</span>Project</a>
     <a href="#sec-results" class="off" id="jump-results"><span class="num">3</span>Results</a>
     <a href="#sec-export" class="off" id="jump-export"><span class="num">4</span>Export</a>
+    <a href="/manual.html" id="user-manual" target="_blank" rel="noopener">User Manual</a>
   </nav>
 </header>
 
@@ -74,8 +75,7 @@
         <div class="tplbar" id="template-bar">
           <a class="btn sm" id="btn-template" href="/api/takeoff/template.xlsx"
              download="takeoff_template.xlsx">Download the takeoff template (Excel)</a>
-          <span class="muted-note">Fill in one pay item per row: item no., description,
-            unit, quantity. Then paste the rows here with the header row, or upload the file.</span>
+          <span class="muted-note">One pay item per row. Include the header row when pasting.</span>
         </div>
         <div class="tabs" id="input-tabs">
           <button data-pane="paste" aria-selected="true">Paste text</button>
@@ -87,13 +87,12 @@
           <div class="row-actions" style="margin-top:8px">
             <button class="btn primary" id="btn-parse-text">Read items</button>
             <button class="btn ghost sm" id="btn-sample">Load an example</button>
-            <span class="muted-note">Copy straight out of Excel &mdash; tab-separated columns are detected.</span>
           </div>
         </div>
         <div class="tabpane" id="pane-file">
           <div class="dropzone" id="dropzone">
             <div class="big">Drop a takeoff here, or click to choose</div>
-            <div class="small">Excel (.xlsx) &middot; CSV &middot; PDF (text layer or scanned, read offline) &middot; Word (.docx)</div>
+            <div class="small">Excel &middot; CSV &middot; PDF &middot; Word</div>
           </div>
           <!-- AI mode: the one place for reading with AI (user, 2026-11-21:
                it replaces "Read a PDF with Claude"; files still go in through
@@ -105,14 +104,9 @@
           </div>
           <div class="aimode-panel" id="ai-mode-panel" hidden>
             <div class="aimode-head">AI mode <span class="soon">coming later</span></div>
-            <p>Put the job&rsquo;s engineering drawings (plan sheets), specifications, other
-              documents, or a scanned or hard-to-read bid schedule in the drop area above. Then
-              press <b>Read by AI</b>: it will find the work to be done and how much of each (the
-              pay items and their quantities) and put them here as a takeoff for you to check
-              before you estimate.</p>
+            <p>Reading drawings and specifications by AI is not available yet.</p>
             <div class="row-actions">
               <button class="btn primary" id="btn-ai-read" type="button" disabled>Read by AI</button>
-              <span class="muted-note">Not available yet: this is where it will be.</span>
             </div>
           </div>
           <input type="file" id="file-input" hidden
@@ -120,19 +114,9 @@
           <div id="file-status" style="margin-top:9px"></div>
           <div class="muted-note public-only">Files you upload are processed on this
             server and not stored. Do not upload confidential documents.</div>
-          <div class="muted-note">Column order does not matter. An amount column is read
-            only for owner-set allowances; every other price is estimated, never read off the file.</div>
         </div>
       </div>
-      <div class="notice info slim">
-        <span class="ic">i</span>
-        <div class="body-txt">
-          Each line is matched to an item type (with its unit and size) the same way the price
-          history was sorted, so it is compared with like items. Check the classification column and
-          pick another item type with <b>Change</b> when it is wrong. Nothing is priced until you press
-          <b>Estimate</b>.
-        </div>
-      </div>
+      <div class="muted-note">Check each item&rsquo;s classification; use <b>Change</b> to correct it.</div>
     </div>
 
     <div id="parse-notes"></div>
@@ -140,16 +124,9 @@
 
   <div class="gridhead" id="grid-head" hidden>
     <span class="hint" id="review-count"></span>
-    <!-- what each tag on a line means, in words (no tooltip needed on a phone) -->
-    <ul class="legend" id="grid-legend" aria-label="What the tags on the lines mean">
-      <li><span class="badge unc">not covered</span> almost no earlier bids for this kind of item &mdash; get a vendor quote</li>
-      <li><span class="badge lowc">low confidence</span> a lump sum bidders price very differently &mdash; read the range</li>
-      <li><span class="badge allow">owner-set</span> owner&rsquo;s money (allowance, contingency) &mdash; enter its amount</li>
-      <li><span class="badge uncl">unclassified</span> no item type found &mdash; pick one with Change</li>
-      <li><span class="badge check">check</span> the reader is unsure about this line; the reasons are shown on the line</li>
-      <li><span class="badge remembered">remembered</span> your earlier choice for this wording</li>
-      <li id="legend-claude" hidden><span class="badge claude">read by Claude</span> read from a PDF by Claude &mdash; check it against the document</li>
-    </ul>
+    <div class="legend-heading" id="grid-legend-heading" hidden>What the colors mean</div>
+    <ul class="legend" id="grid-legend" aria-labelledby="grid-legend-heading"></ul>
+    <div class="legend-note">An item without a warning still needs review; it is not a high-confidence rating.</div>
   </div>
   <div class="tablewrap" id="grid-wrap" hidden>
     <table class="grid" id="review-table">
@@ -190,31 +167,26 @@
             <button data-v="txdot" aria-pressed="false">TxDOT</button>
             <button data-v="not_sure" aria-pressed="false" title="Priced as City / County, the default market">Not sure</button>
           </div>
-          <span class="sub">Which past bids the estimate is based on.</span>
         </label>
         <label class="field">
           <span class="lab">Owner <span class="dim">(optional)</span></span>
           <input type="text" id="in-owner" list="owner-list" autocomplete="off"
                  placeholder="type or pick an owner">
           <datalist id="owner-list"></datalist>
-          <span class="sub" id="owner-note">Earlier jobs of the same owner weigh more when similar
-            projects are picked. Not listed? Pick "Other &mdash; not in the list" or just type it.</span>
+          <span class="sub" id="owner-note">Choose from the list or type an owner.</span>
         </label>
         <label class="field">
           <span class="lab">Work type <span class="dim">(optional)</span></span>
           <input type="text" id="in-worktype" list="worktype-list" autocomplete="off"
                  placeholder="type or pick a work type">
           <datalist id="worktype-list"></datalist>
-          <span class="sub" id="worktype-note">Jobs of the same work type weigh more when similar
-            projects are picked. Not listed? Pick "Other / not listed" or just type it.</span>
+          <span class="sub" id="worktype-note">Choose from the list or type a work type.</span>
         </label>
       </div>
       <div>
         <label class="field">
           <span class="lab">Bid date</span>
           <input type="date" id="in-biddate">
-          <span class="sub">Prices are brought to its year; only bids made before it are
-            used.</span>
         </label>
         <label class="field">
           <span class="lab">Expected bidders</span>
@@ -244,9 +216,6 @@
     <div class="row-actions">
       <button class="btn primary big" id="btn-estimate" disabled>Estimate</button>
       <span class="muted-note" id="estimate-hint"></span>
-      <span class="spacer"></span>
-      <span class="muted-note opcc-note"><b>There is deliberately no field for your
-        OPCC or the engineer's estimate:</b> they never feed the estimate.</span>
     </div>
   </div>
 </section>
@@ -266,13 +235,11 @@
         <a href="#p-similar">Similar projects</a><span class="sep" aria-hidden="true">&middot;</span>
         <a href="#p-worksheet">Worksheet</a>
       </nav>
-      <div id="r-context"></div>
       <div id="r-warnings"></div>
     </div>
   </div>
   <div class="panel flush" id="p-worksheet">
-    <h2>OPCC worksheet <span class="hint">your unit prices next to the model&rsquo;s and the
-      reference projects&rsquo;; your prices are output only &mdash; they never feed back into the estimator</span></h2>
+    <h2>OPCC worksheet <span class="hint">review and enter your unit prices</span></h2>
     <div class="body">
       <div id="ws-totals"></div>
       <!-- the export's heading, and how picked prices are rounded -->
@@ -280,11 +247,11 @@
         <label>Project <input type="text" id="ws-project" class="cellinput"></label>
         <label>Prepared by <input type="text" id="ws-prepared" class="cellinput" placeholder="initials"></label>
         <label>Project no. <input type="text" id="ws-projno" class="cellinput"></label>
-        <label title="The model's and the quick picks' prices are rounded to a round number ($5 to $1,000 steps by size). A price you type is never rounded.">Round prices
+        <label title="The model's and the quick picks' prices are rounded to a round number ($5 to $1,000 steps by size). Recent bid defaults use cents. A price you type is never rounded.">Round prices
           <select id="ws-round">
             <option value="up">up to a round number</option>
             <option value="nearest">to the nearest round number</option>
-            <option value="off">off (exact)</option>
+            <option value="off">cents only</option>
           </select></label>
       </div>
       <div class="hintline" id="ws-hint" role="note" hidden>
@@ -300,11 +267,11 @@
             <th class="desc">Description</th>
             <th style="width:70px" class="num">Qty</th>
             <th style="width:46px">Unit</th>
-            <th style="width:92px" class="num" id="th-model" title="The model&rsquo;s unit price at the level picked above the table (P50 or P80)">Model $/unit<br><span class="dim">P80</span></th>
-            <th style="width:136px" class="num" title="Low &ndash; median &ndash; high of this line&rsquo;s reference projects&rsquo; median-bidder unit prices, escalated to the bid year">Reference range</th>
-            <th style="width:96px">Accuracy</th>
+            <th style="width:92px" class="num" id="th-model" title="The median of three matching recent projects, adjusted to the bid year">Bid median $/unit</th>
+            <th style="width:136px" class="num" title="Selected recent projects&rsquo; bidder medians, adjusted to the target bid year; open the line for each source">Reference range</th>
+            <th style="width:96px">Model accuracy</th>
             <th style="width:104px">Your $/unit</th>
-            <th style="width:196px" title="Where your unit price comes from: the model's price by default; pick another reference here">Reference</th>
+            <th style="width:196px" title="Where your unit price comes from: recent matching bid medians by default; pick another reference here">Reference</th>
             <th style="width:100px" class="num">Your amount</th>
             <th style="width:108px">Note</th>
           </tr>
@@ -338,9 +305,7 @@
   <div class="body row-actions">
     <button class="btn" id="btn-export-xlsx">Download the OPCC (Excel)</button>
     <button class="btn" id="btn-export-pdf">Download the OPCC (PDF)</button>
-    <span class="muted-note">Excel: your OPCC in the usual layout (items, Sub-Total,
-      contingency, Project Total), then a summary next to the model&rsquo;s P50 / P80, every
-      line, and the past projects behind each price. PDF: the OPCC as it prints.</span>
+    <span class="muted-note">Download your worksheet as Excel or a print-ready PDF.</span>
   </div>
 </section>
 

@@ -4,8 +4,9 @@ A working aid for estimators preparing an opinion of probable construction cost 
 
 - **It puts the evidence in front of the estimator.** For every line it shows the earlier public bids behind the price: project, date, quantity, the low and median bidders' unit prices. Each project links to its full bid tabulation and to the public page it came from. It also shows the most similar past projects, the lines it cannot price (specialty items that need a vendor quote), and the lines whose prices are uncertain.
 - **It estimates the bid where the history supports it:**
-  - **P50**, the expected low bid;
-  - **P80**, a "not-under" OPCC, set so that the actual low bid comes in below it on at least 80% of lettings.
+  - **P50**, the expected low bid.
+  - **P70**, the current trial recommendation. The project estimate uses an empirical percentile of earlier public bids.
+  - **P80**, a "not-under" OPCC, with a target of meeting or exceeding the comparable bid subtotal on at least 80% of lettings.
 
 The estimator stays in charge. The model's number is one input among the references, not a replacement for judgment. Where history is thin, the tool says so and leans on the references instead.
 
@@ -13,7 +14,7 @@ The focus is municipal work in the Dallas–Fort Worth area, especially creek er
 
 The model is trained **only on public bid tabulations**. Every number it reports was measured **forward in time**: each letting is priced using only lettings dated before it, the way the tool would actually be used.
 
-> **Status: work in progress.** The data pipeline, the evaluation framework, the confirmed pricing changes and the web app are in place. TxDOT accuracy is near engineer level; municipal accuracy is still short of the goal (see below). Model optimization is paused since 2026-11-21 (after round 20). Maintainers and coding agents start with [`AGENTS.md`](AGENTS.md) and [`docs/HANDOFF.md`](docs/HANDOFF.md).
+> **Status: work in progress.** The data pipeline, the evaluation framework, the confirmed pricing changes and the web app are in place. TxDOT accuracy is near engineer level; municipal accuracy is still short of the goal (see below). Municipal pricing experiments resumed on 2026-11-22. The dated results below identify the cohorts and scoring rules. Maintainers and coding agents start with [`AGENTS.md`](AGENTS.md) and [`docs/HANDOFF.md`](docs/HANDOFF.md).
 
 ---
 
@@ -38,8 +39,7 @@ Or run it on your own machine (see [Running it](#running-it)), then open http://
    - A contingency line (a lump sum worded as a contingency) has no item type and is not priced from history. Pick its size from a list: 5–25% of the subtotal (10% by default), or the owner's fixed amount when the bid form prints one.
    - Vendor quotes for specialty items the tool does not price (pumps, generators, prefabricated bridges, …).
 3. **Read the estimate.**
-   - P50 (expected low bid) and P80 (a not-under OPCC), with their ranges and the market's track record.
-   - "What P50 and P80 mean" opens on a click: plain words with this job's numbers, a picture of the idea (where the low bid may land, and which line is P50 and which is P80), and how the spread is measured.
+   - The two cards show Expected low bid (P50) and Recommended OPCC (P70). The User Manual explains the percentiles, the historical accuracy figures and the P80 baseline.
    - The items left out for a vendor quote, and the lump sums whose prices are uncertain.
    - Warnings are one short sentence each, with what to do and the lines involved. Tick a warning once you have checked it and it turns gray. A not-covered line stops being flagged once it has your number: a vendor quote, or your own price in the worksheet.
 4. **Check the evidence.**
@@ -47,15 +47,17 @@ Or run it on your own machine (see [Running it](#running-it)), then open http://
    - Open a project to see its whole bid tabulation, the original document, its public source page, and its copy in the data repository.
    - The four most similar past projects are shown with their full bids.
 5. **Build your OPCC.**
-   - The worksheet's prices start from the model's **P80** (the recommended OPCC) or its **P50**: click either headline card, or P50 | P80 above the totals. A switch puts every line back on the model's price at that level, after a confirmation if you changed any.
-   - Keep the model's unit price or pick one from the references, line by line: the newest item worded exactly like yours comes first, then averages, medians and lows. Add notes.
+   - A new worksheet starts each eligible item at the median of three matching public projects' bidder medians, adjusted to the bid year. It favors the preceding year and searches back at most two years. Review the three sources or enter an engineer's price where the evidence is insufficient.
+   - Keep the suggested unit price or pick one from the references, line by line: the newest item worded exactly like yours comes first, then averages, medians and lows. Add notes.
    - A not-covered line has one number: the vendor quote under Project details, the line's amount in the takeoff and its price on the worksheet stay the same whichever you type in. It needs no new estimate, since P50 and P80 leave the line out.
-   - Picked prices are rounded to a round number, in a step that grows with the price ($0.50 under $10, then $5, $10, $100, $500, $1,000). Up by default; to the nearest, or off, from the list. A price you type is never rounded.
+   - Picked prices are rounded to a round number, in a step that grows with the price ($0.50 under $10, then $5, $10, $100, $500, $1,000). New worksheets use cents by default. You can choose to round up or to the nearest step. A price you type is never rounded.
    - Mobilization and temporary erosion control are left for you to fill in. Whether a job has mobilization, and what erosion control a site needs, are the engineer's call. The model's price stays in the quick picks.
    - The estimate is laid out as an OPCC: the items, then the **subtotal**, then the **contingency** below it, then the **total**. This holds for P50, for P80 and for your own OPCC. A contingency given as a percentage stays that percentage of the subtotal at P50 and at P80.
-   - Pick your own construction contingency from a list (0–25% of the subtotal): 10% by default, 0% when the schedule already carries a contingency line (then it is an additional construction contingency). Its row stays at 0% too, so changing it changes numbers, not the layout. The page shows how often an OPCC that high came in under the low bid on past jobs: in cities, P50 + 10% did on about 30% of jobs, and P80 on about 14%.
-   - "Your OPCC" is shown next to the model's P50 and P80.
+   - Pick your own construction contingency from a list (0–25% of the subtotal): 10% by default, 0% when the schedule already carries a contingency line (then it is an additional construction contingency). Its row stays at 0% too, so changing it changes numbers, not the layout. The User Manual includes historical contingency comparisons.
+   - Compare Your OPCC with the project-level P50 and P70.
 6. **Export** (step 4) gives the Excel workbook, or the OPCC as it prints as a PDF (US Letter); there are no other downloads. The first sheet is the OPCC itself, in the usual layout and with one total: a title, the project, date, prepared by and project no.; then item no., description, units, quantity, unit cost and total cost; then Sub-Total, Construction Contingency and Project Total, and a blank interim-review box at the bottom right, from Units to Total Cost, laid out as on a printed OPCC: "INTERIM REVIEW ONLY", the standard legend, and blanks for the engineer, P.E. serial no., date, company and firm registration no. The seal goes there when the OPCC is submitted. It prints on portrait pages one page wide (columns A-F, the header repeated on each page). The source of each unit cost and your note on the line sit beside the printed block as working notes. A heavy frame, a gray ESTIMATED QUANTITIES band and the interim-review box at the bottom right follow the usual OPCC. The totals are live formulas that also carry their values, so previews that do not calculate (Quick Look, phones, mail) still show the right numbers, and long descriptions wrap with their rows sized to fit. Printed, the OPCC looks like the usual paper OPCC on US Letter: no lines inside the table or under the totals, the title and project block in a bold serif; on screen the sheet's gridlines show the cells both ways, and they are not printed. The PDF is the same page. The Summary draws its own grid lines, and every sheet is set to US Letter. The Summary is one page in the same style: the project, your OPCC (Sub-Total, contingency, Project Total) and how it compares with the model's P50 and P80. Then come every line with the model's prices and your notes, and a references appendix: for each line, its past projects, each with its own item as bid (words, unit, quantity, and low, average and median bid).
+
+**Screenshots from the earlier P80 interface**
 
 ![The estimate for a public creek-bank schedule: expected low bid (P50) and recommended OPCC (P80) with their ranges, and one line opened to the earlier public bids behind its price](assets/screenshot-estimate.png)
 
@@ -78,7 +80,25 @@ The estimate is meant to be used as an OPCC, where underestimating is the costly
 2. **Score:** within that floor, P80 should overshoot the low bid **as little as possible** (13% is the aspiration).
 3. **Yardstick:** at the same not-under rate, the overshoot is compared with engineers' own estimates. Engineer estimates are never an input.
 
-## Where it stands (2026-11-21)
+## Project accuracy
+
+For each letting, the current score compares the estimated subtotal for covered,
+non-lump-sum items with the original low bidder's subtotal for exactly those
+items. The worksheet still includes the full schedule. The P80 target is to meet
+or exceed this comparable subtotal on at least 80% of scored lettings. The
+[scoring instructions](docs/HANDOFF.md#current-evaluation-scope) explain how
+to run a paired comparison and account for incomplete records.
+
+On 174 of 235 historical municipal development schedules, the incumbent met
+or exceeded the comparable low-bid subtotal on 81 at P50 (46.6%), 112 at P70
+(64.4%) and 134 at P80 (77.0%). Median absolute percentage errors were 21.0%,
+25.9% and 38.8%, respectively. The remaining 61 had incomplete or unresolved
+evidence. These estimates used historical bidder counts and reconstructed
+winning extensions. The P80 target remains unmet in this development replay.
+
+## Historical baseline (2026-11-21)
+
+The tables below use the original project scopes, which retained lump sums.
 
 All figures are forward in time: each letting is priced from lettings dated before it, and the model had not seen the letting.
 

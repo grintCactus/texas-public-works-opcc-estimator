@@ -35,6 +35,8 @@ import urllib.request
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(TOOLS))
 LOCK = os.path.join(REPO, "deploy", "bundle.lock.json")
+sys.path.insert(0, TOOLS)
+import public_p70  # noqa: E402
 
 
 def sha256(path):
@@ -86,7 +88,8 @@ def check(dest):
     if not os.path.exists(mpath):
         print("no data/MANIFEST.json under %s" % dest)
         return 1
-    man = json.load(open(mpath, encoding="utf-8"))
+    with open(mpath, encoding="utf-8") as manifest:
+        man = json.load(manifest)
     bad = 0
     for k, v in sorted(man["files"].items()):
         p = os.path.join(dest, k)
@@ -103,6 +106,39 @@ def check(dest):
     return bad
 
 
+def check_existing_p70(tf, members, clean):
+    """Check an existing trial against the incoming archive before replacing any table."""
+    target = os.path.join(clean, public_p70.NAME)
+    if not os.path.lexists(target):
+        return
+    if not os.path.isfile(target):
+        raise ValueError("The existing P70 path is not a regular file. Use a separate destination.")
+    current = sha256(target)
+    by_name = {m.name: m for m in members if m.isfile()}
+    incoming_sidecar = by_name.get("data/clean/" + public_p70.NAME)
+    if incoming_sidecar:
+        with tf.extractfile(incoming_sidecar) as stream:
+            if current == hashlib.sha256(stream.read()).hexdigest():
+                return
+    else:
+        incoming_base = by_name.get("data/clean/estimator_calibration.csv")
+        if incoming_base:
+            with tf.extractfile(incoming_base) as stream:
+                base_sha = hashlib.sha256(stream.read()).hexdigest()
+            if base_sha == public_p70.BASE_SHA256:
+                if current == public_p70.SIDECAR_SHA256:
+                    return
+            else:
+                # An older bundled trial is ignored by the model on a new
+                # base. A custom trial still belongs to its own base.
+                old_base = os.path.join(clean, "estimator_calibration.csv")
+                if (current == public_p70.SIDECAR_SHA256
+                        or (os.path.isfile(old_base) and sha256(old_base) == base_sha)):
+                    return
+    raise ValueError("The incoming bundle conflicts with the existing P70 calibration. "
+                     "The installed tables were preserved. Use a separate destination.")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dest", default=REPO, help="folder that gets data/ (default: this checkout)")
@@ -111,8 +147,16 @@ def main(argv=None):
     a = ap.parse_args(argv)
     dest = os.path.abspath(a.dest)
     if a.check:
-        return 1 if check(dest) else 0
-    lock = json.load(open(LOCK, encoding="utf-8"))
+        if check(dest):
+            return 1
+        try:
+            public_p70.install(os.path.join(dest, "data", "clean"), check_only=True)
+        except (ValueError, OSError) as exc:
+            print("STOP: %s" % exc)
+            return 1
+        return 0
+    with open(LOCK, encoding="utf-8") as lock_file:
+        lock = json.load(lock_file)
     if os.path.exists(os.path.join(dest, "data", "clean", "line_items.csv")):
         print("STOP: %s has its own built tables (data/clean/line_items.csv). "
               "The bundle is for a fresh checkout; use --dest for another folder."
@@ -141,15 +185,35 @@ def main(argv=None):
             if not ok:
                 print("STOP: unexpected member in the archive: %r" % m.name)
                 return 1
+        try:
+            check_existing_p70(tf, members, os.path.join(dest, "data", "clean"))
+        except (OSError, ValueError) as exc:
+            print("STOP: %s" % exc)
+            return 1
         os.makedirs(os.path.join(dest, "data", "clean"), exist_ok=True)
         for m in members:
             if m.isfile():
                 out = os.path.join(dest, *m.name.split("/"))
+                if m.name == "data/clean/" + public_p70.NAME:
+                    try:
+                        with tf.extractfile(m) as src:
+                            public_p70.ensure_sidecar(os.path.dirname(out), src.read())
+                    except (OSError, ValueError) as exc:
+                        print("STOP: %s" % exc)
+                        return 1
+                    continue
                 with tf.extractfile(m) as src, open(out + ".part", "wb") as fh:
                     shutil.copyfileobj(src, fh, 1 << 20)
                 os.replace(out + ".part", out)
     bad = check(dest)
     if not bad:
+        try:
+            sidecar = public_p70.install(os.path.join(dest, "data", "clean"))
+        except (ValueError, OSError) as exc:
+            print("STOP: %s" % exc)
+            return 1
+        if sidecar:
+            print("P70 calibration matches the registered public result.")
         print("ready: start the app with  python ui/run.py  (http://127.0.0.1:8017/)")
     return 1 if bad else 0
 

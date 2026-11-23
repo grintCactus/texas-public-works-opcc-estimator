@@ -43,16 +43,19 @@ TOOLS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(TOOLS))
 sys.path.insert(0, TOOLS)
 import scan_public as sp  # noqa: E402
+import public_p70  # noqa: E402
 
 csv.field_size_limit(10 ** 9)
 
 UI_COPY = ["app.py", "build_item_accuracy.py", "data_access.py",
-           "engine_production.py", "exporter.py", "intake.py",
+           "engine_production.py", "exporter.py", "history_prices.py",
+           "history_inflation.py", "intake.py",
            "integration_check.py", "lettings.py", "matching.py",
            "public_mode.py", "run.py", "upstream.py", "worksheet.py",
            "item_accuracy.json", "ingest/__init__.py", "ingest/bidtab.py",
            "ingest/claude_reader.py", "ingest/ocr.py", "ingest/takeoff.py",
-           "static/index.html", "static/app.js", "static/style.css"]
+           "static/index.html", "static/app.js", "static/style.css",
+           "static/manual.html", "static/manual.css", "static/manual.js"]
 UI_OPTIONAL = ["public_mirror.json"]
 PACKAGE_FILES = ["Dockerfile", ".dockerignore", ".gitattributes",
                  "requirements.txt", "README.md"]
@@ -150,7 +153,8 @@ def main(argv=None):
     if mpath is None:
         print("STOP: no MANIFEST.json for the bundle under %s" % bundle)
         return 2
-    bman = json.load(open(mpath, encoding="utf-8"))
+    with open(mpath, encoding="utf-8") as manifest:
+        bman = json.load(manifest)
     files = sorted(os.path.basename(k) for k in bman["files"])
     missing = [f for f in files if not os.path.exists(os.path.join(bd, f))]
     if missing:
@@ -207,6 +211,15 @@ def main(argv=None):
                       "rule": v.get("rule")}
                   for k, v in bman["files"].items()},
         "total_bytes": bman.get("total_bytes")}
+    try:
+        sidecar = public_p70.install(dd)
+    except (OSError, ValueError) as exc:
+        print("STOP: %s" % exc)
+        return 1
+    if sidecar and public_p70.NAME not in files:
+        public_manifest["files"]["data/clean/" + public_p70.NAME] = sidecar
+        public_manifest["total_bytes"] = sum(entry["bytes"] for entry in public_manifest["files"].values())
+        files.append(public_p70.NAME)
     with open(os.path.join(space, "data", "MANIFEST.json"), "w",
               encoding="utf-8") as fh:
         json.dump(public_manifest, fh, indent=1)

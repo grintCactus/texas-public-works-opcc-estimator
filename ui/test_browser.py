@@ -32,6 +32,8 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 
 try:
     from playwright.sync_api import sync_playwright
@@ -132,7 +134,8 @@ class PageInteractions(unittest.TestCase):
         page.click("#btn-parse-text")
         page.wait_for_function("n => S.lines.length === n && S.lines.every(l => l.cls)", arg=9 + len(extra))
         page.click("#btn-estimate")
-        page.wait_for_function("() => S.result && S.ws.refs", timeout=30000)
+        page.wait_for_function("() => S.result && S.ws.refs && S.ws.refsReq === S.resultReq",
+                               timeout=90000)
         # no smooth scrolling under test: boxes are measured right away
         page.evaluate("() => { document.documentElement.style.scrollBehavior = 'auto'; }")
         page.wait_for_timeout(700)
@@ -140,6 +143,64 @@ class PageInteractions(unittest.TestCase):
 
     def expanded(self, page, row):
         return page.get_attribute('tr[data-line="%s"]' % row, "aria-expanded")
+
+    def test_invalid_bidder_counts_do_not_change_the_estimate(self):
+        """A typed count must never be truncated or silently replaced by auto."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                before = page.evaluate("() => S.result.headline")
+                requests = []
+                page.on("request", lambda r: requests.append(r.url)
+                        if r.url.endswith("/api/estimate") else None)
+                for value in ("1.5", "0", "-2", "61", "1e309"):
+                    with self.subTest(value=value):
+                        page.fill("#in-bidders", value)
+                        self.assertTrue(page.is_disabled("#btn-estimate"))
+                        self.assertEqual(page.get_attribute("#in-bidders", "aria-invalid"), "true")
+                        self.assertIn("whole number", page.inner_text("#bidders-hint"))
+                        self.assertIn("whole number", page.inner_text("#estimate-hint"))
+                        page.click("#btn-reestimate")
+                        self.assertEqual(page.evaluate("() => S.result.headline"), before)
+                self.assertEqual(requests, [])
+                page.fill("#in-bidders", "4")
+                self.assertTrue(page.is_enabled("#btn-estimate"))
+                self.assertEqual(page.get_attribute("#in-bidders", "aria-invalid"), "false")
+                page.click("#btn-estimate")
+                page.wait_for_function("() => S.result.competition.n_bidders === 4 && !S.stale")
+                self.assertEqual(len(requests), 1)
+                page.fill("#in-bidders", "1.5")
+                page.click("#btn-bidders-reset")
+                self.assertTrue(page.is_enabled("#btn-estimate"))
+                page.fill("#in-bidders", "")
+                self.assertTrue(page.is_enabled("#btn-estimate"))
+                self.assertEqual(page.get_attribute("#in-bidders", "aria-invalid"), "false")
+                self.assertEqual(errors, [])
+
+    def test_an_overflowing_worksheet_price_is_rejected_and_can_be_corrected(self):
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                field = 'tr[data-line="r3"] input.yourp'
+                before = page.evaluate("() => S.result.headline")
+                previous = page.input_value(field)
+                previous_unit = page.evaluate("() => S.ws.lines.r3.your_unit")
+                page.fill(field, "1" + "0" * 308)
+                page.press(field, "Tab")
+                page.wait_for_selector('#toasts .toast')
+                self.assertIn("previous price is kept", page.inner_text("#toasts"))
+                self.assertEqual(page.input_value(field), previous)
+                self.assertEqual(page.evaluate("() => S.ws.lines.r3.your_unit"), previous_unit)
+                self.assertTrue(page.evaluate("() => { const t = wsTotals(S.result); "
+                                             "return [t.sub, t.cont, t.yours].every(Number.isFinite); }"))
+                self.assertNotIn("∞", page.inner_text("#ws-totals"))
+                page.fill(field, "44")
+                page.press(field, "Tab")
+                page.wait_for_function("() => S.ws.lines.r3.your_unit === 44")
+                self.assertEqual(page.evaluate("() => wsAmount(S.result.lines.find(l => l.row_id === 'r3'), "
+                                               "S.ws.lines.r3)"), 184800)
+                self.assertEqual(page.evaluate("() => S.result.headline"), before)
+                self.assertEqual(errors, [])
 
     def test_a_click_on_a_line_toggles_its_references(self):
         for engine in self.engines:
@@ -174,8 +235,8 @@ class PageInteractions(unittest.TestCase):
 
     def test_the_reference_column_shows_and_changes_the_source(self):
         """2026-11-21 (user): a column of its own, "Reference", says where each
-        unit price comes from. It starts on the default (the model's price at
-        the chosen level), short enough to read whole; picking another there
+        unit price comes from. It starts on the approved recent median when
+        available, short enough to read whole; picking another there
         changes the price, which flashes; a price rounded from its source
         says so; a price you type reads "your price"."""
         for engine in self.engines:
@@ -186,20 +247,19 @@ class PageInteractions(unittest.TestCase):
                 sel = row + " td.refcell select.pick"
                 shown = lambda: page.evaluate("s => { const e = document.querySelector(s); "
                                               "return e.options[e.selectedIndex].text; }", sel)
-                self.assertTrue(shown().startswith("Model P80 \u00b7 $"), shown())
-                # every model-priced line starts on the model's price
-                firsts = page.evaluate("() => [...document.querySelectorAll('#result-body td.refcell select.pick')]"
-                                       ".map(s => s.options[s.selectedIndex].text)")
-                self.assertTrue(firsts and all(t.startswith(("Model P80", "engineer input")) for t in firsts), firsts)
+                hp = page.evaluate("() => S.ws.refs.r3.history_price")
+                if hp["status"] == "available":
+                    self.assertTrue(shown().startswith("Recent bid median"), shown())
+                else:
+                    self.assertEqual(page.input_value(row + " input.yourp"), "")
+                self.assertTrue(page.evaluate("() => Object.values(S.ws.lines).every(w => w.src !== 'model')"))
                 want = page.evaluate("() => S.ws.refs && S.ws.refs.r3 && S.ws.refs.r3.range.median")
                 page.select_option(sel, "ref_median")
                 page.wait_for_timeout(300)
                 self.assertTrue(shown().startswith("Ref. median ("), shown())
                 got = float(page.input_value(row + " input.yourp").replace(",", ""))
-                self.assertAlmostEqual(got, page.evaluate("p => nicePrice(p, 'up')", want), places=2)
+                self.assertAlmostEqual(got, float(page.evaluate("p => priceText(p)", want)), places=2)
                 self.assertIn("flash", page.get_attribute(row + " input.yourp", "class"))
-                if abs(got - want) > 0.004:
-                    self.assertIn("rounded up from", page.inner_text(row + " td:has(.yourcell)"))
                 self.assertEqual(self.expanded(page, "r3"), "false")
                 # a price you type: the column says so
                 page.fill(row + " input.yourp", "44")
@@ -209,29 +269,27 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(errors, [])
 
     def test_opcc_conventions_on_the_worksheet(self):
-        """2026-11-21 (user and their team): prices are round numbers;
+        """Recent medians use cents by default; optional rounding still works;
         mobilization and temporary erosion control are the engineer's to
-        fill in; the references show the average bid; the P50/P80
-        explanation is folded until asked for and carries a picture."""
+        fill in; the references show the average bid. P50/P70 guidance
+        opens in the User Manual without losing the worksheet."""
         for engine in self.engines:
             with self.subTest(engine=engine):
                 page, errors = self.estimate_page(engine)
-                # round numbers: the model's price, rounded up by default
+                self.assertEqual(page.input_value("#ws-round"), "off")
                 for k in ("r3", "r4", "r7"):
-                    got = float(page.input_value('tr[data-line="%s"] input.yourp' % k))
-                    want = page.evaluate("k => nicePrice(modelUnit(S.result.lines.find(l => l.row_id === k)),"
-                                         " 'up')", k)
-                    self.assertAlmostEqual(got, want, places=2)
-                    self.assertEqual(got, page.evaluate("v => nicePrice(v, 'up')", got))
+                    hp = page.evaluate("k => S.ws.refs[k].history_price", k)
+                    value = page.input_value('tr[data-line="%s"] input.yourp' % k)
+                    if hp["status"] == "available":
+                        want = page.evaluate("v => Math.round((v + Number.EPSILON) * 100) / 100", hp["unit_price"])
+                        self.assertEqual(float(value), want)
+                        self.assertEqual(hp["n_projects"], 3)
+                    else:
+                        self.assertEqual(value, "")
                 self.assertEqual(page.evaluate("() => [nicePrice(48, 'up'), nicePrice(137.2, 'up'), "
                                                "nicePrice(2022, 'nearest'), nicePrice(37585, 'up'), "
                                                "nicePrice(6.07, 'up'), nicePrice(41.3, 'off')]"),
                                  [50, 140, 2000, 38000, 6.5, 41.3])
-                page.select_option("#ws-round", "off")
-                page.wait_for_timeout(300)
-                exact = float(page.input_value('tr[data-line="r3"] input.yourp'))
-                self.assertAlmostEqual(exact, page.evaluate(
-                    "() => modelUnit(S.result.lines.find(l => l.row_id === 'r3'))"), places=2)
                 # mobilization (r1) and temporary erosion control (r2): blank
                 for k in ("r1", "r2"):
                     self.assertEqual(page.input_value('tr[data-line="%s"] input.yourp' % k), "")
@@ -242,11 +300,34 @@ class PageInteractions(unittest.TestCase):
                 page.click('tr[data-line="r3"] td:nth-child(2)')
                 page.wait_for_selector('[data-refs="r3"][data-loaded="1"]', timeout=30000)
                 self.assertIn("average bid $/unit", page.inner_text('[data-refs="r3"] thead').lower())
-                # P50 / P80: folded, a picture once opened
-                self.assertFalse(page.evaluate("() => document.querySelector('#r-headline details.meaning').open"))
-                page.click("#r-headline details.meaning > summary")
-                self.assertEqual(page.locator("#r-headline details.meaning svg.pp").count(), 2)
-                self.assertTrue(page.is_visible("#r-headline details.meaning svg.pp"))
+                # Guidance has its own tab; reading it leaves this work intact.
+                self.assertEqual(page.locator("#r-headline details.meaning, #r-headline .howcalc").count(), 0)
+                self.assertEqual(page.get_attribute("#user-manual", "href"), "/manual.html")
+                self.assertEqual(page.get_attribute("#user-manual", "target"), "_blank")
+                before = page.evaluate("() => ({result: S.result, worksheet: S.ws})")
+                with page.context.expect_page() as opened:
+                    page.click("#user-manual")
+                manual = opened.value
+                manual_errors = []
+                manual.on("pageerror", lambda e: manual_errors.append(str(e)))
+                manual.wait_for_load_state()
+                self.assertEqual(manual.url, self.url + "/manual.html")
+                self.assertIn("User Manual", manual.title())
+                guidance = manual.locator("#p50-p70")
+                self.assertIn("P50", guidance.inner_text())
+                self.assertIn("P70", guidance.inner_text())
+                self.assertIn("not been independently validated", guidance.inner_text())
+                charts = manual.locator("#p50p70-charts svg.pp")
+                self.assertEqual(charts.count(), 2)
+                for chart in charts.all():
+                    self.assertTrue(chart.is_visible())
+                manual.set_viewport_size({"width": 375, "height": 812})
+                self.assertLessEqual(manual.evaluate("() => Math.max(document.documentElement.scrollWidth, "
+                                                    "document.body.scrollWidth)"), 375)
+                self.assertEqual(manual_errors, [])
+                manual.close()
+                self.assertEqual(page.url, self.url + "/")
+                self.assertEqual(page.evaluate("() => ({result: S.result, worksheet: S.ws})"), before)
                 self.assertEqual(errors, [])
 
     def test_a_not_covered_line_with_your_number_stops_reminding(self):
@@ -256,7 +337,7 @@ class PageInteractions(unittest.TestCase):
             with self.subTest(engine=engine):
                 page, errors = self.estimate_page(engine)
                 k = page.evaluate("() => S.result.lines.find(l => l.status === 'not_covered').row_id")
-                self.assertGreater(page.locator("#r-headline .covnote").count(), 0)
+                self.assertTrue(page.locator('#r-warnings [data-ack="not_covered"]').is_visible())
                 self.assertIn("no bid history", page.inner_text("#r-warnings"))
                 self.assertEqual(page.evaluate("k => wsJudgment(S.result.lines.find(l => l.row_id === k))", k),
                                  ["not covered"])
@@ -264,7 +345,7 @@ class PageInteractions(unittest.TestCase):
                 page.fill(inp, "45000")
                 page.press(inp, "Tab")
                 page.wait_for_timeout(400)
-                self.assertEqual(page.locator("#r-headline .covnote").count(), 0)
+                self.assertEqual(page.locator('#r-warnings [data-ack="not_covered"]').count(), 0)
                 self.assertNotIn("no bid history", page.inner_text("#r-warnings"))
                 self.assertIn("$90,000", page.inner_text("#r-notcovered"))
                 self.assertEqual(page.evaluate("k => wsJudgment(S.result.lines.find(l => l.row_id === k))", k), [])
@@ -284,7 +365,7 @@ class PageInteractions(unittest.TestCase):
                 page.wait_for_selector("#hint-pop:not([hidden])")
                 text = page.inner_text("#hint-pop")
                 self.assertIn("Past public bids", text)
-                self.assertIn("not in P50 / P80", text)
+                self.assertIn("not in P50 / P70", text)
                 self.assertIn("per EA", text)
                 page.mouse.move(5, 5)
                 self.assertFalse(page.is_visible("#hint-pop"))
@@ -330,60 +411,174 @@ class PageInteractions(unittest.TestCase):
                 self.assertFalse(page.evaluate("() => S.stale"))
                 self.assertEqual(errors, [])
 
-    def test_prices_start_from_p80_or_p50_at_a_click(self):
-        """2026-11-21 (user): P50 or P80 is the estimator's choice. The
-        worksheet starts from the model's P80; one click switches every
-        model price to P50, one click switches back, and a switch replaces
-        the prices changed meanwhile (after a confirmation)."""
+    def test_recent_bid_defaults_preserve_models_and_export_their_sources(self):
+        """Three approved recent medians set item prices, independently of P70;
+        saved model bases still mean what their stored labels say."""
+        import io
+        import openpyxl
         for engine in self.engines:
             with self.subTest(engine=engine):
                 page, errors = self.estimate_page(engine)
-                price = lambda k: float(page.input_value('tr[data-line="%s"] input.yourp' % k).replace(",", ""))
-                p50 = lambda k: page.evaluate("k => S.result.lines.find(l => l.row_id === k).unit_price_p50", k)
-                m = page.evaluate("() => S.result.headline.p80_multiplier")
-                self.assertGreater(m, 1.0)
-                self.assertEqual(page.get_attribute('#ws-totals .basis .seg[data-basis="p80"]', "aria-pressed"), "true")
-                self.assertEqual(price("r3"), page.evaluate("v => nicePrice(v, 'up')", p50("r3") * m))
-                self.assertIn("P80", page.inner_text("#th-model"))
-                big80 = page.inner_text("#ws-totals .yours .big")
-                page.click('#ws-totals .basis .seg[data-basis="p50"]')
-                page.wait_for_timeout(400)
-                self.assertEqual(page.get_attribute('#ws-totals .basis .seg[data-basis="p50"]', "aria-pressed"), "true")
-                self.assertEqual(price("r3"), page.evaluate("v => nicePrice(v, 'up')", p50("r3")))
-                self.assertIn("P50", page.inner_text("#th-model"))
-                self.assertNotEqual(page.inner_text("#ws-totals .yours .big"), big80)
-                # a price you typed is replaced by the switch, once you confirm
-                inp = 'tr[data-line="r4"] input.yourp'
-                page.fill(inp, "123")
-                page.press(inp, "Tab")
-                page.wait_for_timeout(300)
-                asked = []
-                page.once("dialog", lambda d: (asked.append(d.message), d.accept()))
-                page.click('#ws-totals .basis .seg[data-basis="p80"]')
-                page.wait_for_timeout(400)
-                self.assertTrue(asked and "1 price you changed" in asked[0])
-                self.assertEqual(price("r4"), page.evaluate("v => nicePrice(v, 'up')", p50("r4") * m))
-                self.assertEqual(page.inner_text("#ws-totals .yours .big"), big80)
-                # the headline's P50 / P80 cards switch it too, and show which one is in use
-                self.assertIn("chosen", page.get_attribute('#r-headline .bigcard[data-basis="p80"]', "class"))
-                page.click('#r-headline .bigcard[data-basis="p50"] .cap')
-                page.wait_for_timeout(400)
-                self.assertEqual(page.evaluate("() => S.ws.basis"), "p50")
-                self.assertIn("chosen", page.get_attribute('#r-headline .bigcard[data-basis="p50"]', "class"))
-                self.assertIn("uses these prices", page.inner_text('#r-headline .bigcard[data-basis="p50"]'))
-                self.assertEqual(page.get_attribute('#ws-totals .basis .seg[data-basis="p50"]', "aria-pressed"), "true")
-                self.assertEqual(price("r3"), page.evaluate("v => nicePrice(v, 'up')", p50("r3")))
+                headline = page.evaluate("() => S.result.headline")
+                page.evaluate("""() => {
+                    const target = S.result.lines.find(l => l.row_id === 'r3');
+                    const refs = [1, 2, 3].map(k => ({key: 'public-test-' + k,
+                        project: 'Public reference ' + k, owner: 'Public owner', date: '2025-0' + k + '-10',
+                        item_no: '10', item: target.description, unit: target.unit, quantity: target.quantity,
+                        median_unit: (10.345 + k) / 1.05, adjusted_median: 10.345 + k, escalation: 1.05,
+                        index_evidence: {reason: 'Matched public bid index', notes: ['Prior dates only']},
+                        match_basis: ['Same unit and item'], source: {url: 'https://example.org/bids/' + k}}));
+                    S.ws.refs.r3.history_price = {status: 'available', unit_price: 12.345, n_projects: 3,
+                        references: refs, reason: 'Three matching recent projects', evidence: ['Adjusted to bid-year prices'],
+                        method: 'recent_matching_bid_medians_v1', price_basis: 'bid_date_adjusted', target_year: 2026};
+                    // Deliberately conflicting model evidence must not describe the history default.
+                    target.basis = 'Priced from 2 earlier projects';
+                    S.ws.refs.r3.n_refs = 2;
+                    S.ws.refs.r3.range = {low: 1.68, median: 2.5, high: 4.5, mean: 2.9};
+                    S.ws.refs.r4.history_price = {status: 'insufficient', unit_price: null, n_projects: 2,
+                        references: refs.slice(0, 2), reason: 'Only two matching recent projects; enter your unit price.'};
+                    S.ws.lines.r3 = {src: '', note: ''}; S.ws.lines.r4 = {src: '', note: ''};
+                    renderWsNow();
+                }""")
+                price = 'tr[data-line="r3"] input.yourp'
+                self.assertEqual(page.input_value(price), "12.35")
+                self.assertEqual(page.input_value('tr[data-line="r4"] input.yourp'), "")
+                self.assertIn("rounded to cents", page.inner_text('tr[data-line="r3"]'))
+                self.assertIn("Bid median", page.text_content("#th-model"))
+                row = page.locator('tr[data-line="r3"]')
+                self.assertIn("3 recent projects", row.locator(".desccell").inner_text())
+                self.assertNotIn("2 earlier projects", row.inner_text())
+                self.assertNotIn("2 references", row.inner_text())
+                reference_range = row.locator(".ref-range").inner_text()
+                self.assertIn("$11.35 – $13.35", reference_range)
+                self.assertIn("median $12.35 · 3 projects", reference_range)
+                self.assertNotIn("$1.68", reference_range)
+                selected = row.locator(".selected-source")
+                self.assertEqual(selected.inner_text(), "Recent bid median · $12.35")
+                self.assertTrue(selected.is_visible())
+                self.assertTrue(selected.evaluate("e => e.scrollWidth <= e.clientWidth && e.scrollHeight <= e.clientHeight"))
+                self.assertIn("2 recent projects · 3 required", page.inner_text('tr[data-line="r4"] .ref-range'))
+                self.assertEqual(page.locator('#ws-totals .basis button').count(), 0)
+                before = page.evaluate("() => wsDoc()")
+                for basis in ("p50", "p70"):
+                    card = page.locator('#r-headline .bigcard[data-basis="%s"]' % basis)
+                    self.assertIsNone(card.get_attribute("role"))
+                    self.assertIsNone(card.get_attribute("tabindex"))
+                    card.click()
+                    self.assertEqual(page.evaluate("() => wsDoc()"), before)
+                self.assertEqual(page.evaluate("() => S.result.headline"), headline)
+                self.assertNotIn("past jobs exceeded", page.inner_text("#ws-totals"))
+                record = next(l for l in before["worksheet"]["lines"] if l["row_id"] == "r3")
+                self.assertEqual(before["worksheet"]["basis"], "history")
+                self.assertIsNone(before["worksheet"]["basis_multiplier"])
+                self.assertEqual(record["raw"], 12.345)
+                self.assertEqual(record["your_unit"], 12.35)
+                self.assertEqual(len(record["history_price"]["references"]), 3)
+                qty = page.evaluate("() => S.result.lines.find(l => l.row_id === 'r3').quantity")
+                self.assertAlmostEqual(record["your_amount"], qty * 12.35)
+                for k in (1, 2, 3):
+                    self.assertIn("Public reference " + str(k), record["source"])
+                    self.assertIn("2025-0%d-10" % k, record["source"])
+                payload = page.evaluate("() => ({result: S.result, request: S.resultReq, worksheet: wsDoc().worksheet})")
+                response = page.request.post(self.url + "/api/worksheet/export/xlsx", data=payload)
+                self.assertEqual(response.status, 200)
+                wb = openpyxl.load_workbook(io.BytesIO(response.body()), data_only=True)
+                exported = "\n".join(str(c.value) for sh in wb for row in sh for c in row if c.value is not None)
+                for k in (1, 2, 3):
+                    self.assertIn("Public reference " + str(k), exported)
+                    self.assertIn("2025-0%d-10" % k, exported)
+                # No P70 data is needed to preserve or use the historical price.
+                page.evaluate("() => { delete S.result.headline.p70; delete S.result.headline.p70_multiplier; renderWsNow(); }")
+                self.assertEqual(page.input_value(price), "12.35")
+                # Existing saved P80 worksheets are interpreted without migration.
+                page.evaluate("() => { S.ws.basis = 'p80'; S.ws.lines.r3.src = 'model'; renderWsNow(); }")
+                saved = page.evaluate("() => wsDoc()")
+                self.assertEqual(saved["worksheet"]["basis"], "p80")
+                self.assertEqual(saved["worksheet"]["basis_multiplier"], headline["p80_multiplier"])
+                self.assertEqual(saved["model"]["p80"], headline["p80"])
+                self.assertIn("Model", page.text_content("#th-model"))
+                self.assertEqual(errors, [])
+
+    def test_recent_bid_loading_preserves_typed_prices_and_ignores_stale_responses(self):
+        """Only current references fill untouched defaults; typing and custom
+        picks survive late or failed reference requests."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                page.evaluate("""() => {
+                    window.savedFetch = window.fetch; window.pendingRefs = [];
+                    window.fetch = (url, options) => url === '/api/worksheet/refs'
+                        ? new Promise((resolve, reject) => pendingRefs.push({
+                            resolve: body => resolve(new Response(JSON.stringify(body),
+                                {status: 200, headers: {'Content-Type': 'application/json'}})),
+                            reject, body: JSON.parse(options.body)}))
+                        : savedFetch(url, options);
+                    window.testRefs = Object.values(S.ws.refs);
+                    const hp = {status: 'available', unit_price: 12.345, n_projects: 3,
+                        references: [1, 2, 3].map(k => ({key: 'ref-' + k, project: 'Public reference ' + k,
+                            date: '2025-01-0' + k, median_unit: 12.345, adjusted_median: 12.345})),
+                        reason: 'Three recent projects', evidence: [], method: 'recent_matching_bid_medians_v1', price_basis: 'bid_date_adjusted'};
+                    testRefs.forEach(r => { if (r.row_id === 'r3') r.history_price = hp; });
+                    S.ws.lines.r3 = {src: '', note: ''};
+                }""")
+                page.click("#btn-estimate")
+                page.wait_for_function("() => pendingRefs.length === 1")
+                price = 'tr[data-line="r3"] input.yourp'
+                self.assertEqual(page.input_value(price), "")
+                page.fill(price, "43.21")
+                page.press(price, "Tab")
+                page.evaluate("() => pendingRefs[0].resolve({lines: testRefs})")
+                page.wait_for_function("() => S.ws.refsReq === S.resultReq")
+                self.assertEqual(page.input_value(price), "43.21")
+                self.assertEqual(page.evaluate("() => S.ws.lines.r3.src"), "you")
+                # Two overlapping requests: resolving the old one does not
+                # install its references, and an old failure does not set an error.
+                page.evaluate("() => { S.ws.lines.r3 = {src: '', note: ''}; }")
+                page.click("#btn-estimate")
+                page.wait_for_function("() => pendingRefs.length === 2")
+                page.click("#btn-estimate")
+                page.wait_for_function("() => pendingRefs.length === 3")
+                page.evaluate("() => pendingRefs[1].reject(new Error('old request failed'))")
+                page.wait_for_timeout(100)
+                self.assertEqual(page.evaluate("() => S.ws.refsError"), "")
+                self.assertIsNone(page.evaluate("() => S.ws.refs"))
+                page.evaluate("() => pendingRefs[2].resolve({lines: testRefs})")
+                page.wait_for_function("() => S.ws.refsReq === S.resultReq")
+                self.assertEqual(page.input_value(price), "12.35")
+                page.click("#btn-estimate")
+                page.wait_for_function("() => pendingRefs.length === 4")
+                page.click("#btn-estimate")
+                page.wait_for_function("() => pendingRefs.length === 5")
+                page.evaluate("""() => {
+                    const old = JSON.parse(JSON.stringify(testRefs));
+                    old.find(r => r.row_id === 'r3').history_price.unit_price = 999;
+                    pendingRefs[3].resolve({lines: old});
+                }""")
+                page.wait_for_timeout(100)
+                self.assertIsNone(page.evaluate("() => S.ws.refs"))
+                self.assertEqual(page.input_value(price), "")
+                page.evaluate("() => pendingRefs[4].resolve({lines: testRefs})")
+                page.wait_for_function("() => S.ws.refsReq === S.resultReq")
+                self.assertEqual(page.input_value(price), "12.35")
+                # A deliberate reference pick is not an automatic default.
+                page.select_option('tr[data-line="r3"] select.pick', "ref_median")
+                picked = page.input_value(price)
+                page.click("#btn-estimate")
+                page.wait_for_function("() => pendingRefs.length === 6")
+                page.evaluate("() => pendingRefs[5].reject(new Error('references unavailable'))")
+                page.wait_for_function("() => !!S.ws.refsError")
+                self.assertEqual(page.input_value(price), picked)
+                self.assertIn("could not be loaded", page.inner_text("#ws-totals"))
                 self.assertEqual(errors, [])
 
     def test_the_contingency_changes_numbers_not_the_layout(self):
         """2026-11-21 (user): picking 0%, 5% or 10% changes the numbers
-        only; nothing on the page moves, and an open table stays open."""
+        only; nothing on the page moves."""
         for engine in self.engines:
             with self.subTest(engine=engine):
                 page, errors = self.estimate_page(engine)
                 sel = '#ws-totals select[data-fk="ws:contingency"]'
                 page.locator(sel).scroll_into_view_if_needed()
-                page.click("#ws-totals .cguide details.fold summary")
                 boxes = lambda: page.evaluate("""() => [
                     '#ws-totals select[data-fk="ws:contingency"]', '#ws-totals .wstot .cmp',
                     '#ws-totals .wstot .yours', '#ws-meta', '#result-table'].map(q => {
@@ -396,8 +591,9 @@ class PageInteractions(unittest.TestCase):
                     page.select_option(sel, v)
                     page.wait_for_timeout(300)
                     self.assertEqual(boxes(), ref, v)
-                    self.assertTrue(page.evaluate(
-                        "() => document.querySelector('#ws-totals .cguide details.fold').open"))
+                    self.assertEqual(page.locator("#ws-totals .cguide table").count(), 0)
+                    self.assertNotIn("Your OPCC is", page.inner_text("#ws-totals .cguide"))
+                    self.assertNotIn("past jobs exceeded", page.inner_text("#ws-totals .cguide"))
                     self.assertEqual(page.locator("#result-foot tr.wscont").count(), 1)
                 self.assertIn("(0% of the subtotal)", page.inner_text("#result-foot tr.wscont"))
                 self.assertIn("$0", page.inner_text("#result-foot tr.wscont"))
@@ -407,15 +603,14 @@ class PageInteractions(unittest.TestCase):
     def test_every_edit_reaches_the_exported_excel(self):
         """2026-11-21 (user): change every editable thing on the page to a
         different value, export, and check the Excel really carries each
-        change: the heading, P50 / P80, rounding, a typed price, an engineer's
+        change: the heading, P50 / P70, rounding, a typed price, an engineer's
         number, a Reference pick, a note, a not-covered quote, the
         contingency -- line by line and in the totals."""
         import tempfile
+        from worksheet import price_source
         for engine in self.engines:
             with self.subTest(engine=engine):
                 page, errors = self.estimate_page(engine)
-                page.click('#ws-totals .basis .seg[data-basis="p50"]')        # P50 prices
-                page.wait_for_timeout(300)
                 page.select_option("#ws-round", "off")                       # no rounding
                 page.wait_for_timeout(300)
                 for sel, val in (("#ws-project", "Test Creek Repair 7"), ("#ws-prepared", "QA"),
@@ -465,14 +660,22 @@ class PageInteractions(unittest.TestCase):
                     w = lines[l["row_id"]]
                     if w["your_amount"] is None:
                         self.assertIsNone(o.get("F%d" % r), d)
-                        continue
-                    self.assertAlmostEqual(o["F%d" % r], w["your_amount"], places=2, msg=d)
+                    else:
+                        self.assertAlmostEqual(o["F%d" % r], w["your_amount"], places=2, msg=d)
                     if l["status"] not in ("owner_set",) and w["your_unit"] is not None:
                         self.assertAlmostEqual(o["E%d" % r], w["your_unit"], places=4, msg=d)
-                    self.assertEqual(o.get("G%d" % r) or "", w["source"] or "", d)
+                    expected_source = price_source(w)
+                    if w["your_unit"] is None and w["your_amount"] is None:
+                        self.assertEqual(o.get("E%d" % r), "No price yet", d)
+                        expected_source = "No price yet" + (" (%s)" % expected_source if expected_source else "")
+                    self.assertEqual(o.get("G%d" % r) or "", expected_source, d)
+                    if w["src"] == "history":
+                        for ref in w["history_price"]["references"]:
+                            self.assertIn(ref["project"], o["G%d" % r], d)
+                            self.assertIn(ref["date"], o["G%d" % r], d)
                     self.assertEqual(o.get("H%d" % r) or "", w["note"] or "", d)     # beside the source
                     seen += 1
-                self.assertGreaterEqual(seen, 8)
+                self.assertEqual(seen, len(by_desc))
                 rows = {v: int(c[1:]) for c, v in o.items() if c.startswith("B") and isinstance(v, str)}
                 self.assertAlmostEqual(o["F%d" % rows["Sub-Total"]], tot["subtotal"], places=2)
                 self.assertAlmostEqual(o["F%d" % rows["Construction Contingency (15%)"]],
@@ -480,7 +683,7 @@ class PageInteractions(unittest.TestCase):
                 self.assertAlmostEqual(o["F%d" % rows["Project Total"]], tot["your_opcc"], places=2)
                 # the summary says where the prices started, and the same total
                 srow = {v: c for c, v in sm.items() if isinstance(v, str)}
-                self.assertIn("P50", sm["B" + srow["Prices start from"][1:]])
+                self.assertIn("recent matching public bid medians", sm["B" + srow["Prices start from"][1:]])
                 self.assertAlmostEqual(sm["B" + srow["Project Total"][1:]], tot["your_opcc"], places=2)
                 self.assertEqual(errors, [])
 
@@ -571,6 +774,159 @@ class PageInteractions(unittest.TestCase):
                     "#modal-host .modal select", "s => s.options[s.selectedIndex].text"))
                 self.assertIn("Each line is matched to an item type", page.inner_text("#modal-host .modal"))
                 page.click("#modal-host .modal button.close")
+                self.assertEqual(errors, [])
+
+    def test_new_item_needs_engineer_price_and_keeps_it_in_export(self):
+        """An explicit New item choice leaves the price to the engineer;
+        basis, rounding and re-estimating cannot replace that entered price."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                takeoff_row = page.locator('#review-body tr[data-row="r3"]')
+                price = '#result-body tr[data-line="r3"] input.yourp'
+                original = page.evaluate("() => S.result.lines.find(l => l.row_id === 'r3')")
+                self.assertEqual(original["status"], "priced")
+                prior_price = page.input_value(price)
+                missing_before = page.evaluate("() => wsTotals(S.result).missing")
+                takeoff_row.get_by_role("button", name="Change", exact=True).click()
+                picker = page.locator("#modal-host .modal")
+                self.assertIn("New item / Other", picker.locator('option[value="__new_item__"]').inner_text())
+                picker.locator("select").select_option("__new_item__")
+                picker.get_by_role("button", name="Apply", exact=True).click()
+                page.wait_for_function("() => S.lines.find(l => l.row_id === 'r3').pricing_mode === 'engineer' && S.stale")
+                # The existing result still describes the previous estimate.
+                self.assertEqual(page.input_value(price), prior_price)
+                page.click("#btn-reestimate")
+                page.wait_for_function("() => !S.stale && S.result.lines.find(l => l.row_id === 'r3').pricing_mode === 'engineer'", timeout=60000)
+                self.assertEqual(page.input_value(price), "")
+                self.assertEqual(page.get_attribute(price, "placeholder"), "engineer input")
+                self.assertGreaterEqual(page.evaluate("() => wsTotals(S.result).missing"), missing_before)
+                blank = page.evaluate("() => wsDoc().worksheet.lines.find(l => l.row_id === 'r3')")
+                self.assertIsNone(blank["your_unit"])
+                self.assertIn("engineer input", blank["judgment"])
+                self.assertEqual(blank["source"], "Engineer input")
+
+                page.fill(price, "123.45")
+                page.press(price, "Tab")
+                page.wait_for_function("() => S.ws.lines.r3.your_unit === 123.45")
+                dialogs = []
+                page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+                for basis in ("p50", "p70"):
+                    page.click('#r-headline .bigcard[data-basis="%s"]' % basis)
+                    self.assertEqual(page.evaluate("() => S.ws.basis"), "history")
+                    self.assertEqual(page.input_value(price), "123.45")
+                self.assertEqual(dialogs, [])
+                for rounding in ("nearest", "off", "up"):
+                    page.select_option("#ws-round", rounding)
+                    page.wait_for_timeout(300)
+                    self.assertEqual(page.input_value(price), "123.45")
+                with page.expect_response(lambda r: r.url.endswith("/api/estimate") and r.request.method == "POST") as estimated:
+                    page.click("#btn-estimate")
+                estimated.value.finished()
+                page.wait_for_function("() => !document.querySelector('#btn-estimate').disabled && S.ws.refs", timeout=60000)
+                self.assertEqual(page.input_value(price), "123.45")
+                doc = page.evaluate("() => wsDoc()")
+                requested = next(l for l in doc["request"]["items"] if l["row_id"] == "r3")
+                entered = next(l for l in doc["worksheet"]["lines"] if l["row_id"] == "r3")
+                self.assertEqual(requested["pricing_mode"], "engineer")
+                self.assertNotIn("your_unit", requested)
+                self.assertEqual(entered["your_unit"], 123.45)
+                self.assertEqual(entered["src"], "you")
+                self.assertIn("Engineer", entered["source"])
+                with page.expect_download() as downloaded:
+                    page.click("#btn-export-xlsx")
+                opcc = read_xlsx(downloaded.value.path())["OPCC"]
+                row = next(int(cell[1:]) for cell, value in opcc.items()
+                           if cell.startswith("B") and value == original["description"])
+                self.assertAlmostEqual(opcc["E%d" % row], 123.45, places=4)
+                self.assertAlmostEqual(opcc["F%d" % row], 123.45 * original["quantity"], places=2)
+                self.assertEqual(opcc["G%d" % row], entered["source"])
+
+                # Returning to our reading removes the explicit mode, while
+                # keeping the price the engineer already entered.
+                takeoff_row.get_by_role("button", name="Change", exact=True).click()
+                picker = page.locator("#modal-host .modal")
+                self.assertEqual(picker.locator("select").input_value(), "__new_item__")
+                picker.locator("select").select_option("")
+                picker.get_by_role("button", name="Apply", exact=True).click()
+                page.wait_for_function("() => !S.lines.find(l => l.row_id === 'r3').pricing_mode && S.stale")
+                page.click("#btn-reestimate")
+                page.wait_for_function("() => !S.stale && !S.result.lines.find(l => l.row_id === 'r3').pricing_mode", timeout=60000)
+                self.assertFalse(page.evaluate("() => engineerInput(S.result.lines.find(l => l.row_id === 'r3'))"))
+                self.assertEqual(page.input_value(price), "123.45")
+                page.fill(price, "")
+                page.press(price, "Tab")
+                page.wait_for_function("() => S.ws.refsReq === S.resultReq")
+                hp = page.evaluate("() => S.ws.refs.r3.history_price")
+                if hp["status"] == "available":
+                    page.wait_for_function("() => S.ws.lines.r3.src === 'history' && S.ws.lines.r3.your_unit > 0")
+                    self.assertNotEqual(page.input_value(price), "")
+                else:
+                    self.assertEqual(page.input_value(price), "")
+                self.assertEqual(errors, [])
+
+    def test_unmatched_item_is_manual_only_after_explicit_choice(self):
+        """Automatic unclassified lines retain their existing behavior;
+        the inline New item action makes the engineer-input choice explicit."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine,
+                    extra=["199\tUnobtainium Lattice Deflector\tEA\t3"])
+                line = page.evaluate("() => S.result.lines.find(l => l.item_no === '199')")
+                key = line["row_id"]
+                self.assertIn(line["family"], ("other", "needs_review", ""))
+                self.assertFalse(line.get("pricing_mode"))
+                self.assertFalse(page.evaluate("k => engineerInput(S.result.lines.find(l => l.row_id === k))", key))
+                action = page.locator('#review-body tr[data-row="%s"] .suggest [data-action="new-item"]' % key)
+                self.assertTrue(action.is_visible())
+                self.assertIn("New item / Other", action.inner_text())
+                action.click()
+                page.wait_for_function("k => S.lines.find(l => l.row_id === k).pricing_mode === 'engineer' && S.stale", arg=key)
+                page.click("#btn-reestimate")
+                page.wait_for_function("k => !S.stale && S.result.lines.find(l => l.row_id === k).pricing_mode === 'engineer'", arg=key, timeout=60000)
+                price = '#result-body tr[data-line="%s"] input.yourp' % key
+                self.assertEqual(page.input_value(price), "")
+                self.assertEqual(page.get_attribute(price, "placeholder"), "engineer input")
+                self.assertTrue(page.evaluate("k => engineerInput(S.result.lines.find(l => l.row_id === k))", key))
+                self.assertEqual(errors, [])
+
+    def test_new_item_chosen_during_estimate_discards_the_old_response(self):
+        """A late response cannot hide a newer classification change or
+        replace the worksheet before the latest inputs are estimated."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine)
+                before = page.evaluate("() => ({result: S.result, worksheet: S.ws})")
+                price = '#result-body tr[data-line="r3"] input.yourp'
+                previous_price = page.input_value(price)
+                held = []
+                page.route("**/api/estimate", lambda route: held.append(route), times=1)
+                with page.expect_request(lambda r: r.url.endswith("/api/estimate") and r.method == "POST"):
+                    page.click("#btn-estimate")
+                # Only the request is paused; the user can still change a row.
+                page.locator('#review-body tr[data-row="r3"]').get_by_role(
+                    "button", name="Change", exact=True).click()
+                picker = page.locator("#modal-host .modal")
+                picker.locator("select").select_option("__new_item__")
+                picker.get_by_role("button", name="Apply", exact=True).click()
+                page.wait_for_function("() => S.lines.find(l => l.row_id === 'r3').pricing_mode === 'engineer' && S.stale")
+                self.assertEqual(len(held), 1)
+                with page.expect_response(lambda r: r.url.endswith("/api/estimate") and r.request.method == "POST") as outdated:
+                    held[0].continue_()
+                outdated.value.finished()
+                page.get_by_text("Inputs changed while estimating. Click Estimate again to use the latest items.",
+                                 exact=True).wait_for(state="visible")
+                self.assertTrue(page.is_visible("#stale-banner"))
+                self.assertTrue(page.evaluate("() => S.stale"))
+                self.assertEqual(page.evaluate("() => ({result: S.result, worksheet: S.ws})"), before)
+                self.assertEqual(page.input_value(price), previous_price)
+                self.assertFalse(page.evaluate("() => S.result.lines.find(l => l.row_id === 'r3').pricing_mode"))
+
+                page.click("#btn-reestimate")
+                page.wait_for_function("() => !S.stale && S.result.lines.find(l => l.row_id === 'r3').pricing_mode === 'engineer'", timeout=60000)
+                self.assertEqual(page.input_value(price), "")
+                self.assertEqual(page.get_attribute(price, "placeholder"), "engineer input")
+                self.assertFalse(page.is_visible("#stale-banner"))
                 self.assertEqual(errors, [])
 
     def test_the_takeoff_template_downloads_from_the_first_step(self):
@@ -687,9 +1043,7 @@ class PageInteractions(unittest.TestCase):
                 panel = page.locator("#ai-mode-panel")
                 self.assertTrue(panel.is_visible())
                 self.assertEqual(btn.get_attribute("aria-expanded"), "true")
-                txt = panel.inner_text().lower()
-                for s_ in ("drawings", "quantities", "coming later", "read by ai", "drop area"):
-                    self.assertIn(s_, txt)
+                self.assertIn("not available yet", panel.inner_text().lower())
                 self.assertTrue(page.locator("#btn-ai-read").is_disabled())
                 # one way in for files: the drop area; the old Claude PDF
                 # button is folded into AI mode (user, 2026-11-21)
@@ -728,9 +1082,12 @@ class PageInteractions(unittest.TestCase):
                 self.assertAlmostEqual(share, 0.10, places=6)
                 t = page.evaluate("() => { const t = wsTotals(S.result); return [t.sub, t.below, t.yours]; }")
                 self.assertAlmostEqual(t[2], t[0] * 1.10, places=4)
-                # the headline: subtotal + contingency under P50 and P80
-                self.assertEqual(page.locator("#r-headline .bigcard .csplit").count(), 2)
-                self.assertIn("Contingency 10%", page.inner_text("#r-headline .bigcard .csplit >> nth=0"))
+                # The worksheet carries the breakdown; the headline only shows totals.
+                self.assertEqual(page.locator("#r-headline .bigcard .csplit").count(), 0)
+                self.assertIn("10% of the subtotal", page.inner_text("#result-foot tr.controw"))
+                for row_class, amount in (("wssub", t[0]), ("controw", t[1]), ("wstotal", t[2])):
+                    shown = page.inner_text("#result-foot tr.%s td.money.p50" % row_class)
+                    self.assertAlmostEqual(float(shown.replace("$", "").replace(",", "")), amount, delta=0.5)
                 # the schedule carries a contingency: the worksheet's own one
                 # starts at 0%, picked from a list
                 sel = '#ws-totals select[data-fk="ws:contingency"]'
@@ -1157,7 +1514,7 @@ class PageInteractions(unittest.TestCase):
                 page.click("#btn-estimate")
                 page.wait_for_function("() => S.result && S.ws.refs", timeout=30000)
                 page.evaluate("() => { document.documentElement.style.scrollBehavior = 'auto'; }")
-                p50, p80 = page.evaluate("() => [S.result.headline.p50, S.result.headline.p80]")
+                p50, p70, p80 = page.evaluate("() => [S.result.headline.p50, S.result.headline.p70, S.result.headline.p80]")
                 opts = page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('#result-body tr.clickrow')]
                     .map(tr => [S.lines.find(l => l.row_id === tr.dataset.line).item_no,
                                 [...(tr.querySelector('select.pick') || {options: []}).options].map(o => o.text)]))""")
@@ -1175,11 +1532,11 @@ class PageInteractions(unittest.TestCase):
                 page.wait_for_timeout(300)
                 page.select_option('tr[data-line="%s"] select.pick' % k101, "cap")
                 page.wait_for_timeout(300)
-                self.assertEqual(page.evaluate("() => [S.result.headline.p50, S.result.headline.p80]"), [p50, p80])
+                self.assertEqual(page.evaluate("() => [S.result.headline.p50, S.result.headline.p70, S.result.headline.p80]"), [p50, p70, p80])
                 api = page.evaluate("""async () => { const r = await fetch('/api/estimate', {method: 'POST',
                     headers: {'Content-Type': 'application/json'}, body: JSON.stringify(S.resultReq)});
-                    const j = await r.json(); return [j.headline.p50, j.headline.p80]; }""")
-                self.assertEqual(api, [p50, p80])
+                    const j = await r.json(); return [j.headline.p50, j.headline.p70, j.headline.p80]; }""")
+                self.assertEqual(api, [p50, p70, p80])
                 your103 = float(page.input_value('tr[data-line="%s"] input.yourp' % k103))
                 self.assertTrue(0.3 < your103 < 3.0, your103)            # about $1/CF, not $11.25
                 self.assertEqual(errors, [])

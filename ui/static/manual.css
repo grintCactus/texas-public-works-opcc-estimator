@@ -1,0 +1,87 @@
+/* Reading layout; colors and chart styles come from the estimator theme. */
+.manual-root { scroll-padding-top: 0; }
+.manual-page { font-size: 15px; line-height: 1.65; }
+.manual-page a { color: var(--accent); text-underline-offset: 3px; }
+.manual-page a:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 4px; }
+.manual-skip { position: fixed; top: 8px; left: 12px; z-index: 80; padding: 8px 14px; background: var(--panel); transform: translateY(-200%); }
+.manual-skip:focus { transform: translateY(0); }
+.manual-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 28px; background: var(--topbar); border-bottom: 1px solid var(--line); }
+.manual-brand { color: var(--ink) !important; font-weight: 700; text-decoration: none; }
+.manual-brand span { color: var(--ink-faint); font-weight: 400; }
+.manual-back { font-size: 13px; }
+.manual-layout { display: grid; grid-template-columns: 220px minmax(0, 850px); align-items: start; gap: 42px; max-width: 1190px; padding: 36px 28px 60px; }
+.manual-toc { position: sticky; top: 28px; max-height: calc(100vh - 56px); overflow-y: auto; padding-right: 10px; }
+.manual-toc h2 { margin: 0 0 12px; padding: 0; border: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-faint); }
+.manual-toc ol { padding-left: 22px; margin: 0; font-size: 13px; line-height: 1.45; }
+.manual-toc li { padding: 5px 0 5px 3px; color: var(--ink-faint); }
+.manual-toc a { color: var(--ink-dim); text-decoration: none; }
+.manual-toc a:hover { color: var(--accent); text-decoration: underline; }
+.manual-content { min-width: 0; padding: 36px 42px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.manual-intro { padding-bottom: 28px; }
+.manual-eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 1.3px; font-size: 12px; font-weight: 700; }
+.manual-intro h1 { font-size: clamp(30px, 4vw, 40px); line-height: 1.2; letter-spacing: -.8px; margin: 8px 0 18px; }
+.manual-intro > p:not(.manual-eyebrow) { max-width: 600px; }
+.manual-content section { border-top: 1px solid var(--line-soft); padding: 28px 0; scroll-margin-top: 24px; }
+.manual-content h2 { border: 0; padding: 0; margin: 0 0 18px; font-size: 22px; line-height: 1.35; }
+.manual-content h3 { margin: 0 0 10px; font-size: 16px; line-height: 1.5; }
+.manual-content p { margin: 12px 0; }
+.manual-content ul, .manual-content ol { padding-left: 24px; }
+.manual-content li { padding-left: 4px; margin: 9px 0; }
+.manual-content strong { font-weight: 650; }
+.manual-muted { color: var(--ink-faint); font-size: 13px; }
+.manual-steps li { margin: 14px 0; }
+.manual-definitions { display: grid; grid-template-columns: 145px minmax(0, 1fr); gap: 13px 20px; margin: 20px 0; }
+.manual-definitions dt { font-weight: 650; }
+.manual-definitions dd { margin: 0; color: var(--ink-dim); }
+.manual-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.manual-callout { background: var(--panel-2); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; padding: 16px 18px; }
+.manual-callout p:last-child { margin-bottom: 0; }
+.manual-figure { margin: 24px 0; }
+.manual-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.manual-charts svg.pp { display: block; width: 100%; height: auto; }
+.manual-figure figcaption { font-size: 12px; color: var(--ink-faint); margin-top: 10px; }
+.manual-formulas { padding: 12px 18px; margin: 20px 0; background: var(--sunken); border: 1px solid var(--line-soft); border-radius: 6px; font-size: 14px; }
+.manual-formulas p { margin: 8px 0; }
+.manual-market { margin: 22px 0; border: 1px solid var(--line); border-radius: 8px; padding: 20px; background: var(--panel-2); }
+.manual-market .manual-definitions { grid-template-columns: minmax(0, 1fr) auto; gap: 10px 20px; font-size: 14px; }
+.manual-market .manual-definitions dd { font-variant-numeric: tabular-nums; text-align: right; font-weight: 650; color: var(--ink); }
+.manual-market table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 13px; }
+.manual-market caption { text-align: left; margin-bottom: 8px; font-weight: 650; }
+.manual-market th, .manual-market td { padding: 9px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; text-align: left; white-space: normal; }
+.manual-market th { background: var(--th); color: var(--ink-dim); font-weight: 600; }
+.manual-market th:last-child, .manual-market td:last-child { text-align: right; }
+.manual-market td:last-child { font-variant-numeric: tabular-nums; }
+.manual-footer { display: flex; gap: 20px; justify-content: space-between; border-top: 1px solid var(--line-soft); padding: 24px 0; font-size: 13px; }
+@media (max-width: 960px) {
+  .manual-layout { grid-template-columns: 185px minmax(0, 1fr); gap: 22px; padding: 24px 20px 40px; }
+  .manual-content { padding: 28px 28px 0; }
+  .manual-pair, .manual-charts { grid-template-columns: 1fr; }
+  .manual-charts svg.pp { max-width: 400px; margin: 0 auto; }
+}
+@media (max-width: 700px) {
+  .manual-topbar { align-items: flex-start; flex-direction: column; gap: 5px; padding: 14px 18px; }
+  .manual-layout { display: block; padding: 20px 14px 30px; }
+  .manual-toc { position: static; max-height: none; margin: 0 6px 24px; padding: 0; }
+  .manual-toc ol { columns: 2; column-gap: 28px; }
+  .manual-toc li { break-inside: avoid; }
+  .manual-content { padding: 26px 20px 0; }
+  .manual-definitions { grid-template-columns: 1fr; gap: 4px; }
+  .manual-definitions dd { margin-bottom: 10px; }
+  .manual-content h2 { font-size: 20px; }
+  .manual-market { padding: 15px; }
+  .manual-market .manual-definitions dd { margin-bottom: 0; }
+}
+@media (max-width: 380px) {
+  .manual-toc ol { columns: 1; }
+  .manual-content { padding-left: 16px; padding-right: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+@media print {
+  .manual-page { font-size: 10pt; }
+  .manual-topbar, .manual-toc, .manual-footer, .manual-skip { display: none; }
+  .manual-layout { display: block; max-width: none; padding: 0; }
+  .manual-content { border: 0; padding: 0; }
+  .manual-content section { padding: 18px 0; }
+  .manual-market, .manual-callout, .manual-figure { break-inside: avoid; }
+  .manual-content h2, .manual-content h3 { break-after: avoid; }
+}

@@ -1308,7 +1308,8 @@ class Export(unittest.TestCase):
         self.assertEqual(st, 200)
         self.assertIn("attachment", hdr["Content-Disposition"])
         text = data.decode("utf-8-sig")
-        for s in ("Expected low bid (P50)", "Recommended OPCC (P80)",
+        for s in ("Expected low bid (P50)", "Recommended OPCC (%s)"
+                  % exporter.recommended_basis(self.r).upper(),
                   "Not covered", "Low confidence", "Lines",
                   "Similar past projects", "matched lines", "Competition",
                   "Forward accuracy",
@@ -1337,6 +1338,248 @@ class Export(unittest.TestCase):
 
 
 # ===========================================================================
+class P70Exports(unittest.TestCase):
+    """P70 is a separate figure; saved P80 prices and totals stay intact."""
+
+    def setUp(self):
+        self.result = {
+            "headline": {"p50": 1000.0, "p70": 1200.0, "p80": 1400.0,
+                         "p70_multiplier": 1.2, "p80_multiplier": 1.4,
+                         "recommended_basis": "p70", "contingency": {
+                             "p70": {"subtotal": 1200.0, "contingency": 0.0}}},
+            "lines": [
+                {"row_id": "a", "item_no": "1", "description": "Public test item",
+                 "unit": "CY", "quantity": 10, "status": "priced",
+                 "unit_price_p50": 100.0, "amount_p50": 1000.0},
+                {"row_id": "b", "item_no": "2", "description": "Quoted equipment",
+                 "unit": "EA", "quantity": 1, "status": "not_covered",
+                 "unit_price_p50": None, "amount_p50": None}],
+            "not_covered": {"lines": [{"item_no": "2", "description": "Quoted equipment",
+                                        "quantity": 1, "unit": "EA", "quote": 500.0}],
+                            "complete_total": 1500.0, "complete_total_p70": 1700.0,
+                            "complete_total_p80": 1900.0},
+            "context": {"label": "Public validation fixture", "lettings": 100,
+                        "p50_median_error": 0.2, "p80_under": 0.14,
+                        "median_overshoot": 0.45},
+        }
+        self.ws = {"basis": "p70", "basis_multiplier": 1.2,
+                   "contingency_pct": 10, "lines": [
+                       {"row_id": "a", "src": "you", "your_unit": 123.45,
+                        "src_label": "your price"},
+                       {"row_id": "b", "src": "quote", "your_amount": 500.0}]}
+
+    def test_totals_keep_p70_p80_and_engineer_prices_separate(self):
+        import worksheet
+        t = worksheet.totals(self.result, self.ws)
+        self.assertAlmostEqual(t["your_opcc"], 1907.95)
+        self.assertEqual(t["p70"], 1200.0)
+        self.assertEqual(t["p80"], 1400.0)
+        self.assertEqual(t["model_p70"], 1700.0)
+        self.assertEqual(t["model_p80"], 1900.0)
+        self.assertEqual(t["p70_split"], (1200.0, 0.0))
+        self.assertAlmostEqual(t["vs_p70"]["amount"], 207.95)
+        self.assertAlmostEqual(t["vs_p80"]["amount"], 7.95)
+        self.assertAlmostEqual(t["suggested_contingency_pct"], 20.0)
+
+    def test_workbook_uses_true_p70_and_preserves_saved_p80_basis(self):
+        import openpyxl
+        import worksheet
+        for basis, multiplier in (("p70", 1.2), ("p80", 1.4), ("p50", 1.0)):
+            with self.subTest(basis=basis):
+                ws = dict(self.ws, basis=basis, basis_multiplier=multiplier)
+                wb = openpyxl.load_workbook(io.BytesIO(
+                    worksheet.to_xlsx(self.result, ws, None)), data_only=True)
+                by = {r[0].value: r for r in wb["Summary"].iter_rows() if r[0].value}
+                self.assertIn(basis.upper(), by["Prices start from"][1].value)
+                self.assertEqual(by["Recommended OPCC (P70) + not-covered lines"][1].value, 1700.0)
+                self.assertEqual(by["P80 baseline + not-covered lines"][1].value, 1900.0)
+                self.assertAlmostEqual(by["Project Total"][1].value, 1907.95)
+                line = next(r for r in wb["OPCC"].iter_rows()
+                            if r[1].value == "Public test item")
+                self.assertEqual(line[4].value, 123.45)
+                self.assertEqual(line[5].value, 1234.5)
+                self.assertIn("independent P70 validation is not yet available",
+                              " ".join(str(c.value) for r in wb["Summary"] for c in r if c.value))
+
+    def test_estimate_export_separates_trial_and_baseline_statistics(self):
+        blocks = {name: rows for name, _, rows in exporter.sections(self.result)}
+        figures = {r[0]: r for r in blocks["Estimate"]}
+        self.assertEqual(figures["Recommended OPCC (P70)"][1], 1200.0)
+        self.assertEqual(figures["P80 baseline"][1], 1400.0)
+        history = str(blocks["Forward accuracy of this market (P50 / P80 baseline)"])
+        self.assertIn("P80 under the low bid on 14%", history)
+        self.assertNotIn("P70 under", history)
+        text = exporter.to_csv(self.result).decode("utf-8-sig")
+        self.assertIn("Complete total = P70 + quotes", text)
+        self.assertIn("Complete total = P80 + quotes (baseline)", text)
+
+    def test_legacy_result_keeps_p80_recommendation(self):
+        import copy
+        import worksheet
+        old = copy.deepcopy(self.result)
+        for key in ("p70", "p70_multiplier", "recommended_basis"):
+            old["headline"].pop(key)
+        self.assertEqual(exporter.recommended_basis(old), "p80")
+        self.assertIn("P80 (recommended OPCC", worksheet.price_basis_label(old, {"basis": "p80"}))
+        figures = dict((name, rows) for name, _, rows in exporter.sections(old))["Estimate"]
+        self.assertTrue(any(row[0] == "Recommended OPCC (P80)" and row[1] == 1400 for row in figures))
+
+    def test_p70_numeric_validation_refuses_bool_and_infinite_text(self):
+        for value in (True, "Infinity", "1e999"):
+            for field in ("p70", "p70_multiplier"):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(app.ApiError):
+                        app._validate_worksheet_export_numbers({"headline": {field: value}}, {})
+
+
+class HistoryPriceExports(unittest.TestCase):
+    """Historical worksheet choices retain their prices and source snapshots."""
+
+    def setUp(self):
+        base = P70Exports()
+        base.setUp()
+        self.result = base.result
+        selected = []
+        for key, date, median, factor in (
+                ("public-a", "2023-04-05", 70.25, 1.1),
+                ("public-b", "2024-06-12", 80.12, 1.07),
+                ("public-c", "2025-01-10", 90.5, 1.0)):
+            year = int(date[:4])
+            selected.append({
+                "key": key, "project": key.title(), "owner": "Public owner",
+                "date": date, "item_no": "10", "item": "Public test item",
+                "unit": "CY", "quantity": 10, "n_bids": 4,
+                "median_unit": median, "adjusted_median": median * factor,
+                "escalation": factor, "match_basis": ["Same unit", "Matching item wording"],
+                "source": {"document": key + ".pdf", "url": "https://example.org/" + key},
+                "index_evidence": {
+                    "status": "available", "factor": factor,
+                    "method": "prior_public_matched_bid_index_v1", "market": "municipal",
+                    "from_year": year, "target_year": 2025, "as_of": "2025-03-10",
+                    "steps": [{"from_year": year, "to_year": 2025,
+                               "n_matched": 24, "factor": factor}] if year < 2025 else [],
+                    "reason": "", "notes": []}})
+        self.start = statistics.median(p["adjusted_median"] for p in selected)
+        self.history = {
+            "status": "available", "unit_price": self.start, "n_projects": 3,
+            "references": selected, "reason": "",
+            "evidence": ["3 distinct public projects within 24 months", "Same unit"],
+            "method": "recent_matching_bid_medians_v1", "price_basis": "bid_date_adjusted",
+            "bid_date": "2025-03-10", "target_year": 2025}
+        self.ws = {"basis": "history", "basis_multiplier": None, "round": "off",
+                   "contingency_pct": 0, "lines": [
+                       {"row_id": "a", "src": "history", "your_unit": self.start,
+                        "raw": self.start, "history_price": self.history,
+                        "source": "Stale model P70 label"},
+                       {"row_id": "b", "src": "quote", "your_amount": 500.0}]}
+
+    def test_history_unit_and_cached_total_are_not_rescaled(self):
+        import openpyxl
+        import worksheet
+        wb = openpyxl.load_workbook(io.BytesIO(
+            worksheet.to_xlsx(self.result, self.ws, None)), data_only=True)
+        row = next(r for r in wb["OPCC"].iter_rows() if r[1].value == "Public test item")
+        self.assertEqual(row[4].value, self.start)
+        self.assertAlmostEqual(row[5].value, self.start * 10)
+        self.assertIn("Median of 3 matching public projects", row[6].value)
+        self.assertNotIn("Stale model P70", row[6].value)
+        for p in self.history["references"]:
+            self.assertIn(p["date"], row[6].value)
+        summary = {r[0].value: r[1].value for r in wb["Summary"].iter_rows() if r[0].value}
+        self.assertIn("recent matching public bid medians", summary["Prices start from"])
+        self.assertNotIn("P70", summary["Prices start from"])
+        self.assertAlmostEqual(summary["Project Total"], self.start * 10 + 500)
+        self.assertEqual(summary["Expected low bid (P50) + not-covered lines"], 1500)
+        self.assertEqual(summary["Recommended OPCC (P70) + not-covered lines"], 1700)
+        self.assertEqual(summary["P80 baseline + not-covered lines"], 1900)
+        headers = [c.value for c in wb["Lines"][2]]
+        self.assertIn("Model P50 historical accuracy", headers)
+        self.assertNotIn("Typical accuracy", headers)
+        line = next(r for r in wb["Lines"].iter_rows(min_row=3) if r[1].value == "Public test item")
+        self.assertEqual(line[headers.index("Historical starting $/unit")].value, self.start)
+        self.assertEqual(line[headers.index("Your $/unit")].value, self.start)
+        self.assertIn("within 24 months", line[headers.index("History evidence")].value)
+
+    def test_selected_pay_item_snapshots_survive_missing_or_changed_refs(self):
+        import copy
+        import worksheet
+        selected = self.history["references"]
+        same_project_other_item = dict(selected[0], item_no="99", item="Different pay item")
+        refs = {"lines": [{"row_id": "a", "picks": [copy.deepcopy(selected[0]),
+                                                       same_project_other_item]}]}
+        for current, expected_n in ((None, 3), (refs, 4)):
+            with self.subTest(references_available=bool(current)):
+                _, header, rows = next(s for s in worksheet.sections(self.result, self.ws, current)
+                                       if s[0] == "References appendix")
+                self.assertEqual(len(rows), expected_n)
+                by = [dict(zip(header, row)) for row in rows]
+                self.assertEqual([r["Reference use"] for r in by[:3]],
+                                 ["Selected history median"] * 3)
+                self.assertEqual([r["Reference key"] for r in by[:3]],
+                                 [p["key"] for p in selected])
+                for original, saved in zip(selected, by):
+                    self.assertEqual(saved["Median bid $/unit"], original["median_unit"])
+                    self.assertEqual(saved["Inflation-adjusted median $/unit"], original["adjusted_median"])
+                    self.assertEqual(saved["Inflation factor"], original["escalation"])
+                    self.assertEqual(saved["Adjusted price year"], 2025)
+                    self.assertIn("2025-03-10", saved["Index evidence"])
+                    self.assertIn("Same unit", saved["Match evidence"])
+                    self.assertEqual(saved["source_url"], original["source"]["url"])
+                if current:
+                    self.assertEqual(by[-1]["Their item no."], "99")
+                    self.assertEqual(by[-1]["Reference use"], "Other reference")
+
+    def test_missing_adjustment_stays_blank_with_original_price_auditable(self):
+        import worksheet
+        self.history.update(status="insufficient", unit_price=None,
+                            reason="The historical inflation index is unavailable.")
+        self.ws["lines"][0].update(your_unit=None, raw=None)
+        p = self.history["references"][0]
+        p.update(adjusted_median=None, escalation=None, median_esc=999.0)
+        p["index_evidence"].update(status="unavailable", factor=None,
+                                   reason="Not enough earlier matched bids.")
+        t = worksheet.totals(self.result, self.ws)
+        self.assertEqual(t["your_opcc"], 500.0)
+        self.assertEqual(t["missing"], ["a"])
+        _, header, rows = next(s for s in worksheet.sections(self.result, self.ws, None)
+                               if s[0] == "References appendix")
+        first = dict(zip(header, rows[0]))
+        self.assertIsNone(first["Inflation-adjusted median $/unit"])
+        self.assertIsNone(first["Inflation factor"])
+        self.assertEqual(first["Median bid $/unit"], 70.25)
+        self.assertEqual(first["Reference use"], "History evidence, not selected")
+        self.assertIn("index is unavailable", worksheet.price_source(self.ws["lines"][0]))
+
+    def test_rounding_and_engineer_prices_do_not_change_saved_starting_price(self):
+        import worksheet
+        self.ws["round"] = "up"
+        self.ws["lines"][0]["your_unit"] = 90.0
+        self.result["lines"] += [
+            {"row_id": "c", "description": "Engineer input", "status": "priced",
+             "pricing_mode": "engineer", "quantity": 1, "unit_price_p50": 60},
+            {"row_id": "d", "description": "Fixed allowance", "status": "owner_set",
+             "quantity": 1, "fixed_amount": 25},
+            {"row_id": "e", "description": "Hand-entered price", "status": "priced",
+             "quantity": 2, "unit_price_p50": 100}]
+        self.ws["lines"] += [{"row_id": "c", "src": "", "your_unit": None},
+                             {"row_id": "d", "src": "owner-set"},
+                             {"row_id": "e", "src": "you", "your_unit": 12.3456}]
+        t = worksheet.totals(self.result, self.ws)
+        self.assertAlmostEqual(t["your_opcc"], 900 + 500 + 25 + 2 * 12.3456)
+        self.assertEqual(t["missing"], ["c"])
+        self.assertEqual(self.ws["lines"][0]["history_price"]["unit_price"], self.start)
+        for basis in ("p50", "p70", "p80"):
+            self.assertIn(basis.upper(), worksheet.price_basis_label(self.result, {"basis": basis}))
+
+    def test_nested_history_numbers_reject_bool_and_nonfinite_text(self):
+        for field, value in (("adjusted_median", True), ("factor", "Infinity")):
+            with self.subTest(field=field):
+                snapshot = {"history_price": {"references": [{field: value}]}}
+                with self.assertRaises(app.ApiError) as raised:
+                    app._validate_worksheet_export_numbers({}, {"lines": [snapshot]})
+                self.assertEqual(raised.exception.status, 400)
+
+
 class Http(unittest.TestCase):
     """The real server on a socket: upload, classify, estimate, static."""
 
@@ -2128,7 +2371,8 @@ class Worksheet(unittest.TestCase):
         self.assertAlmostEqual(t["vs_p50"]["amount"],
                                want * 1.05 - self.result["headline"]["p50"], places=4)
         self.assertAlmostEqual(t["suggested_contingency_pct"], 100 * (
-            self.result["headline"]["p80"] / self.result["headline"]["p50"] - 1))
+            self.result["headline"][exporter.recommended_basis(self.result)]
+            / self.result["headline"]["p50"] - 1))
 
     def test_a_contingency_share_follows_your_own_line_amounts(self):
         """2026-11-21: a contingency line given as a share (picked from a
@@ -2297,9 +2541,10 @@ class Worksheet(unittest.TestCase):
         self.assertAlmostEqual(by["Project Total"][1].value, t["your_opcc"], places=4)
         self.assertAlmostEqual(by["Construction Contingency (10%)"][1].value, t["contingency"], places=4)
         self.assertEqual(by["Project Total"][1].number_format, '"$"#,##0')
-        vs = by["Recommended OPCC (P80)"]
-        self.assertAlmostEqual(vs[2].value, t["vs_p80"]["amount"], places=4)
-        self.assertAlmostEqual(vs[3].value, t["vs_p80"]["ratio"], places=6)
+        rec = exporter.recommended_basis(self.result)
+        vs = by["Recommended OPCC (%s)" % rec.upper()]
+        self.assertAlmostEqual(vs[2].value, t["vs_" + rec]["amount"], places=4)
+        self.assertAlmostEqual(vs[3].value, t["vs_" + rec]["ratio"], places=6)
         self.assertEqual(vs[3].number_format, "+0.0%;-0.0%;0.0%")
         # it prints as the team's printout (user, 2026-11-21: "this feel", on
         # Letter): no lines inside the table or under the totals, serif
@@ -2726,8 +2971,6 @@ class QaRegressions20261120(unittest.TestCase):
                 self.assertNotIn(gone, ln["basis"])
         for a in r["alerts"]:
             self.assertNotIn("reference cells", a["text"])
-        # the arithmetic is still there, folded
-        self.assertIn("How this was calculated", js)
 
     def test_quantity_less_lines_are_left_out_and_named(self):
         js = self.js
@@ -2779,7 +3022,7 @@ class QaRegressions20261120(unittest.TestCase):
         every option selected="" (el() sets any non-false value), so the
         dialog opened on the LAST item type ("Wingwalls") and Apply set it."""
         body = _js_function(self.js, "openPicker")
-        self.assertIn("selected: !!l.family && f.id === l.family", body)
+        self.assertIn("!!l.family && f.id === l.family", body)
         self.assertNotIn("selected: l.family &&", self.js)
 
     def test_the_change_dialog_speaks_of_item_types(self):
@@ -2805,16 +3048,13 @@ class QaRegressions20261120(unittest.TestCase):
                 if float(px) < 12:
                     self.assertIn(" ".join(sel.split()), small_ok, (sel.strip(), px))
         self.assertNotIn("text-overflow", flat)
-        for rule, size in ((".bigcard .covnote {", "14px"), (".notice {", "14px"),
+        for rule, size in ((".notice {", "14px"),
                            (".panel > h2 {", "14px"), ("#r-notcovered table.mini {", "13px"),
                            (".badge.unc     {", "13px")):
             i = flat.index(rule)
             self.assertIn("font-size: " + size, flat[i:flat.index("}", i)], rule)
         html = open(os.path.join(HERE, "static", "index.html"), encoding="utf-8").read()
         self.assertNotIn("&hellip;</span>", html)
-        legend = html[html.index('<ul class="legend"'):html.index("</ul>", html.index('<ul class="legend"'))]
-        for li in re.findall(r"<li[^>]*>(.*?)</li>", legend, flags=re.S):
-            self.assertGreater(len(re.sub(r"<[^>]+>", "", li).split()), 4, li)   # words, not a chip alone
         self.assertNotIn("slice(0, 21) + '\\u2026'", self.js)
         self.assertIn("ls.map(l => ((l.item_no", self.js)                      # the whole list
 

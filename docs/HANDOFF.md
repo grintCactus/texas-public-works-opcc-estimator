@@ -1,14 +1,280 @@
 # Handoff
 
-Written 2026-11-21 for whoever maintains this project next. `AGENTS.md` holds the standing rules and the commands; this file says where the project stands, what is and is not in this repository, what is owed, and what to do first. The long records are in `docs/HISTORY.md` (what was tried), `docs/METHOD.md` (how it works) and `docs/DATA.md` (where the data comes from).
+Written 2026-11-21 and updated 2026-11-22 for whoever maintains this project next. `AGENTS.md` holds the standing rules and commands. `docs/HISTORY.md` records the experiments, `docs/METHOD.md` describes the methods, and `docs/DATA.md` describes the sources.
+
+## Current evaluation scope
+
+On 2026-11-22 the owner resumed iterative municipal pricing experiments and
+excluded lump-sum pay items from unit-price comparisons. A lump sum covers the
+scope of a particular project, so two prices for one LS may buy different work.
+Apply the exclusion to both the baseline and each candidate before calculating
+line errors, ranking error causes, resampling, or judging an improvement.
+Use the pay item's unit, including source spellings such as `L.S.` and
+`Lump Sum`. A quantity of one by itself does not identify a lump sum.
+
+For **project OPCC accuracy**, issue each full-schedule forecast first. Score
+only covered, non-LS rows. Compare each percentile subtotal to the sum of the
+original base low bidder's extensions for those same rows. A printed zero is
+a price. A missing winning amount, missing eligible model price, or empty or
+nonpositive comparison subtotal makes the job unscorable. Keep single EA rows
+and covered low-confidence prices. Count the union of LS and Not Covered once.
+Use the same row IDs for the incumbent, candidate and any engineer benchmark.
+
+Run `.venv/bin/python src/opcc_accuracy.py receipts.jsonl` for a project
+summary. Provide one public project per line with a unique `project_key`,
+`headline` (P50/P70/P80 dollars keyed by lowercase name) and `lines`. Each line
+has a stable `row_id`, original and normalized units (`unit_raw`, `unit`),
+its estimator `status`, and `winner_amount` in dollars from the original low
+bidder. Supply `market_amount` on priced rows and `fixed_amount` on owner-set
+rows. Optional `engineer_amount` must cover the same retained lines. For each
+percentile, hold specified amounts at face value and distribute the balance
+among all priced lines proportional to their market amounts before excluding
+LS. This preserves the forecast made with the original project size and mix.
+The error is (retained estimate / retained low-bid amount) minus one. Each
+scored letting contributes one observation. Report held jobs and the counts
+behind the P80 floor. Historical forecasts without P70 still count for each
+available percentile. For model comparisons pass `--compare candidate.jsonl`;
+the report identifies unequal project scopes and uses a common denominator for
+each percentile. Historical whole-bid figures retain their original
+definitions and must be replayed before comparison with these results.
+
+The date-specific municipal development replay scored 174 of 235 schedules.
+It used the original low bidder’s panel quantities and unit prices. Of 7,526
+positions on scored jobs, 889 were LS, 12 were Not Covered, and five met both
+conditions. The other 6,630 positions entered both sides. Two jobs with verified
+zero-quantity positions have zero extensions on both sides; an unknown quantity
+has no such interpretation. The incumbent met or exceeded actual on 81/174 at
+P50, 112/174 at P70 and 134/174 at P80. Median absolute errors were 21.0%,
+25.9% and 38.8%. On these same jobs the earlier scope gave P80 coverage of
+151/174. The new score falls below the 80% floor. Historical bidder counts and
+uncertain source availability limit the interpretation. Among 12 scored projects with items directly affected by using three recent references
+in place of one, that choice reduced the sum of absolute P70 errors by $6,331.51.
+P80 met or exceeded the comparable bid subtotal on 134 of 174 for both policies. The local audit is at
+`handoff/scratchpad/scoped_municipal_development/prior-zero-corrected-v2/`.
+
+Five separate public city/county bid tabs also have independently reconciled
+winning extensions and dated archived forecasts. All five estimates exceeded
+the retained actual at each percentile. Only one had engineer extensions on
+the same lines. Keep this small retrospective sample separate from the
+development replay. Local receipts are in `handoff/scratchpad/scoped_opcc_replay/`.
+
+`ui/build_item_accuracy.py` reproduces the previously published README and
+UI tables under their original scoring definition, which included lump
+sums. For a new experiment use the physical-unit eligibility check before
+computing either arm's line metrics. The 8,700-line development receipts
+are under `handoff/scratchpad/round23_latest_exact_blend/physical-results/`.
+
+The historical engine reads a full-period quantity-band multiplier table.
+Some reconstructed unit rates and project totals, including the Round 23
+development calibration, can therefore use information from after the
+letting. Label these historical comparisons accordingly. A strict
+as-of-opening comparison also needs date-correct multiplier and calibration
+inputs. The source audit is in
+`handoff/scratchpad/external_project_totals/SHAPE_AUDIT.md`; the historical
+evaluation code documents the fixed table in `src/holdout_eval.py`.
+
+The Rockwall County Cedar Creek Dam No. 9 original form has a sealed
+pre-opening forecast. Twenty-one of its 22 base items were priced, including
+all 11 LS rows. Irrigation water has no matching rate. The two topsoil rows
+also illustrate a worksheet limitation: the same three much smaller
+projects supplied both prices until the original thickness and work scope
+were entered. See `handoff/scratchpad/cedar_creek_prebid/RESULT.md`.
+Final addenda and actual bids are pending. This case contributes no
+completed prospective score.
+
+The county's two printed topsoil depths had zero direct historical
+matches after searching across item types and screening the quantity.
+All recent candidate descriptions within the quantity range specified
+4 inches, compared with 6 or 12 inches on the contract. The supplemental
+statewide Van Zandt County Dam No. 103 original form also has a sealed
+forecast. Its 25-item base includes 11 LS rows, 13 priced physical rows
+and one unpriced irrigation-water item. County award ranking can include
+duration. This case remains outside the DFW prospective cohort. See
+`handoff/scratchpad/topsoil_public_source_search/RESULT.md` and
+`handoff/scratchpad/van_zandt_cedar_creek_103_prebid/RESULT.md`.
+
+The owner's subsequent standing request authorizes continued public-data
+collection and iterative pricing experiments. Keep source collection,
+independent evaluation and production adoption separate. The Round 23
+recent-bid blend passed the development unit-price gate and remains a
+candidate for independent confirmation. Rounds 24 and 26–41 did not justify
+a change to it. Round 25 verifies dates against originals. See the dated
+entries in `docs/HISTORY.md`. The local worksheet and local P70 trial are
+described below. Production still uses its previously adopted model.
+
+## Round 21 result — 2026-11-22
+
+Keep the original pricing model. The owner authorized a single round to test
+the recent three-project price rule on municipal model inputs. The candidate
+failed all three registered adoption tracks. The owner's local worksheet
+starting-price rule remains in use.
+
+On 235 matched municipal lettings in 2024–2026, the candidate's P80 fell below
+the actual low bid on 30 lettings (12.77%), down from 32 (13.62%). Its median
+overshoot rose from 44.80% to 46.54%. The aggregate absolute amount error of
+9,598 matched unit-price lines rose 3.23%, from $307.81M to $317.75M. The median
+P50 absolute error moved from 19.52% to 19.43%. TxDOT results and line traces
+were identical, including all 807 matched lettings in the registered window.
+
+The frozen baseline reproduced all 2,252 forward records field for field. The
+baseline-against-itself check gave zero differences in nine groups. The new
+public documents were scored first with the original model and strictly earlier
+public data. Nine of ten base schedules that passed source review were scorable.
+Their P80 fell short once, with 60.90% median overshoot and 38.12% median P50
+absolute error. Four exact scopes had printed engineer estimates. The sample
+supports a comparison of raw median errors and is too small for a matched
+not-under comparison. Source checks still pending keep the new documents out of
+training and the production bundle. The replay used public bids and kept the
+locked holdout sealed. The original model remains on the public site.
+
+See the Round 21 entry in `docs/HISTORY.md` for the decision, retries and local
+evidence paths. The later standing request is recorded above.
+
+## Worksheet reference-price update — 2026-11-22
+
+The owner subsequently authorized processing the newly collected statewide
+City/County documents and then a new optimization round after the outstanding
+checks. This is a separate content-processing assignment, not an expansion of
+the Data Resource Researcher collection role. The new database is built under
+`data/processed/statewide_2026-11-22/`; original downloads remain unchanged.
+Round 21's single candidate and adoption gates were registered before scoring
+in `docs/METHOD.md`, section 1.6. This authorization supersedes the earlier pause
+for that round only; it does not adopt a candidate in advance.
+
+The owner separated worksheet unit prices from the project's P70 recommendation.
+New worksheets use `basis: "history"`, with the median of three distinct matching
+projects' bidder-median unit prices after a bid-year price adjustment. Only
+precisely dated public projects in the same market, strictly before the target
+date and within two calendar years, can become automatic references; projects
+within one year rank first. No older project fills a missing third reference.
+
+The selection works on distinct pay items and bidders, not the existing model
+reference cell's pooled rows. `ui/history_prices.py` supplies selected source
+snapshots; `ui/history_inflation.py` measures annual matched-item price changes
+using only earlier public bids. Thin or missing index evidence leaves a blank
+default. It never borrows another market or invents an inflation rate. The
+current year's index is partial, and same-year bids receive no within-year
+adjustment. Raw prices, factors, adjusted prices and source dates remain auditable.
+
+The rule was fixed before verification in `docs/METHOD.md`, section 1.5. It is a
+worksheet starting-price policy, not a refitted P50/P70/P80 model or an accuracy
+improvement claim. Typed prices, manual selections, engineer-input requirements,
+quotes and fixed allowances remain in force. Saved model-basis worksheets retain
+their original meaning. The earlier P70 trial and baseline history follow below.
+
+Verification completed on 2026-11-22: the 350-test UI regression suite completed
+with no failures and 21 skips for unavailable optional components/source material; all 23 public-mode
+tests passed, and the parser self-tests reported zero failures. Desktop and
+390-pixel mobile views were checked. The known-answer P50, P70 and original P80
+and every P50 line amount remain identical to the prior local trial. The actual
+public examples were exported to Excel and PDF, with all PDF pages rendered,
+selected source snapshots reconciled and formula caches checked.
+
+Strict coverage is intentionally incomplete. The 43-line known-answer schedule
+has no qualifying three-project automatic defaults under its historical bid
+date. The current seven-line public check has one: excavation at $33.50/CY,
+from three 2026 project medians; the other unfixed/unquoted lines remain blank.
+These are wiring and audit checks, not measured accuracy improvements. The
+worksheet's range and reference count now describe those selected recent
+projects; the old model's accuracy remains separately labelled. Duplicate model
+comparisons were removed from the narrow table footer because the worksheet
+summary already shows them.
+
+## Local P70 trial update — 2026-11-22
+
+The owner requested a local P70 recommendation trial, registered before scoring
+in `docs/METHOD.md`, section 1.4. The main page now shows **Expected low bid
+(P50)** and **Recommended OPCC (P70)**. The original P80 remains available in
+the API and workbook as a baseline, and existing P80 worksheet selections keep
+their original meaning. This is a local trial, not a production adoption or a
+public deployment. P70 is a nominal target, not a guarantee of 70% coverage.
+The sections below retain the 2026-11-21 production baseline and its history.
+
+The original public bundle files were preserved. The trial builder reconstructs
+only `txdot_letting_spread.csv` and `municipal_letting_totals.csv` in an isolated
+directory, with symlinks to the existing public tables. The full-period pooled
+and municipal discount tables reproduced exactly: zero differences in `f`,
+`lettings`, `p25`, or `p75`. The forward calibration then reproduced every
+original calibration field, with 2,252 public records. No private data or locked
+public holdout was opened or used.
+
+The normal bundle setup installs the public `estimator_p70_calibration.csv` shipped in `deploy/calibration/` when its base tables match. The three aggregate rows are bound by SHA256
+to the unchanged `estimator_calibration.csv`. Its municipal p30 is
+`0.8629316945605551`; its TxDOT p30 is `0.8912989816216509`. Each is an empirical
+30th percentile of forward estimate-to-actual ratios, centred using the
+original published P50 level correction. P70 divides the existing P50 by this
+percentile; it is not an interpolation between P50 and P80.
+
+### Reproduce the local trial
+
+To recompute the trial from scratch, run from the repository root with the public bundle installed. Use a fresh
+output directory; the builder preserves existing outputs and refuses to
+replace different contents. Keep source code unchanged during calibration.
+`prepare` is an input reconstruction check; `calibrate` is the separately
+registered forward run. The command chain stops on failure. The copy step
+preserves any existing sidecar, and `cmp` requires it to match the successful
+new build before running the wiring check.
+
+```bash
+p70_run="ui/.local/p70-trial-$(date -u +%Y%m%dT%H%M%SZ)"
+.venv/bin/python ui/p70_trial_build.py prepare --out "$p70_run" &&
+.venv/bin/python ui/p70_trial_build.py calibrate --out "$p70_run" \
+    --registration docs/METHOD.md &&
+cp -n "$p70_run/estimator_p70_calibration.csv" data/clean/estimator_p70_calibration.csv &&
+cmp "$p70_run/estimator_p70_calibration.csv" data/clean/estimator_p70_calibration.csv &&
+.venv/bin/python ui/integration_check.py ui/fixtures/takeoff_public_creek_bank.csv \
+    --market municipal --bidders 5 --bid-date 2025-03-10
+```
+
+The successful trial's known answer is **P50 = $765,836.50,
+P70 = $887,482.17, P80 = $1,043,089.75**, with `IDENTICAL` between the API and
+estimator paths. The original P50 and P80 amounts are unchanged. This fixture
+checks wiring; its own bids are in the history, so it is not an accuracy test.
+
+Verification: the UI suite completed 321 tests with 21 skips and no failures;
+all 23 public-mode tests passed. The actual 43-line example's Excel and two-page
+Letter PDF were rendered and checked. The workbook retains all three model
+figures and 42 valid formula caches; four lines awaiting an engineer's price
+remain blank rather than being silently filled.
+
+### Forward diagnostic and limits
+
+The aggregate diagnostic is saved locally at
+`ui/.local/p70-trial/p70-forward-check.json`, with its input checksum. It replays
+the generated public `forward-records.json`; it does not rerun line pricing.
+For each market and date, it uses at least 40 records dated strictly earlier,
+recomputes `_centre(prior)`, and takes
+`sorted(centred_ratios)[int(.30 * (n - 1))]`. All records on the same date use
+the same earlier history. The 2,163 records carrying an original P50 reproduce
+that P50 exactly, with maximum absolute difference zero. Both reported windows
+have a complete original P80 comparison on the same lettings.
+
+- **Municipal, 2024-01-01 through 2026-12-31: 235 lettings.** P70 is under the
+  actual low bid on 49 lettings (**20.851064%**), with conditional median
+  overshoot **32.911168%**. Original P80: 32 under (**13.617021%**), with
+  conditional median overshoot **44.796202%**. The registered 30% P70 under-rate
+  threshold **passes**.
+- **TxDOT, 2023-01-01 through 2026-12-31: 807 lettings.** P70 is under on
+  255 lettings (**31.598513%**), with conditional median overshoot
+  **25.641039%**. Original P80: 125 under (**15.489467%**), with conditional
+  median overshoot **31.461125%**. The registered 30% threshold **fails**.
+  TxDOT's 2026 subset is under on 82 of 207 lettings (**39.613527%**).
+
+Conditional median overshoot means the median of estimate / actual minus one
+among estimates at or above actual. Actual follows the existing covered-lines
+scope when a schedule contains uncovered work. These are forward historical
+diagnostics on the existing public development records, not independent
+held-out validation. The TxDOT failure is retained as measured; no alternative
+percentile or guard was selected after scoring. Do not relabel the historical
+P80 accuracy figures as P70 or claim demonstrated 70% future coverage.
 
 ## 1. Where the project stands
 
 - **Product.** A web app that helps an estimator build an OPCC for Texas public works: it reads a takeoff, shows the earlier public bids behind every line, estimates P50 (expected low bid) and P80 (a not-under OPCC), and exports an OPCC as Excel and PDF. The estimator stays in charge: the model's number is one input among the references.
 - **Public site.** https://129-146-109-44.sslip.io, in public mode (nothing stored, no AI reading).
-- **Model work is paused.** The project owner stopped algorithm optimization on 2026-11-21 at 18:23, after round 20. Nothing is running and no round is open. Start none unless the owner asks.
+- **At the original handoff.** The owner paused algorithm optimization on 2026-11-21 after Round 20. The subsequent requests and active evaluation scope are recorded at the top of this document.
 - **Production estimator.** `src/estimate_low_bid.py` with: line pricing from layered reference tables, the comparables blend (V2), the size fallback (F1), the removal identity (F2), T1 on TxDOT (C4 + D1), the coverage scope (specialty items "not covered"), the bidder-count clamp and the abandonment identity (round 18), forward calibration with the adaptive guard (aim 0.16, cap 0.20) and narrow carry. Parser version `.34b` (round 20 arm G).
-- **Accuracy, forward in time** (each letting priced from earlier lettings only):
+- **Historical accuracy on the original scope, including lump sums** (figures at the 2026-11-21 handoff):
 
 | | Lettings | P50 median error | P80 under the low bid | Median overshoot | Overshoot at 70 / 75 / 80% not-under |
 |---|---|---|---|---|---|
@@ -17,7 +283,7 @@ Written 2026-11-21 for whoever maintains this project next. `AGENTS.md` holds th
 | TxDOT (DFW counties), 2023–26 | 807 | 16% | 15% | 31% | 26 / 27 / 30% |
 | TxDOT engineers' own estimates | 451 | 21% | 14% | n/a | 19 / 22 / 23% |
 
-  The goal: P80 below the actual low bid on at most 20% of lettings (met), and within that the smallest overshoot (13% is the aspiration; engineers reach about 25% at the same not-under rate; the project is at 34% for cities). The city gap is almost all in estimating the bidders' typical price per job, not in the step from the median bid to the low bid.
+  The goal: P80 below the actual low bid on at most 20% of lettings (met under the historical scope), and within that the smallest overshoot (13% is the aspiration; engineers reach about 25% at the same not-under rate; the project is at 34% for cities). The city gap is almost all in estimating the bidders' typical price per job, not in the step from the median bid to the low bid.
 - **Last deploy.** 2026-11-21 23:46, from a fresh clone at commit `ae9d0de` with data bundle `bundle-2026-11-21` (built 2026-11-21 20:08). See the deploy log at the end.
 
 ## 2. The first hour
@@ -154,7 +420,7 @@ These came from the owner's reviews; they are requirements, not suggestions.
 ## 8. After a data rebuild
 
 1. `bash src/rebuild_all.sh` ends with `DONE`, and `provenance_check.py` and `train_test_guard.py` passed inside it.
-2. Score production forward and update `README.md` ("Where it stands") and `ui/engine_production.py` (`MARKET_ACCURACY`, `UNDER_CURVE`).
+2. Freeze complete forward forecasts and score the covered, non-LS project amounts with `src/opcc_accuracy.py`. Publish the eligible and held project counts and the basis of the actual amounts. The historical `MARKET_ACCURACY` and `UNDER_CURVE` use the earlier scope and belong with that dated baseline.
 3. `ui/build_item_accuracy.py` rebuilds `ui/item_accuracy.json`; regenerate the README's item tables from it.
 4. `deploy/README.md`, section B: bundle, package, identity check, release, deploy.
 5. Record the build in `data/test_holdout/REGISTRATIONS.md` if a registered change was installed.

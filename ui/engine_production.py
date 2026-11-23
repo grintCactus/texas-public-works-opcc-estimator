@@ -53,6 +53,8 @@ from typing import Any, Dict, List, Optional
 
 import lettings
 import upstream
+import history_prices
+from history_inflation import HistoryInflation
 
 log = logging.getLogger("ui.engine")
 
@@ -144,6 +146,9 @@ _CJK = re.compile("[%s-%s%s-%s]" % (chr(0x3400), chr(0x9FFF), chr(0xFF00),
 #: its length; real bid-form wordings are a few hundred characters at most).
 MAX_DESC_CHARS = 1000
 MAX_LINES = 2000
+# Far beyond any engineering quantity or amount; keeps products, totals and
+# reference weights safely within finite floating-point arithmetic.
+MAX_INPUT_NUMBER = 1e100
 
 
 class EngineNotReady(RuntimeError):
@@ -1140,6 +1145,8 @@ class ProductionEngine:
         self.panel = None
         self.history = None
         self.refs = None
+        self.history_prices = None
+        self.history_inflation = None
         self.refs_state = {"ready": False, "loading": False, "error": "",
                            "load_s": None}
         self.accuracy = ItemAccuracy()
@@ -1636,6 +1643,29 @@ class ProductionEngine:
             raise BadRequest("This takeoff has %d lines; the estimate takes up "
                              "to %d at once. Split it into parts."
                              % (len(raw), MAX_LINES))
+        row_ids = set()
+        for i, it in enumerate(raw, 1):
+            row_id = str(it.get("row_id") or "r%d" % i)
+            if row_id in row_ids:
+                raise BadRequest("Each line must have a different row_id; "
+                                 "check line %d." % i)
+            row_ids.add(row_id)
+            for field in ("quantity", "amount", "quote", "amount_pct"):
+                value = it.get(field)
+                if value is None or value == "":
+                    continue
+                if isinstance(value, bool):
+                    raise BadRequest("Line %d: %s must be a number." % (i, field))
+                try:
+                    number = float(value)
+                except OverflowError:
+                    raise BadRequest("Line %d: %s is too large; enter a smaller "
+                                     "number." % (i, field))
+                except (TypeError, ValueError):
+                    continue  # missing or unreadable values keep their flags
+                if not math.isfinite(number) or abs(number) > MAX_INPUT_NUMBER:
+                    raise BadRequest("Line %d: %s is too large or not finite; "
+                                     "enter a smaller number." % (i, field))
         bid_date = _iso_date(payload.get("bid_date"))
         if payload.get("bid_date") and not bid_date:
             raise BadRequest("bid_date must be YYYY-MM-DD, got %r"
@@ -1645,8 +1675,11 @@ class ProductionEngine:
         n = None
         if not auto:
             try:
+                if isinstance(nb, bool) or (isinstance(nb, float)
+                                           and not nb.is_integer()):
+                    raise ValueError
                 n = int(nb)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 raise BadRequest("n_bidders must be a whole number or "
                                  "'auto', got %r" % (nb,))
             if n < 1 or n > 60:
@@ -1826,12 +1859,17 @@ class ProductionEngine:
                               sum(1 for ln in unc if ln["quote"])),
             "quoted_total": r.get("uncovered_quoted_total") or 0.0,
             "complete_total": r.get("complete_total"),
+            "complete_total_p70": r.get("complete_total_p70"),
             "complete_total_p80": r.get("complete_total_p80"),
             "as_a_whole": bool(r.get("not_covered")),
             "why": [english(w) for w in (r.get("not_covered_why") or [])],
         }
         headline = {
-            "p50": el, "p80": r.get("expected_low_p80"),
+            "p50": el, "p70": r.get("expected_low_p70"), "p80": r.get("expected_low_p80"),
+            "p70_multiplier": r.get("p70_multiplier"),
+            "p70_calibration_n": r.get("p70_calibration_n"),
+            "recommended_basis": "p70",
+            "recommendation_status": "local_trial",
             "p80_multiplier": r.get("p80_multiplier"),
             "p50_band": list(r["p50_band"]) if r.get("p50_band") else None,
             "p80_band": list(r["p80_band"]) if r.get("p80_band") else None,
@@ -1853,7 +1891,8 @@ class ProductionEngine:
             cont = {"row_ids": [ln["row_id"] for ln in below],
                     "pct": round(100.0 * share, 6) if share else None,
                     "fixed": fixed}
-            for k, v in (("p50", el), ("p80", r.get("expected_low_p80"))):
+            for k, v in (("p50", el), ("p70", r.get("expected_low_p70")),
+                         ("p80", r.get("expected_low_p80"))):
                 s, cv = split_contingency(v, fixed, share)
                 cont[k] = None if s is None else {"subtotal": s,
                                                    "contingency": cv}
@@ -1964,14 +2003,14 @@ class ProductionEngine:
         unp = [ln for ln in lines if ln["status"] == "unpriced"]
         if unp and el is not None:
             add("severe", "lines_unpriced",
-                "%d line%s could not be priced and %s left out of P50 and P80."
+                "%d line%s could not be priced and %s left out of the model totals."
                 % (len(unp), "" if len(unp) == 1 else "s",
                    "is" if len(unp) == 1 else "are"),
                 "Price %s yourself in the OPCC worksheet." % ("it" if len(unp) == 1 else "them"),
                 [name(ln) for ln in unp])
         if nc["n"] and not nc["as_a_whole"]:
             add("caution", "not_covered",
-                "%d line%s no bid history and %s left out of P50 and P80."
+                "%d line%s no bid history and %s left out of the model totals."
                 % (nc["n"], " has" if nc["n"] == 1 else "s have",
                    "is" if nc["n"] == 1 else "are"),
                 "Add a vendor quote, or your own price in the OPCC worksheet.",
@@ -2511,8 +2550,13 @@ class ProductionEngine:
             idx = ReferenceIndex()
             idx.unit_evidence = UnitEvidence(idx.rows, idx.fk, self.panel.avail)
             idx.nc_rows("", "")            # the not-covered lines' past prices
+            history = history_prices.HistoryPriceIndex.from_csv(
+                os.path.join(CLEAN, "master_panel.csv"), self.panel.avail)
+            inflation = HistoryInflation(history.index_rows)
             with self._lock:
                 self.refs = idx
+                self.history_prices = history
+                self.history_inflation = inflation
                 self.refs_state.update(ready=True, loading=False,
                                        load_s=round(idx.load_s, 2),
                                        rows=len(idx.rows),
@@ -2631,6 +2675,9 @@ class ProductionEngine:
     def top_references(self, request, top=3):
         """Every line's first `top` references (the export's sheet)."""
         self.require()
+        if not self.refs_state["ready"]:
+            raise EngineNotReady(self.refs_state["error"] or
+                                 "the reference index is still loading")
         out = []
         with self._lock:
             q, items, cls, r, to_year, target, bidders = self._run(request)
@@ -2652,6 +2699,9 @@ class ProductionEngine:
         and nothing the user picks or types ever comes back in. A line whose
         unit is thin in the history also gets `unit_hint` (unit_hints)."""
         self.require()
+        if not self.refs_state["ready"]:
+            raise EngineNotReady(self.refs_state["error"] or
+                                 "the reference index is still loading")
         out = []
         with self._lock:
             q, items, cls, r, to_year, target, bidders = self._run(request)
@@ -2706,12 +2756,43 @@ class ProductionEngine:
                     "generic": w.startswith("Generic match"),
                     "thin": w.startswith("Thin evidence"),
                     "warning": w or None,
+                    "history_price": self._history_price(
+                        items[i], q, i, x.get("status")),
                     "unit_hint": hints.get(i)})
         return {"lines": out, "to_year": to_year,
                 "note": ("Reference range: the median-bidder unit prices of "
                          "the line's reference projects (public lettings "
                          "dated before the bid date), escalated to %s "
                          "dollars." % (to_year or "bid-year"))}
+
+    def _history_price(self, item, request, index, status):
+        """An OPCC worksheet default only; never an input to estimate_low_bid."""
+        if self.history_prices is None or self.history_inflation is None:
+            return {"method": history_prices.METHOD,
+                    "price_basis": history_prices.PRICE_BASIS,
+                    "status": "insufficient", "unit_price": None,
+                    "n_projects": 0, "references": [], "evidence": [],
+                    "reason": "Recent public price references are not available yet."}
+        date = request["bid_date"] or _dt.date.today().isoformat()
+
+        def owner_key(key, market):
+            return upstream.comparables.owner_id(
+                key, market, (self.panel.meta.get(key) or {}).get("county", ""))
+
+        result = self.history_prices.select(
+            item, bid_date=date, market=request["market"], status=status,
+            pricing_mode=request["raw"][index].get("pricing_mode") or "",
+            owner=request.get("owner") or "", owner_key=owner_key,
+            adjust=self.history_inflation.adjust)
+        for ref in result["references"]:
+            key, market = ref["key"], ref["market"]
+            meta = self.panel.meta.get(key) or {}
+            oid = owner_key(key, market)
+            ref.update(project=project_title(key, market),
+                       owner=(owner_name(oid) if market == "municipal" else
+                              "TxDOT, %s County" % meta["county"] if meta.get("county") else "TxDOT"),
+                       source=self.sources.get(key, meta))
+        return result
 
     def _references_for(self, i, q, items, cls, r, to_year, target):
         E = _E()
@@ -2739,7 +2820,7 @@ class ProductionEngine:
         if status in ("not_covered", "not_covered_whole"):
             return dict(base, special="not_covered", text=(
                 "Not covered: %s has almost no comparable bid history, so it "
-                "is not priced and not in P50 / P80. Get a vendor quote."
+                "is not priced and is left out of the model totals. Get a vendor quote."
                 % (c.get("coverage_label") or "this specialty item")))
         if status == "unpriced":
             return dict(base, special="unpriced", text=(

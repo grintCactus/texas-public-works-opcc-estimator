@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en" class="manual-root">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="How to prepare, review and export an OPCC with Bid Estimator.">
+<title>User Manual — Bid Estimator</title>
+<script src="manual.js"></script>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body class="manual-page">
+<a class="manual-skip" href="#manual-content">Skip to the manual</a>
+<header class="manual-topbar">
+  <a class="manual-brand" href="/">Bid Estimator <span>/ User Manual</span></a>
+  <a class="manual-back" href="/">Back to estimator</a>
+</header>
+<main class="manual-layout">
+  <nav class="manual-toc" aria-label="User Manual contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#quick-start">Quick start</a></li>
+      <li><a href="#takeoff">Takeoff inputs</a></li>
+      <li><a href="#classification">Review the classification</a></li>
+      <li><a href="#project">Project details</a></li>
+      <li><a href="#p50-p70">P50 and P70</a></li>
+      <li><a href="#method">How prices are calculated</a></li>
+      <li><a href="#worksheet">Your OPCC worksheet</a></li>
+      <li><a href="#contingency">Construction Contingency</a></li>
+      <li><a href="#references">Reference evidence</a></li>
+      <li><a href="#accuracy">Historical accuracy</a></li>
+      <li><a href="#exports">Excel and PDF exports</a></li>
+      <li><a href="#data-privacy">Data, privacy and limitations</a></li>
+      <li><a href="#ai-mode">AI mode</a></li>
+    </ol>
+  </nav>
+  <article id="manual-content" class="manual-content">
+    <div class="manual-intro">
+      <p class="manual-eyebrow">Texas public works</p>
+      <h1>User Manual</h1>
+      <p>Prepare a takeoff, review the public bids behind its prices, and build your opinion of probable construction cost (OPCC).</p>
+      <p class="manual-muted">Keep your estimate open in its original tab while you read this guide.</p>
+    </div>
+
+    <section id="quick-start">
+      <h2>1. Quick start</h2>
+      <ol class="manual-steps">
+        <li><strong>Read a takeoff.</strong> Paste rows from Excel, upload a schedule, or use the takeoff template. Each pay item needs a description, unit and quantity.</li>
+        <li><strong>Review the items.</strong> Check quantities, units and item types. Use <strong>Change</strong> for a wrong classification and resolve any line marked <strong>check</strong>.</li>
+        <li><strong>Set project details.</strong> Choose the market and bid date, review the expected bidders, and enter owner-set amounts and vendor quotes where needed.</li>
+        <li><strong>Press Estimate.</strong> Review the model comparison totals and any warnings. The worksheet loads recent matching public bid medians separately.</li>
+        <li><strong>Finish your OPCC.</strong> Review the three selected reference projects, enter prices that need your judgment, choose Construction Contingency, and download the Excel workbook or PDF.</li>
+      </ol>
+      <p>Reading a takeoff classifies its lines. It does not price them until you press <strong>Estimate</strong>.</p>
+    </section>
+
+    <section id="takeoff">
+      <h2>2. Takeoff inputs</h2>
+      <p>The Excel template provides the basic columns. Fill in one pay item per row, then paste the rows with their headers or upload the file. Pasted text may use tabs, commas, pipes or aligned columns.</p>
+      <dl class="manual-definitions">
+        <dt>Item</dt><dd>The pay-item number. Use <strong>Renumber items</strong> if the displayed order should become the numbering order.</dd>
+        <dt>Description</dt><dd>The work or product, including material and size when relevant. More specific wording helps match the right earlier bids.</dd>
+        <dt>Unit and quantity</dt><dd>The measurement and amount of work, such as CY, SY, LF, EA or LS. Check what was read, especially from scanned documents.</dd>
+        <dt>Amount</dt><dd>Read only for an owner-set allowance, contingency or force account. Other uploaded prices do not become the model's estimate. Quantity is never treated as dollars.</dd>
+      </dl>
+      <p>Column order does not matter. Excel, CSV, PDF and Word schedules can be uploaded. Scanned PDF and image reading uses the local OCR tools when available; inspect the extracted lines before estimating.</p>
+      <p>Rows that are not treated as pay items are available under <strong>Rows not treated as pay items</strong>. Add missing pay items with <strong>Add row</strong>. A line without a quantity is left out until it is corrected.</p>
+    </section>
+
+    <section id="classification">
+      <h2>3. Review the classification</h2>
+      <p>The item type, unit and size determine which earlier bids are comparable. Check the Classification column before estimating. A correct-looking description can still have the wrong item type.</p>
+      <p>If none of the suggested items fits, choose <strong>New item / Other — Engineer input</strong> beside the suggestions or in <strong>Change</strong>. After estimating, this line's <strong>Your $/unit</strong> starts blank for your judgment. Any model price is a reference only; it is not automatically copied into your OPCC. Enter a price before treating the worksheet total as complete.</p>
+      <dl class="manual-definitions">
+        <dt>Not covered</dt><dd>There is almost no comparable bid history for this kind of item. Get a vendor quote; the model totals exclude it.</dd>
+        <dt>Low confidence</dt><dd>A lump sum that bidders price very differently. Review the historical range and use your judgment.</dd>
+        <dt>Owner-set</dt><dd>Money set by the owner, such as an allowance, contingency or force account. Enter the stated amount.</dd>
+        <dt>Unclassified</dt><dd>No suitable item type was found. Use <strong>Change</strong> to choose one.</dd>
+        <dt>Engineer input</dt><dd>You selected New item / Other because no item type matched. Enter your own worksheet unit price; choosing a normal classification removes this selection.</dd>
+        <dt>Check</dt><dd>The reader is unsure about something on this line. Review the stated reason against the schedule.</dd>
+        <dt>Remembered</dt><dd>An earlier classification choice for the same wording has been applied. Confirm that it fits this item too.</dd>
+        <dt>Read by Claude</dt><dd>Read from a PDF by Claude. Check the items and quantities against the document.</dd>
+      </dl>
+      <p>Warnings name the affected items and the action to take. Acknowledging a warning records your review; it does not repair an input or add a missing price.</p>
+    </section>
+
+    <section id="project">
+      <h2>4. Project details</h2>
+      <dl class="manual-definitions">
+        <dt>Market</dt><dd><strong>City / County</strong> is the default. Choose <strong>TxDOT</strong> for that market. <strong>Not sure</strong> uses City / County.</dd>
+        <dt>Owner</dt><dd>Optional. Earlier jobs of the same owner receive more weight when similar projects are selected. Pick an owner or type one that is not listed.</dd>
+        <dt>Work type</dt><dd>Optional. Earlier jobs of the same work type receive more weight in similar-project selection. An unlisted work type uses the generic match.</dd>
+        <dt>Bid date</dt><dd>Prices are adjusted to its year. Comparable bids must have been made before this date. The page starts from your local calendar date.</dd>
+        <dt>Expected bidders</dt><dd>The suggested count comes from earlier jobs after the takeoff is read. Edit it when you have better information. The bidder count affects the typical gap between the median bidder and the low bid.</dd>
+        <dt>Owner-set amounts</dt><dd>Enter the actual allowance or other stated amount. When asked, press <strong>Re-estimate</strong> to include an edited amount in the model totals.</dd>
+        <dt>Vendor quotes</dt><dd>Enter quotes for not-covered lines. Each line has one shared amount, wherever you edit it. Quotes are added separately to the worksheet and complete comparison totals.</dd>
+      </dl>
+      <p>The estimate targets the lowest of the expected bids. More bidders generally produce a lower expected low bid relative to the median bidder. The competition adjustment applies to the bid total; owner-set money is added afterward.</p>
+      <p>There is no input for your earlier OPCC or an engineer's estimate. Engineer estimates are a yardstick for evaluation, never an input to pricing.</p>
+    </section>
+
+    <span id="p50-p80" aria-hidden="true"></span>
+    <section id="p50-p70">
+      <h2>5. P50 and P70</h2>
+      <div class="manual-pair">
+        <div class="manual-callout"><h3>P50: expected low bid</h3><p>The middle estimate of the lowest bid. In the idealized picture, the low bid is equally likely to fall above or below it. Use it as a central estimate.</p></div>
+        <div class="manual-callout"><h3>P70: trial recommended OPCC</h3><p>A higher figure with a nominal 70% target: the low bid at or below the estimate on 7 out of 10 jobs. This local trial has not been independently validated at that hit rate.</p></div>
+      </div>
+      <p>P70 does not mean “P50 plus 70%.” Its margin comes from the 30th percentile of earlier public forward-scored ratios of P50 to the actual low bid. It is calibrated separately by market; it does not currently widen for an unusual individual job or narrow for a well-referenced one.</p>
+      <figure class="manual-figure">
+        <div id="p50p70-charts" class="manual-charts"></div>
+        <figcaption>An illustration of the idea, not this project's data or a fitted prediction curve.</figcaption>
+      </figure>
+      <p>In the left picture, the entire area represents possible low bids: 50% lies below P50, another 20% between P50 and P70, and 30% above P70. The right picture shows the same shares as a running total.</p>
+      <p>The informational result cards show P50 and the trial P70; these do not set your worksheet unit prices. The retained 50% and 80% historical ranges are two-sided ranges; they are separate from the one-sided P70 or P80 budget threshold.</p>
+      <p class="manual-callout">The 70% target is not an independently verified P70 success rate or a guarantee for one project. P70 can still fall short. Missing scope and not-covered lines require separate attention; add their prices before treating an OPCC as complete.</p>
+    </section>
+
+    <section id="method">
+      <h2>6. How prices are calculated</h2>
+      <ol>
+        <li>Match each covered line to earlier public bid items using its wording, item type, unit and size. Adjust the reference price to the bid year.</li>
+        <li>Add the line amounts and apply the historical competition discount for the expected bidder count. This produces a line-based estimate of the low bid.</li>
+        <li>Combine that estimate with the price implied by similar earlier projects, using a geometric mean when comparable pricing is available.</li>
+        <li>Apply the market's level correction, measured from earlier estimation errors. Add owner-set money at face value to obtain P50.</li>
+        <li>For the local P70 trial, divide headline P50 by the 30th-percentile ratio of P50 to actual low bid from earlier public forward results.</li>
+      </ol>
+      <div class="manual-formulas" aria-label="Simplified pricing formulas">
+        <p>Line-based bid = sum of covered reference amounts × competition discount</p>
+        <p>Combined bid = √(line-based bid × similar-project bid)</p>
+        <p>P50 = combined bid × level correction + owner-set money</p>
+        <p>Trial P70 = headline P50 ÷ 30th-percentile historical ratio (P50 ÷ actual low bid)</p>
+      </div>
+      <p>The line-based estimate is used when comparable pricing is unavailable. Some price adjustments are market-specific. The formulas summarize the process; the project's source documents describe the individual rules.</p>
+      <p><strong>Owner-set money is not competition-discounted or level-corrected.</strong> It is added after those steps. The headline P70 is a calibrated total; it is not an instruction to increase every fixed allowance. In your worksheet, owner-set line amounts remain at face value and do not receive the recent-bid or project-level model multiplier.</p>
+      <p>Not-covered items remain outside model P50 and P70. Vendor quotes are added at face value to the complete totals. The model uses public bids only; your worksheet prices never train or tune it.</p>
+    </section>
+
+    <section id="worksheet">
+      <h2>7. Your OPCC worksheet</h2>
+      <p>New worksheets start from <strong>Recent bid median</strong>. This is a unit-price reference selected separately for each item, not a share of the project P70 total. The P50 and P70 cards are comparisons; clicking them does not replace your prices.</p>
+      <p>For each eligible item, the tool selects three distinct public projects in the same market with closely matching work, unit, size and quantity. Each must have a precise bid date before your bid date and within the preceding two calendar years. Eligible projects from the most recent year are preferred. Older projects are not added to make up a missing third reference.</p>
+      <p>Each project's own bidder median is adjusted to your bid year before taking the median of the three adjusted values. The adjustment uses an annual index of matching public bids dated before your bid date, with at least ten matched items for each annual step. The factor can raise or lower a price. Original bidder medians, dates, factors and the index evidence remain attached to the selected prices.</p>
+      <p>If fewer than three eligible projects are available, or a required price adjustment is unavailable, the default stays blank. Review the available references and enter your unit price. Loading or missing references never cause a model P70 price to be substituted.</p>
+      <dl class="manual-definitions">
+        <dt>Bid median $/unit</dt><dd>The selected recent-bid reference for this item. Open the line to see all three source projects and the adjustment evidence.</dd>
+        <dt>Your $/unit</dt><dd>The price used in your OPCC. You can keep the recent bid median, choose another source from Reference, or enter your own price.</dd>
+        <dt>Rounding</dt><dd>The default uses unit-price cents, so quantity times the visible unit price equals the line amount. The full adjusted median is retained in the source record. You may choose rounding up or to a convenient amount; a price you type is never automatically rounded.</dd>
+        <dt>Engineer input</dt><dd>Mobilization and temporary erosion-control lump sums remain your input. An explicitly selected <strong>New item / Other</strong> also starts blank. Your entered prices survive reference loading and re-estimation.</dd>
+        <dt>Missing prices</dt><dd>A blank price is excluded from Your OPCC. Complete these lines before exporting a finished estimate.</dd>
+        <dt>Your OPCC</dt><dd>Your line amounts, plus the schedule's contingency amounts and any additional Construction Contingency. It is independent of the model P50, P70 and retained P80 totals.</dd>
+      </dl>
+      <p>When you re-estimate, automatically selected recent medians refresh from the new inputs. Typed prices, deliberate reference picks, notes, vendor quotes and owner-set amounts are retained. New reference responses cannot replace a price you entered while they were loading.</p>
+      <p>The existing Reference list also contains explicitly labeled model and other historical choices. Selecting one is your decision; it does not change the project's model totals. Saved P50, P70 or P80 worksheets retain their original basis rather than being relabeled as recent bid medians.</p>
+      <p>Fill in Project, Prepared by and Project no. for the exported OPCC. Your worksheet edits affect only your OPCC and its exports, never the model's reference tables.</p>
+    </section>
+
+    <section id="contingency">
+      <h2>8. Construction Contingency</h2>
+      <p>Construction Contingency covers what the estimate cannot see yet: scope that may change, unknown site conditions and omitted items. It is separate from P70's margin for pricing uncertainty.</p>
+      <p>A percentage contingency is calculated from your worksheet subtotal and shown below it. The project total is the subtotal plus the contingency amounts. The default additional contingency is 10% when the schedule has no contingency allowance.</p>
+      <p>If the schedule already carries a contingency allowance, additional contingency starts at 0% to avoid counting it twice. Add more only for risks that allowance does not cover.</p>
+      <p>P70 plus a contingency can be useful while design scope is changing. For a final design, adding more for the same pricing uncertainty can raise the total without covering a new risk. Review what each allowance is intended to cover.</p>
+      <p>The <a href="#accuracy">historical accuracy tables</a> describe the project model, not the recent-bid worksheet defaults. They show how often several percentages above model P50 still fell below the low bid. They do not measure unknown scope or recommend a contingency for your specific project.</p>
+    </section>
+
+    <section id="references">
+      <h2>9. Reference evidence</h2>
+      <p>The selected <strong>Recent bid median</strong> evidence is shown first when you open a line. Other reference bids can cover a wider period and are available for your review; they do not automatically fill a missing recent median.</p>
+      <p><strong>Reference range</strong> shows the low, median and high of this line's reference projects' median-bidder unit prices, adjusted to the bid year. These are reference observations, not a prediction interval for your exact item.</p>
+      <p>Open a worksheet line to inspect project dates, quantities, units and bid prices. Review size or unit differences before choosing a price. Converted-unit prices are hints; different units can describe different products.</p>
+      <p><strong>Similar past projects</strong> shows actual public projects with overlapping work. Their matched lines, full bid tabulations and source links help you explain a choice. A similar project can still differ in scope or site conditions.</p>
+      <p><strong>Model accuracy</strong> is the historical P50 item indicator. It is not a confidence score for the newly selected recent bid median.</p>
+      <p><strong>Low confidence</strong> compares mobilization and general-condition lump sums with the shares carried by earlier low bidders. This is a judgment aid. That panel does not change P50 or P70.</p>
+      <p><strong>Competition</strong> reports the bidder count and historical low-to-median discount used for the estimate. A weak or unavailable discount is flagged rather than silently extrapolated.</p>
+    </section>
+
+    <section id="accuracy">
+      <h2>10. Historical accuracy</h2>
+      <p>To measure project accuracy, add the estimated amounts for covered pay items other than lump sums. Compare that subtotal with the same items on the original low bidder’s bid tab. The worksheet still includes the full schedule. A covered item marked low confidence stays in the comparison.</p>
+      <p><strong>City / County development check.</strong> Of 235 historical jobs, 174 had enough information to compare the same items. The estimate met or exceeded the comparable bid on 81 jobs at P50 (46.6%), 112 at P70 (64.4%) and 134 at P80 (77.0%). P80’s target is 80%. The check used historical bidder counts and winning unit prices multiplied by quantities.</p>
+      <h3>Earlier baseline including lump sums</h3>
+      <p>The tables below use the earlier scoring rules for model P50 and P80.</p>
+      <div id="manual-accuracy" aria-live="polite" aria-busy="true">
+        <p class="manual-muted">Loading the current historical results from this estimator.</p>
+      </div>
+      <noscript><p>Historical results require JavaScript. The rest of this manual can be read without it.</p></noscript>
+      <dl class="manual-definitions">
+        <dt>P50 median error</dt><dd>The typical absolute error in the expected low bid across the scored jobs.</dd>
+        <dt>P80 baseline under rate</dt><dd>The share of jobs where P80 was below the actual low bid. The target is no more than 20%.</dd>
+        <dt>P80 baseline median overshoot</dt><dd>Among jobs where P80 was at or above the low bid, the typical percentage by which it was above.</dd>
+      </dl>
+    </section>
+
+    <section id="exports">
+      <h2>11. Excel and PDF exports</h2>
+      <p><strong>Download the OPCC (Excel)</strong> produces your OPCC with item numbers, descriptions, units, quantities, unit costs and amounts, followed by Sub-Total, Construction Contingency and Project Total. The workbook also includes model comparisons and the public projects behind the prices. Recent-bid sources retain all selected project dates, original bidder medians, adjusted medians and index evidence. P80 remains labeled as the original model baseline.</p>
+      <p><strong>Download the OPCC (PDF)</strong> produces the same OPCC as it prints. Both use US Letter. Review the project details, missing-price warnings and totals before sharing either file.</p>
+      <p>Workbook formulas also carry saved values so a preview can show the totals without recalculating.</p>
+    </section>
+
+    <section id="data-privacy">
+      <h2>12. Data, privacy and limitations</h2>
+      <p>The model is built from public bid tabulations. Engineer estimates are used only for comparison; company or client bid files and your worksheet prices do not feed the model.</p>
+      <p><strong>Local mode:</strong> takeoff reading and pricing run on your machine. <strong>Public demo:</strong> uploaded files are processed on the server and are not stored; do not upload confidential documents. Corrections and saved worksheets in the public demo stay in that browser.</p>
+      <p>Current data dates, OCR availability and software versions are available under <strong>About this tool</strong> in the estimator.</p>
+      <p>The tool focuses first on city drainage, creek-erosion and streambank work in the Dallas–Fort Worth area, with TxDOT as another market and fallback price source. Sparse history, specialty equipment, unusual scope and site-dependent lump sums need additional review.</p>
+      <p>If too much of the schedule is outside the available price history, the tool may withhold P50 and P70. Resolve missing inputs and obtain separate prices rather than treating a partial total as a complete estimate.</p>
+      <p>The low bid is the lowest recorded bidder total used by the method. It is not necessarily the final award, and it does not measure later construction changes. Review the schedule and evidence before relying on any total.</p>
+    </section>
+
+    <section id="ai-mode">
+      <h2>13. AI mode</h2>
+      <p><strong>AI mode is not available yet.</strong> Its intended purpose is to read engineering drawings and documents into a draft takeoff for an estimator to check. The current placeholder and disabled <strong>Read by AI</strong> button do not provide that feature.</p>
+      <p>For now, supply a takeoff schedule through Paste text or Upload file and review the items that were read.</p>
+    </section>
+    <footer class="manual-footer"><a href="#manual-content">Back to top</a><a href="/">Back to estimator</a></footer>
+  </article>
+</main>
+</body>
+</html>

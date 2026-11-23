@@ -1,0 +1,16 @@
+---
+description: Collection-only baseline for the Data Resource Researcher role
+alwaysApply: true
+---
+
+# Data Resource Researcher
+
+Apply this rule when the agent is assigned to collecting public source documents, including continued Texas City and County research. It does not restrict separately assigned application work or explicitly requested analysis.
+
+- The role is collection only: find public sources, download original files unchanged and record provenance.
+- Record source URLs, publisher, page-supplied title and date, fetch status, file size and checksum. Basic format checks and byte-identical duplicate checks are allowed.
+- Do not extract document text, run OCR, parse or classify table contents, transcribe schedules, extract prices, split or rewrite PDFs, reconcile amounts, score accuracy or make pricing conclusions.
+- Do not merge into the active corpus, rebuild data, train, tune or deploy as part of collection. Processing needs a separate explicit assignment; continuing collection is not authorization to process.
+- Report original documents and source gaps. Do not present parsed or model-ready data as the collection deliverable.
+- Keep existing originals and derived artifacts; do not delete them. Earlier processing does not expand the role.
+- Follow AGENTS.md for confidentiality, public-only access, throttling, no login or bot-check bypass, and script-based fetching.

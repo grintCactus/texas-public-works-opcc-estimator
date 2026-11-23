@@ -6,20 +6,27 @@ and the page's main job is to put useful reference material in front of the
 estimator, who sets their own prices in the **OPCC worksheet** (see below).
 A bid schedule (takeoff) goes in; out come:
 
-- **Expected low bid (P50)** and **Recommended OPCC (P80)** — the low bid came in
-  at or below P80 in about 80% of past lettings — with their bands and how many
-  lettings calibrated them;
+- **Expected low bid (P50)** and **Recommended OPCC (P70)** — a local trial
+  with a nominal 70% target, calculated from the 30th percentile of earlier
+  public forward-scored P50 / actual-low-bid ratios; this is not an
+  independently validated P70 hit rate;
 - the lines that are **not covered** (specialty items with no comparable bid
   history) and need a vendor quote, and the complete total once quotes are in;
 - the **low-confidence** lump sums (mobilization, general conditions) set against
   what earlier low bidders gave them;
 - every line at the P50 level with its basis and a **typical accuracy** badge;
 - the competition step, and the **similar past projects** the estimate leans on;
-- the **OPCC worksheet**: per line the model's price, the reference range, your
-  own price with quick picks and a note, and **Your OPCC** next to P50 / P80;
+- the **OPCC worksheet**: per line a recent bid median, the reference range, your
+  own price with quick picks and a note, and **Your OPCC** next to P50 / P70;
 - for every project shown, its **full bid tabulation** and its **public source
   page**;
 - a CSV / Excel export of all of it, and of the worksheet (your deliverable).
+
+The original P80 totals, multiplier, calibration, bands and historical results
+remain unchanged as a baseline. New worksheets use `basis: "history"`: three
+recent matching projects' bidder medians, adjusted to the target bid year.
+The informational P50/P70 cards do not reprice worksheet items. Existing
+`p50`, `p70` and `p80` worksheets retain their original basis and meaning.
 
 Every model price on the page is the production estimator's own number. The UI
 adds display, never a model price; your own prices in the worksheet are output
@@ -140,27 +147,35 @@ r = estimate(tab, items, n_bidders, market, to_year,
    money, unclassified, **check** (low-confidence reading, with up to three
    one-click suggestions), **remembered** and **read by Claude**. **Change**
    corrects the family or searches earlier public line items. An **Owner-set $**
-   column takes an allowance's amount at face value.
+   column takes an allowance's amount at face value. A color guide above the
+   grid explains the tags currently present and what needs review.
+   **New item / Other — Engineer input**, in the suggestions or Change dialog,
+   is an explicit per-line choice when none fits. It leaves Your $/unit blank
+   after estimation; typed prices survive basis changes and re-estimation.
+   The request retains `pricing_mode: "engineer"` for the worksheet. This is
+   separate from automatic unclassified matches and does not change pricing
+   rules or promote a generic model reference into the user's OPCC.
 3. **Project details:** market (City / County or TxDOT), owner and work type
    (lists from the public lettings on record), bid date, **expected bidders**
    (prefilled, editable, with the history it came from), an **Owner-set
    amounts** box for every allowance line (see below), and a vendor-quote box
    for every not-covered line.
 4. **Results:**
-   1. **P50 and P80**, the half-of-lettings and 80%-of-lettings bands, and the
-      number of lettings that calibrated them.
-   2. **One context line:** the market's forward accuracy, for example city /
-      municipal 2024–26 (186 lettings): P50 median error 19%, P80 under the low
-      bid on 16% of lettings, median overshoot 43%; TxDOT 2023–26 (806
-      lettings): 16% / 16% / 32% (parser .29). The figures are `MARKET_ACCURACY`
-      in `engine_production.py`, copied from the project README's "Where it
-      stands" table; update them together.
+   1. **Expected low bid (P50)** and **Recommended OPCC (P70)**, each with
+      its amount only. These are project-level comparisons, not unit-price controls.
+   2. **User Manual:** the header opens `/manual.html` in a separate tab,
+      keeping the current takeoff and worksheet in place. Definitions,
+      probability diagrams, method, classification tags, field guidance,
+      contingency guidance and export instructions live there. The current project check uses covered, non-LS items for both estimated and winning amounts. The manual reports the municipal development sample and its eligible count. Historical
+      P50 and P80 baseline accuracy and contingency comparisons read
+      `market_accuracy` from `/api/options`; these do not validate the P70 trial,
+      and are labeled as the earlier baseline including lump sums.
    3. **Alerts** decided on the result's keys (no estimate, unpriced lines,
       not-covered lines, unpriced allowances, thin evidence), then the
       estimator's own warnings verbatim as notes.
    4. **Not covered — get a vendor quote:** the lines, their class, the quotes,
-      and the complete totals (P50 + quotes, P80 + quotes) once every line has a
-      quote. P50 and P80 exclude these lines.
+      and the complete totals (P50 + quotes, P70 + quotes) once every line has a
+      quote. P50 and P70 exclude these lines; the original P80 complete total is retained in the API.
    5. **Low confidence:** each mobilization / general-condition class with our
       amount at the P50 level, its share of P50, the earlier low bidders'
       share-of-job range (p25–p75) and the dollar range it implies.
@@ -172,9 +187,9 @@ r = estimate(tab, items, n_bidders, market, to_year,
    7. **Competition:** the bidders used (and the rule's suggestion) and the
       discount factor with its table, bin and lettings.
    8. **Similar past projects:** see below.
-5. **Export:** CSV, and Excel (.xlsx) with one sheet per block, including each
-   line's top-3 references and their `source_url`. The worksheet has its own
-   export (below).
+5. **Export:** the OPCC worksheet as Excel (.xlsx) or PDF, from the single
+   Export section. The workbook includes the summary, line details and
+   reference projects (see below).
 
 ## Messy takeoffs
 
@@ -300,13 +315,38 @@ appendix.
 ## OPCC worksheet
 
 The results' line table is the estimator's worksheet. Per line: item,
-description, quantity, unit; the **model unit price** (P50 level); the
+description, quantity, unit; the **recent bid median**; the
 **reference range** — low, median and high of the line's reference projects'
-median-bidder unit prices, escalated to the bid year; the accuracy badge;
-**your unit price** (defaults to the model's; quick picks: the model, the
+median-bidder unit prices, escalated to the bid year; the model's historical accuracy badge;
+**your unit price** (defaults to the selected recent bid median; quick picks: the model, the
 reference median, the most recent similar project's low bid, or any reference
 project's low or median bid); **your amount**; and a free-text **note** (filled
 in for you from a project pick, e.g. "used Coppell 2025 … median bid").
+
+`history_prices.py` selects at most one compatible pay item from each of three
+public projects in the same market, with precise bid dates strictly before
+the target date and no more than two calendar years old. Eligible projects
+within one year rank first. Specifications, units, material and operation must
+match; quantities, wording, dates and same owner inform the ordering. A pay
+item's median gives each distinct bidder one vote. Fewer than three matching
+projects leaves the default blank, with an engineer-input reason.
+
+`history_inflation.py` adjusts each selected median using annual matched-item
+price changes from earlier public bids in that market. Each year pair requires
+ten matched items; no borrowed market, forecast rate or flat carry hides missing
+index evidence. The final default is the median of the three adjusted prices,
+charged to cents. Original medians, adjustment factors and full source records
+are preserved in `worksheet.lines[].history_price` and the export appendix.
+The full method and its verification rules are registered in `docs/METHOD.md`
+section 1.5. This evidence is not a calibrated confidence percentage.
+
+References load asynchronously. Automatic prices stay blank until the current
+request finishes; errors stay visible. A delayed response cannot overwrite a
+typed price or a newer estimate. Re-estimation refreshes automatic history
+defaults and preserves deliberate selections, quotes, fixed amounts and notes.
+Mobilization, temporary erosion-control lump sums, and New item / Other still
+require the engineer's price. New worksheets start without convenience-price
+rounding; an explicitly chosen rounding option remains available.
 
 Lines where the model is weak are marked **needs your judgment**: fewer than
 3 references, a generic or unclassified match, lump sums, low confidence or
@@ -315,11 +355,12 @@ that need your judgment" filters to them and opens their references.
 
 **Your OPCC** = your line amounts (owner-set allowances at face value, vendor
 quotes as given) + an optional contingency %, shown next to the model's P50 and
-P80 with the differences. The model's P80/P50 ratio is shown as a suggestion
-for the contingency only.
+trial P70 with the differences. Construction Contingency remains a separate
+allowance for scope and site uncertainty; the P70 margin is not a recommended
+contingency percentage.
 
-Export the worksheet as Excel (OPCC, Lines, References sheets) or CSV: your
-prices, notes and totals, the model's P50 / P80, and a references appendix
+Export the worksheet as Excel (OPCC, Summary, Lines, References sheets) or PDF: your
+prices, notes and totals, the model's P50 / P70 and unchanged P80 baseline, and a references appendix
 with `source_url`. Save it under `ui/.local/worksheets/` (local, not in git) or
 download it as JSON, and reopen it later: the takeoff and project details come
 back, the model is re-run on today's data, your prices and notes are kept.
@@ -498,7 +539,7 @@ after-the-fact backtest baseline.
 It prices the file through the UI's HTTP API (a real socket) and through
 `run_schedule()` on a schedule CSV with the same classification, and compares
 P50, P80, the market total, owner-set money, the complete totals and every line
-price. They must be identical.
+price. The P50/P80 baseline must remain identical; P70 is an additional result, not a replacement value in the P80 fields.
 
 ## Tests
 

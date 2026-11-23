@@ -55,7 +55,142 @@ How far the target is: with every unit price known exactly, this design's oversh
 - **Pre-registration.** A pricing change is written down with its pass/fail rule before it is scored (section 4.6).
 - **Guards.** A build fails if any test data reaches a fitted number (section 4.3).
 
+### 1.4 Registered P70 local trial (2026-11-22)
+
+The owner requested a P70 recommendation to try locally after reviewing the
+trade-off between budget headroom and the risk of an estimate below the low
+bid. This authorizes a P70 trial, not an accuracy improvement claim or a public
+deployment. The existing P50 estimator and guarded P80 baseline remain unchanged.
+
+Registered before any P70 scoring: use the 30th percentile of the market's
+centred estimate-to-actual ratios from the existing public forward estimator,
+with the same empirical order-statistic convention as section 2.8. P70 is P50
+divided by that positive percentile. Do not interpolate between P50 and P80,
+choose a multiplier from the displayed coverage curve, tune a new guard, change
+line pricing, change parser rules, or open the locked test set. Generate any
+missing aggregate inputs from the public bundle in an isolated working area;
+do not overwrite its production tables.
+
+Acceptance for local trial: the API, worksheet, and exports use the same P70;
+P50 and P80 remain identical to the existing known answer; the new calibration
+uses public data only and records its provenance; no historical P80 accuracy
+figure is relabeled as P70. The nominal P70 target allows 30% of low bids above
+the estimate and does not retain the P80 product's 20% under-rate promise.
+Any P70 performance figure must use only prior lettings for both prices and
+calibration. Report a failed 30% under-rate check rather than selecting another
+rule after scoring. Until separately validated, P70 remains a local trial and
+is not described as having demonstrated 70% future coverage.
+
+### 1.5 Registered worksheet reference defaults (2026-11-22)
+
+The owner requested item-level worksheet defaults from recent matching public
+bids, independently of the project-level P70 recommendation. The owner selected
+the median of three projects' individual bidder medians, then specified a hard
+two-year limit, preference for the latest year, and an inflation adjustment.
+This changes the worksheet's starting prices only. P50, P70, P80, their fitted
+tables, the parser, and existing saved model-basis worksheets remain unchanged.
+
+The rule is fixed before verification, with no accuracy-driven variant search:
+
+- Admit only public, non-engineer, positive competitive construction bids with
+  precise dates strictly before the target bid date and within the preceding
+  two calendar years. Exclude older and undated projects instead of filling the
+  sample with them. After compatibility checks, prefer projects within one year.
+- Match a concrete pay item in the same market: same unit, classified item type, numeric
+  specifications, known material, size and operation (including removal and
+  abandonment). Require word similarity of at least 0.5 after the existing hard
+  compatibility checks. A lump sum, generic match, New item / Other or other
+  engineer-input line receives no automatic price.
+- Deduplicate bidders within a pay item; reject conflicting duplicate prices.
+  Require at least two distinct bidders. Rank compatible items by the existing
+  recency, wording, quantity and same-owner factors, with deterministic ties;
+  keep at most one item from each project and select three distinct projects.
+  Same owner is a locality clue, not a measured geographic distance.
+- Compute each selected item's actual bidder-median unit price. Adjust each to
+  the target bid year using the same market's annual matched-item bid-price
+  changes, using only precisely dated public bids available before that date.
+  Each project contributes one median per item/year, then each item one yearly
+  median. Each adjacent-year change needs at least ten matched items, with unit
+  included in the matching key. Index inputs use the same unambiguous pay-item
+  and distinct-bidder checks; they can include older years to measure price
+  movement, but older projects never become worksheet reference prices.
+  Multiply the annual factors to move the price.
+  A same-year bid has factor 1; this does not estimate within-year inflation.
+  Partial-year evidence is identified. Measured decreases are not forced up.
+  No borrowed market, assumed growth rate, extrapolation, or flat carry fills a
+  missing index path.
+- Take the median of the three adjusted item medians. Fewer than three
+  compatible projects, or a missing adjustment for a selected project, leaves
+  the default blank with a reason and the available evidence. Do not replace
+  selected projects to work around a missing index. The raw medians, factors,
+  adjusted values, source items, dates and URLs travel with the worksheet.
+- Start new worksheets from this history basis, with prices shown and charged
+  to cents. Keep the unrounded reference calculation for audit. Existing
+  rounding choices remain available when explicitly selected. Loading or
+  failed reference requests never substitute a P70 unit price. User-entered
+  prices, selected references, quotes, fixed allowances and required engineer
+  inputs are preserved. Project totals remain informational comparisons.
+
+Acceptance is functional and traceable: date/specification/bidder tests pass;
+no future rows affect an adjustment; each default reproduces from its three
+saved references; displayed unit prices reproduce exported amounts; delayed
+responses cannot overwrite an engineer's input; the known-answer P50/P70/P80
+check remains IDENTICAL. Evidence quality is described by recency, match,
+sample size and price spread, never by an invented confidence percentage or
+an accuracy claim. No holdout is opened and no model accuracy improvement is
+claimed by this worksheet change.
+
 ---
+
+### 1.6 Registered next optimization: recent municipal medians (2026-11-22)
+
+At the owner's explicit request, the next optimization round follows the local
+worksheet checks and the separately authorized cleaning of the new statewide
+public documents. This reopens model testing for this round only. The P70 trial
+and original P80 baseline remain separate from any adoption decision.
+
+**One candidate, fixed before scoring: R3-B80.** On municipal lines only, use
+the exact three-project selection and prior-date price adjustment of section
+1.5 as the market-level unit price when all its gates pass. Keep production's
+price otherwise; this experimental fallback does not change the worksheet's
+blank-default policy. Do not alter the parser, coverage, lump-sum rules,
+owner-set amounts, competition discount, comparables blend, bidder counts or
+TxDOT line prices. Recompute the candidate's centring from strictly earlier
+candidate records, but use the actual current production baseline's P80 divisor
+and guard level at that date. Do not refit that divisor from current-baseline
+records: production already retains an earlier B80 margin.
+
+**Sequence and isolation.** Freeze and checksum the code, public bundle,
+reconstructed calibration inputs and runner in an immutable local registration
+before real scoring. Repeat production field by field against the existing
+2,252 forward records; the paired scorer with B on both sides must report zero
+change. Preserve the baseline's inner margin records for arbitrary-date checks.
+First benchmark clean new schedules as never-trained public documents, using
+only the frozen earlier corpus and prior calibration records. Engineer estimates
+are comparison columns only. A missing company-copy exclusion check or incomplete
+document reconciliation prevents training merge; it does not justify claiming
+that those checks passed. New documents remain out of references, indices,
+discounts, calibration and guard history throughout this round. No private or
+locked public holdout is opened. Then run R3-B80 on the same original public
+development population, forward in time.
+
+**Measurements and decision.** Compare common municipal lettings in 2024–2026
+and TxDOT lettings in 2023–2026. Report additions, losses, unavailable prices,
+coverage and each year's under rate, as well as the whole registered windows.
+For line error, use the uniquely identified pay item's median of distinct
+bidder prices (at least three bidders), quantity times the pre-discount unit
+price, and only lines priced by both sides, excluding owner-set and uncovered
+lines. Ambiguous mappings are excluded symmetrically and counted. Recompute
+paired metrics on 2,000 letting-level bootstrap samples, seed 20261119.
+
+Adoption requires track T, U or U+ in section 4.8, including their complete
+P80 under-rate conditions and TxDOT safeguards. For U and U+, the under rate
+cannot rise above B overall or in any registered year; the 20% hard floor also
+applies. Report the engineer comparison only on complete, matched scopes, and
+describe the isolated new-document check as provisional where source gates are
+pending. No candidate thresholds or additional arms are selected after seeing
+these scores. Failure retains the original model. A passing development score
+is not independent prospective validation and does not validate P70 coverage.
 
 ## 2. The pipeline
 

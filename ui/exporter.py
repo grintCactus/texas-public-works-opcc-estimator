@@ -20,6 +20,17 @@ from typing import Any, Dict, List
 P80_TEXT = ("a cautious figure: the low bid came in at or below this in "
             "about 80% of past lettings, so an OPCC at P80 falls short about 1 "
             "time in 5")
+P70_TEXT = ("a trial recommendation with a nominal 70% coverage target for "
+            "the low bid; independent P70 validation is not yet available")
+
+
+def recommended_basis(result):
+    """Use the declared recommendation, preserving older P80 results."""
+    h = result.get("headline") or {}
+    basis = h.get("recommended_basis")
+    if basis in ("p70", "p80"):
+        return basis
+    return "p70" if h.get("p70") is not None else "p80"
 
 # ---------------------------------------------------------------------------
 # Spreadsheet safety: text is never run as a formula
@@ -109,14 +120,21 @@ def sections(result: Dict[str, Any]) -> List[tuple]:
     ]))
 
     cov = " (covered lines only)" if hl.get("covered_only") else ""
+    rec = recommended_basis(result)
+    label = rec.upper()
     b50, b80 = hl.get("p50_band") or ["", ""], hl.get("p80_band") or ["", ""]
-    out.append(("Estimate", ["Figure", "Amount", "Note"], [
+    figures = [
         ["Expected low bid (P50)%s" % cov, _money(hl.get("p50")),
          "the middle estimate of the low bid: as likely to be too high as "
          "too low"],
-        ["Recommended OPCC (P80)%s" % cov, _money(hl.get("p80")),
-         P80_TEXT + (" (P50 x %.3f)" % hl["p80_multiplier"]
-                     if hl.get("p80_multiplier") else "")],
+        ["Recommended OPCC (%s)%s" % (label, cov), _money(hl.get(rec)),
+         (P70_TEXT if rec == "p70" else P80_TEXT)
+         + (" (P50 x %.3f)" % hl[rec + "_multiplier"]
+            if hl.get(rec + "_multiplier") else "")],
+    ]
+    if rec == "p70":
+        figures.append(["P80 baseline%s" % cov, _money(hl.get("p80")), P80_TEXT])
+    figures += [
         ["Half of past lettings landed between", _money(b50[0]),
          _money(b50[1])],
         ["80% of past lettings landed between", _money(b80[0]),
@@ -126,15 +144,16 @@ def sections(result: Dict[str, Any]) -> List[tuple]:
          % (hl.get("calibration_market") or "")],
         ["Owner-set money inside P50 (face value)",
          _money(hl.get("fixed_total")), ""],
-    ]))
+    ]
+    out.append(("Estimate", ["Figure", "Amount", "Note"], figures))
 
     if ctx:
-        out.append(("Forward accuracy of this market", None, [[
+        out.append(("Forward accuracy of this market (P50 / P80 baseline)", None, [[
             ctx.get("label"),
             "P50 median error %s" % _pct(ctx.get("p50_median_error"), 0),
             "P80 under the low bid on %s of lettings"
             % _pct(ctx.get("p80_under"), 0),
-            "median overshoot %s" % _pct(ctx.get("median_overshoot"), 0),
+            "P80 baseline median overshoot %s" % _pct(ctx.get("median_overshoot"), 0),
             "%s lettings, as of %s" % (ctx.get("lettings"), ctx.get("as_of")),
         ]]))
 
@@ -155,8 +174,12 @@ def sections(result: Dict[str, Any]) -> List[tuple]:
         if nc.get("complete_total") is not None:
             rows.append(["", "Complete total = P50 + quotes", "", "", "",
                          _money(nc.get("complete_total"))])
+            if nc.get("complete_total_p70") is not None:
+                rows.append(["", "Complete total = P70 + quotes", "", "", "",
+                             _money(nc.get("complete_total_p70"))])
             if nc.get("complete_total_p80") is not None:
-                rows.append(["", "Complete total = P80 + quotes", "", "", "",
+                rows.append(["", "Complete total = P80 + quotes"
+                             + (" (baseline)" if rec == "p70" else ""), "", "", "",
                              _money(nc.get("complete_total_p80"))])
         else:
             rows.append(["", "No complete total until every line has a "
@@ -313,10 +336,11 @@ def sections(result: Dict[str, Any]) -> List[tuple]:
 
 
 def to_csv(result: Dict[str, Any]) -> bytes:
+    _check(result)
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["# Bid estimate -- expected low bid (P50) and recommended "
-                "OPCC (P80), production estimator"])
+                "OPCC (%s), production estimator" % recommended_basis(result).upper()])
     for title, head, rows in sections(result):
         w.writerow([])
         w.writerow(["## " + title])

@@ -22,6 +22,7 @@ import random
 import sys
 import time
 import unittest
+from unittest import mock
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -334,6 +335,187 @@ class GarbageOutcomes(unittest.TestCase):
         body, ctype = multipart("legacy.xls", b"\xd0\xcf\x11\xe0" + bytes(64))
         st, out, _ = call("POST", "/api/takeoff/file", body, ctype)
         self.assertIn(".xls", out["unreadable"]["reason"])       # a file-level reason stays
+
+
+class RequestValidation(unittest.TestCase):
+    """Malformed fields must give useful 400s without changing valid prices."""
+
+    def request(self, **changes):
+        payload = {"market": "municipal", "n_bidders": 5,
+                   "bid_date": "2025-03-10",
+                   "items": [{"row_id": "r1", "item_no": "1",
+                              "description": "Rock riprap", "unit": "SY",
+                              "quantity": 100}]}
+        payload.update(changes)
+        return payload
+
+    def estimate(self, payload):
+        st, out, _ = call("POST", "/api/estimate", json.dumps(payload).encode())
+        return st, out
+
+    def test_worksheet_references_wait_for_the_index_during_startup(self):
+        with mock.patch.object(app.ENGINE, "refs", None), mock.patch.object(
+                app.ENGINE, "refs_state", {"ready": False, "error": ""}):
+            st, out, _ = call("POST", "/api/worksheet/refs", json.dumps(
+                {"request": self.request()}).encode())
+            self.assertEqual(st, 503)
+            self.assertIn("still loading", out["detail"])
+            with self.assertRaises(app.ep.EngineNotReady):
+                app.ENGINE.top_references(self.request())
+
+    def test_wrong_items_types_are_400(self):
+        for value in (1, True, False, {}, "text", [None], [1]):
+            with self.subTest(value=value):
+                st, out = self.estimate(self.request(items=value))
+                self.assertEqual(st, 400)
+                self.assertIn("items", out["detail"])
+
+    def test_fractional_boolean_or_nonfinite_bidders_are_400(self):
+        for value in (1.5, True, False, float("inf"), float("-inf"),
+                      float("nan"), "1.5", [], {}):
+            with self.subTest(value=repr(value)):
+                st, out = self.estimate(self.request(n_bidders=value))
+                self.assertEqual(st, 400)
+                self.assertTrue(out["detail"])
+
+    def test_valid_whole_number_bidders_keep_the_same_prices(self):
+        st, expected = self.estimate(self.request())
+        self.assertEqual(st, 200)
+        for value in (5.0, "5", " 5 "):
+            with self.subTest(value=value):
+                st, out = self.estimate(self.request(n_bidders=value))
+                self.assertEqual(st, 200)
+                self.assertEqual(out["inputs"]["n_bidders"], 5)
+                self.assertEqual(out["headline"], expected["headline"])
+                self.assertEqual(out["lines"], expected["lines"])
+
+    def test_invalid_and_deep_json_are_400(self):
+        bodies = (b"\xff", b"{", b"[]", b'{"text":NaN}',
+                  b'{"text":Infinity}', b'{"text":1e999}',
+                  b'{"text":' + b"[" * 200 + b"0" + b"]" * 200 + b"}")
+        for body in bodies:
+            with self.subTest(body=body[:30]):
+                st, out, _ = call("POST", "/api/takeoff/text", body)
+                self.assertEqual(st, 400)
+                self.assertTrue(out["detail"])
+
+    def test_unsafe_line_numbers_are_400(self):
+        for field in ("quantity", "amount", "quote", "amount_pct"):
+            for value in (1e308, -(10 ** 400), "Infinity", "NaN", True):
+                with self.subTest(field=field, value=repr(value)[:30]):
+                    payload = self.request()
+                    payload["items"][0][field] = value
+                    st, out = self.estimate(payload)
+                    self.assertEqual(st, 400)
+                    self.assertIn(field, out["detail"])
+
+    def test_duplicate_row_ids_are_400(self):
+        for second_id in ("r1", None):
+            payload = self.request()
+            first = dict(payload["items"][0], row_id="r2")
+            second = dict(first, row_id=second_id, item_no="2")
+            if second_id is not None:
+                first["row_id"] = second_id
+            payload["items"] = [first, second]
+            st, out = self.estimate(payload)
+            self.assertEqual(st, 400)
+            self.assertIn("different row_id", out["detail"])
+
+    def test_excluded_duplicate_does_not_affect_prices(self):
+        payload = self.request()
+        st, expected = self.estimate(payload)
+        self.assertEqual(st, 200)
+        payload["items"].append(dict(payload["items"][0], include=False))
+        st, out = self.estimate(payload)
+        self.assertEqual(st, 200)
+        self.assertEqual(out["headline"], expected["headline"])
+        self.assertEqual(out["lines"], expected["lines"])
+
+
+class ExportTextValidation(unittest.TestCase):
+    def export_payload(self):
+        return {"result": {"inputs": {}, "headline": {"p50": 10000, "p80": 12000},
+                           "lines": [{"row_id": "r1", "item_no": "1",
+                                      "description": "Rock riprap", "unit": "SY",
+                                      "quantity": 100, "status": "priced"}]},
+                "worksheet": {"project_name": "Synthetic project", "contingency_pct": 10,
+                              "lines": [{"row_id": "r1", "your_unit": 100, "src": "you"}]}}
+
+    def test_unsafe_worksheet_numbers_are_400_before_either_export(self):
+        for kind in ("xlsx", "pdf"):
+            for field in ("your_unit", "your_amount", "quantity", "contingency_pct"):
+                for value in (1e308, 10 ** 400, "1e308", "Infinity", "NaN"):
+                    with self.subTest(kind=kind, field=field, value=repr(value)[:30]):
+                        payload = self.export_payload()
+                        if field == "quantity":
+                            payload["result"]["lines"][0][field] = value
+                        elif field == "contingency_pct":
+                            payload["worksheet"][field] = value
+                        else:
+                            payload["worksheet"]["lines"][0][field] = value
+                        st, out, _ = call("POST", "/api/worksheet/export/" + kind,
+                                          json.dumps(payload).encode())
+                        self.assertEqual(st, 400)
+                        self.assertIn("too large", out["detail"])
+
+    def test_normal_worksheet_totals_and_cached_values_are_unchanged(self):
+        import worksheet
+        import openpyxl
+        payload = self.export_payload()
+        totals = worksheet.totals(payload["result"], payload["worksheet"])
+        self.assertEqual(totals["subtotal"], 10000)
+        self.assertEqual(totals["contingency"], 1000)
+        self.assertEqual(totals["your_opcc"], 11000)
+        for kind in ("xlsx", "pdf"):
+            st, ct, data, _ = app.dispatch(
+                "POST", "/api/worksheet/export/" + kind,
+                {"Content-Type": "application/json"}, json.dumps(payload).encode())
+            self.assertEqual(st, 200)
+            if kind == "xlsx":
+                wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+                self.assertEqual(wb["OPCC"]["F9"].value, 10000)
+                self.assertIn(11000, [cell.value for cell in wb["OPCC"]["F"]])
+            else:
+                self.assertTrue(data.startswith(b"%PDF"))
+
+    def test_control_characters_do_not_break_the_worksheet_export(self):
+        import openpyxl
+        result = {"inputs": {"owner_label": "City\x00A"},
+                  "headline": {"p50": 100, "p80": 120},
+                  "lines": [{"row_id": "r1", "item_no": "1\x00",
+                             "description": "Rock\x0briprap \u00d8 \u2013",
+                             "unit": "SY\x01", "quantity": 1,
+                             "status": "priced"}]}
+        ws = {"project_name": "Bad\x00Title", "prepared_by": "A\x0bB",
+              "project_no": "P\x1f1", "contingency_pct": 10,
+              "lines": [{"row_id": "r1", "your_unit": 100, "src": "you",
+                         "src_label": "typed\x0fprice",
+                         "note": "=1+1\x00\nNext line\tkept"}]}
+        payload = {"result": result, "worksheet": ws}
+        original = json.dumps(payload)
+        st, ct, data, _ = app.dispatch(
+            "POST", "/api/worksheet/export/xlsx",
+            {"Content-Type": "application/json"}, original.encode())
+        self.assertEqual(st, 200)
+        self.assertIn("spreadsheet", ct)
+        wb = openpyxl.load_workbook(io.BytesIO(data))
+        self.assertEqual(wb["OPCC"]["A3"].value, "BadTitle")
+        self.assertEqual(wb["OPCC"]["F4"].value, "AB")
+        self.assertEqual(wb["OPCC"]["F5"].value, "P1")
+        self.assertEqual(wb["OPCC"]["A9"].value, "1")
+        self.assertEqual(wb["OPCC"]["B9"].value, "Rockriprap \u00d8 \u2013")
+        self.assertEqual(wb["OPCC"]["C9"].value, "SY")
+        self.assertEqual(wb["OPCC"]["G9"].value, "typedprice")
+        self.assertEqual(wb["OPCC"]["H9"].value, "=1+1\nNext line\tkept")
+        self.assertEqual(wb["OPCC"]["H9"].data_type, "s")
+        self.assertEqual(json.dumps(payload), original)
+        for sh in wb.worksheets:
+            for row in sh.iter_rows():
+                for cell in row:
+                    if isinstance(cell.value, str):
+                        self.assertNotRegex(cell.value, r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+        cached = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+        self.assertEqual(cached["OPCC"]["F9"].value, 100)
 
 
 if __name__ == "__main__":

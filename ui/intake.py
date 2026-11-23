@@ -35,6 +35,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import re
 import tempfile
 import threading
 from typing import Dict, List, Optional
@@ -301,6 +302,16 @@ def suggestions(cands, unit: str, n: int = N_SUGGEST) -> List[dict]:
     return out
 
 
+_VIVDS_CABLING = re.compile(r"(?:6306\s*[-–]\s*6007[\s:,-]+)?VIVDS\s+CABLING[.]?", re.I)
+CABLE_UNIT_REVIEW = ("TxDOT 6306 measures VIVDS cabling in linear feet (LF). "
+                     "Check the contract unit before using the EA price.")
+
+
+def cabling_unit_conflict(description, unit):
+    return (str(unit or "").strip().upper() == "EA"
+            and bool(_VIVDS_CABLING.fullmatch(str(description or "").strip())))
+
+
 def assess(line: dict, c: dict, best: Optional[float]) -> dict:
     """Why a classified line is low confidence (an empty list: it is not).
 
@@ -331,6 +342,8 @@ def assess(line: dict, c: dict, best: Optional[float]) -> dict:
         reasons.append({"code": "unknown_unit",
                         "text": "unit %r is not one the parser knows"
                                 % c.get("unit")})
+    elif cabling_unit_conflict(line.get("description"), c["unit"]):
+        reasons.append({"code": "cable_unit", "text": CABLE_UNIT_REVIEW})
     q = line.get("quantity")
     try:
         qok = q is not None and float(q) > 0
@@ -416,7 +429,7 @@ def annotate(engine, lines: List[dict], classified: List[dict], market: str,
             a = assess(ln, c, best)
             # family suggestions help a doubtful wording, not a doubtful
             # quantity
-            if a["low"] and any(r["code"] != "odd_quantity"
+            if a["low"] and any(r["code"] not in ("odd_quantity", "cable_unit")
                                 for r in a["reasons"]):
                 sugg = suggestions(cands, unit)
         else:

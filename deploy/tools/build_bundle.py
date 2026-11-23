@@ -53,6 +53,7 @@ TOOLS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(TOOLS))
 sys.path.insert(0, TOOLS)
 import scan_public as sp  # noqa: E402
+import public_p70  # noqa: E402
 
 csv.field_size_limit(10 ** 9)
 CLEAN = os.path.join(REPO, "data", "clean")
@@ -287,7 +288,10 @@ def main(argv=None):
     t0 = time.time()
     tr = json.load(open(a.trace, encoding="utf-8"))
     opened = sorted(p for p in tr["opened"] if p.startswith("data/"))
-    clean = sorted(p for p in opened if p.startswith("data/clean/"))
+    # The public trial is supplied by the versioned, base-bound calibration
+    # at installation. A local custom trial never enters a release archive.
+    clean = sorted(p for p in opened if p.startswith("data/clean/")
+                   and p != "data/clean/" + public_p70.NAME)
     other = sorted(p for p in opened if not p.startswith("data/clean/"))
     manifests = [p for p in other if os.path.basename(p).startswith("_manifest")]
     unexpected = [p for p in other if p not in manifests]

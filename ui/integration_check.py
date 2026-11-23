@@ -17,7 +17,8 @@ production estimator's own entry point must give identical totals.
    in a temporary
    directory and runs estimate_low_bid.run_schedule() on it -- the CLI's own
    code path (`estimate_low_bid.py --schedule`), which loads its own tables.
-3. Compares P50, P80, the market total and the complete totals exactly.
+3. Compares P50, trial P70, the retained P80 baseline, the market total and
+   the complete totals exactly.
 
 A job whose own bids are already in the price history is a wiring check,
 not an accuracy test. Nothing is written into the repository; the takeoff
@@ -175,12 +176,15 @@ def main(argv=None):
     nc = res["not_covered"]
     pairs = [
         ("P50 (expected low bid)", res["headline"]["p50"], r.get("expected_low")),
-        ("P80 (recommended OPCC)", res["headline"]["p80"],
+        ("P70 (trial OPCC)", res["headline"].get("p70"), r.get("expected_low_p70")),
+        ("P80 (retained baseline)", res["headline"]["p80"],
          r.get("expected_low_p80")),
         ("market total (all bids)", res["totals"]["market_total"],
          r.get("market_total")),
         ("owner-set money", res["totals"]["fixed_total"], r.get("fixed_total")),
         ("complete total at P50", nc["complete_total"], r.get("complete_total")),
+        ("complete total at P70", nc.get("complete_total_p70"),
+         r.get("complete_total_p70")),
         ("complete total at P80", nc["complete_total_p80"],
          r.get("complete_total_p80")),
     ]

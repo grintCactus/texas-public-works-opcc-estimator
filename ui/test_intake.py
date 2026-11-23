@@ -492,6 +492,15 @@ class IntakeQuantityChecks(unittest.TestCase):
         self.assertFalse(self.assess("EA", 4)["low"])
         self.assertFalse(self.assess("SY", 17.25)["low"])
 
+    def test_vivds_cabling_unit_needs_contract_confirmation(self):
+        cls = {"unit": "EA", "family": "traffic_signal", "unit_known": True}
+        line = {"description": "6306-6007 VIVDS CABLING", "quantity": 13503}
+        review = intake.assess(line, cls, 1.0)
+        self.assertEqual([r["code"] for r in review["reasons"]], ["cable_unit"])
+        self.assertFalse(intake.assess(line, dict(cls, unit="LF"), 1.0)["low"])
+        for name in ("VIVDS PROSR SYS", "VIVDS CAM ASSY FXD LNS", "VIVDS cabling kit"):
+            self.assertFalse(intake.assess(dict(line, description=name), cls, 1.0)["low"])
+
     def test_the_page_names_the_reason(self):
         with open(os.path.join(HERE, "static", "app.js"), encoding="utf-8") as fh:
             js = fh.read()

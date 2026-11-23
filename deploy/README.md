@@ -17,6 +17,7 @@ The public demo runs at https://129-146-109-44.sslip.io: one small cloud VM, two
 | Tool | Use |
 |---|---|
 | `tools/fetch_bundle.py` | Fresh checkout: download the public data bundle, verify it, unpack it into `data/`. |
+| `calibration/estimator_p70_calibration.csv` | Three public trial coefficients frozen against the 2026-11-21 base calibration. Setup and packaging verify their SHA-256 before installation. |
 | `tools/assemble_space.py` | Build `deploy/space` from this checkout and a bundle; refuses data that is not public; scans the result. |
 | `tools/check_package.sh` | Price 400 public lettings in the checkout and in the package; every number must be equal. |
 | `tools/identity_sweep.py` | The engine behind `check_package.sh`. |
@@ -43,6 +44,13 @@ Settings (environment variables): `BIDEST_PUBLIC`, `PORT` (7860), `DEMO_ACCESS_C
 
 Use this when the code changed and the data did not.
 
+The pinned release plus the registered P70 calibration reproduce the local
+trial. Setup installs the three public aggregate rows when the base calibration
+matches their recorded checksum. Repeating setup checks the existing copy.
+A conflicting local P70 file is preserved and reported. Use a separate
+destination for a clean checkout in that case. A new base calibration needs
+its own matching P70 calibration.
+
 ```bash
 python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python deploy/tools/fetch_bundle.py        # data/ <- the public bundle (21 MB download, 350 MB unpacked)
@@ -51,6 +59,9 @@ python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
 bash deploy/tools/check_package.sh                   # must end with "RESULT: IDENTICAL in 400 schedules"
 DEPLOY_HOST=<public IP> DEPLOY_KEY=<ssh private key> bash deploy/redeploy.sh
 ```
+
+To verify a separately assembled directory, pass its path as
+`OPCC_PACKAGE_DIR` to `check_package.sh`.
 
 `redeploy.sh` needs SSH access to the VM. The key is held by the project owner and is not in this repository; ask the owner for it or for a session on the machine that has it. Nothing else is secret: the site has no database and no stored uploads.
 
