@@ -1,8 +1,10 @@
 # Handoff
 
-Written 2026-11-21 and updated 2026-11-22 for whoever maintains this project next. `AGENTS.md` holds the standing rules and commands. `docs/HISTORY.md` records the experiments, `docs/METHOD.md` describes the methods, and `docs/DATA.md` describes the sources.
+Written 2026-11-21 and updated 2026-11-23 for whoever maintains this project next. `AGENTS.md` holds the standing rules and commands. `docs/HISTORY.md` records the experiments, `docs/METHOD.md` describes the methods, and `docs/DATA.md` describes the sources.
 
 ## Current evaluation scope
+
+On 2026-11-23 the owner stopped ongoing model optimization and its hourly schedule. Resume pricing experiments only on a new request from the owner. The scoring rules below document the previous work.
 
 On 2026-11-22 the owner resumed iterative municipal pricing experiments and
 excluded lump-sum pay items from unit-price comparisons. A lump sum covers the
@@ -323,7 +325,7 @@ P80 accuracy figures as P70 or claim demonstrated 70% future coverage.
 | TxDOT engineers' own estimates | 451 | 21% | 14% | n/a | 19 / 22 / 23% |
 
   The goal: P80 below the actual low bid on at most 20% of lettings (met under the historical scope), and within that the smallest overshoot (13% is the aspiration; engineers reach about 25% at the same not-under rate; the project is at 34% for cities). The city gap is almost all in estimating the bidders' typical price per job, not in the step from the median bid to the low bid.
-- **Last deploy.** 2026-11-22 23:57 CST. Oracle Cloud serves commit `6fafa0e` with `bundle-2026-11-21` and its registered P70 calibration. See the deploy log at the end.
+- **Last deploy.** 2026-11-23 08:25 CST. Oracle Cloud serves commit `60b0ad2` with `bundle-2026-11-21` and its registered P70 calibration. See the deploy log at the end.
 
 ## 2. The first hour
 
@@ -485,3 +487,4 @@ To publish the whole pipeline, company-specific content left the code. No number
 | 2026-11-21 23:46 | `ae9d0de`, from a fresh clone | `bundle-2026-11-21` (the same build, as published) | First deploy by the documented path: `fetch_bundle.py`, `assemble_space.py`, `check_package.sh` (identical in 400 schedules), `redeploy.sh`. `live_check.py` on the live site gave the known answer. Pricing unchanged; the package now holds the published code only. |
 | 2026-11-22 23:07 CST | `3ce350a` | `bundle-2026-11-21` with registered P70 calibration | All 400 package comparisons matched. The 43-line fixture on Oracle Cloud returned P50 $765,836.50, P70 $887,482.17 and P80 $1,043,089.75. The public page, manual and worksheet script matched the tested package. The live API preserved 45 units of 100 LF and priced 4,500 LF. |
 | 2026-11-22 23:57 CST | `6fafa0e` | `bundle-2026-11-21` with registered P70 calibration | Restored selectable P50 and P70 estimate cards. Public desktop and 390-pixel touch browser checks switched the worksheet from P50 to P70 and back. Six automatic unit prices changed and were restored. The public fixture matched all three known percentiles. All 400 package comparisons matched. |
+| 2026-11-23 08:25 CST | `60b0ad2` | `bundle-2026-11-21` with registered P70 calibration | Takeoff review and worksheet fields fit phone and tablet screens. The desktop worksheet wraps reference details. Browser checks covered 320, 390, 1024 and 1280 pixels. All 400 package comparisons matched. The six public web assets and the three known fixture totals matched after deployment. |
