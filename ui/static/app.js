@@ -2498,16 +2498,18 @@ function renderHeadline(r) {
       : 'The estimator could not price this schedule; see the warnings below.'));
     return;
   }
-  // Project totals are comparisons, not controls for repricing the worksheet.
+  const card = (basis, label) => el('button', {
+    type: 'button', class: 'bigcard', 'data-basis': basis, 'data-fk': focusKey('basis', basis),
+    'aria-pressed': String(worksheetBasis() === basis), disabled: !isNum(h[basis]),
+    title: 'Use ' + basis.toUpperCase() + ' model prices in the worksheet',
+    onclick: () => setBasis(basis),
+  }, [
+    el('span', { class: 'cap', text: label }),
+    el('span', { class: 'big', text: money(h[basis]) }),
+  ]);
   host.appendChild(el('div', { class: 'headline' }, [
-    el('div', { class: 'bigcard', 'data-basis': 'p50' }, [
-      el('div', { class: 'cap', text: 'Expected low bid (P50)' }),
-      el('div', { class: 'big', text: money(h.p50) }),
-    ]),
-    el('div', { class: 'bigcard lead', 'data-basis': 'p70' }, [
-      el('div', { class: 'cap', text: 'Recommended OPCC (P70)' }),
-      el('div', { class: 'big', text: money(h.p70) }),
-    ]),
+    card('p50', 'Expected low bid (P50)'),
+    card('p70', 'Recommended OPCC (P70)'),
   ]));
   if (!isNum(h.p70)) host.appendChild(notice('caution', 'P70 unavailable',
     'A P70 estimate is not available for this schedule. Review the P50 comparison and your worksheet prices.'));
@@ -2730,33 +2732,20 @@ function referenceRange(l) {
   else cell.appendChild(el('span', { class: 'dim', text: x && x.special ? '—' : 'none' }));
   return cell;
 }
-// prices of yours, picks and engineer inputs: what a switch would replace
-function wsChanged() {
-  return ((S.result && S.result.lines) || []).filter(l => {
-    const w = S.ws.lines[l.row_id];
-    if (l.pricing_mode === 'engineer' && w && w.src === 'you') return false;
-    return w && w.src && !['model', 'quote', 'owner-set'].includes(w.src);
-  }).length;
-}
 function setBasis(b) {
   if (!S.result || !['p50', 'p70', 'p80'].includes(b) || worksheetBasis() === b) return;
   if (!isNum((S.result.headline || {})[b])) {
     toast(basisLabel(b) + ' is not available for this estimate. Re-estimate before choosing it.', 'err');
     return;
   }
-  const n = wsChanged();
-  if (n && !window.confirm('Start from the model\u2019s ' + basisLabel(b) + ' prices? '
-      + n + ' price' + (n === 1 ? '' : 's') + ' you changed will be replaced.')) return;
-  S.ws.basis = b;
-  // every price goes back to the model's at this level; notes, vendor quotes
-  // and owner-set amounts stay
-  Object.entries(S.ws.lines).forEach(([rowId, w]) => {
-    const l = (S.result.lines || []).find(x => x.row_id === rowId);
-    if (l && l.pricing_mode === 'engineer' && w.src === 'you') return;
-    if (!['quote', 'owner-set'].includes(w.src)) {
-      w.src = ''; w.src_label = ''; w.your_unit = null; w.raw = null; w.src_date = '';
+  if (worksheetBasis() === 'history') {
+    for (const w of Object.values(S.ws.lines)) {
+      if (w.src === 'history' && !w.pickedHistory) {
+        Object.assign(w, { src: '', src_label: '', src_date: '', raw: null, your_unit: null, history_price: null });
+      }
     }
-  });
+  }
+  S.ws.basis = b;
   afterInput(renderWsNow);
 }
 
@@ -3107,10 +3096,10 @@ function renderWsTotals(r) {
     ? 'Bid median $/unit' : 'Model $/unit<br><span class="dim">' + basisLabel() + '</span>';
   if (th) th.title = worksheetBasis() === 'history'
     ? 'Median of three matching recent projects, adjusted to the bid year'
-    : 'The model unit price at the saved ' + basisLabel() + ' level';
+    : 'The model unit price at the ' + basisLabel() + ' level';
   const basis = el('div', { class: 'basis' }, [
     el('span', { class: 'lab', text: worksheetBasis() === 'history' ? 'Recent bid median'
-      : 'Prices from ' + basisLabel() + ' (saved basis)' }),
+      : 'Prices from ' + basisLabel() }),
     S.ws.refsError && worksheetBasis() === 'history'
       ? el('span', { class: 'warnnote', text: 'Recent bids could not be loaded; check missing prices.' }) : null,
   ]);
@@ -3491,6 +3480,7 @@ function resultRow(l, judg, isOpen) {
       if (ncl) { setNcQuote(l.row_id, isNum(v) ? v * qn : null); return; }
       w.your_unit = isNum(v) ? v : null;
       w.raw = null; w.src_date = '';
+      w.pickedHistory = false;
       w.src = isNum(v) ? 'you' : '';
       w.src_label = isNum(v) ? 'your price' : '';
       afterInput(renderWsNow);
@@ -3517,7 +3507,8 @@ function resultRow(l, judg, isOpen) {
         if (!pk) return;
         // the picked price, rounded per the worksheet's setting (wsLine)
         w.raw = pk.price;
-        w.src = pk.v === 'model' ? 'model' : pk.v;
+        w.src = pk.v;
+        w.pickedHistory = pk.v === 'history';
         w.src_label = pk.label;
         w.src_date = pk.date || '';
         w.history_price = pk.v === 'history' ? pk.history_price : null;

@@ -25,7 +25,8 @@ A bid schedule (takeoff) goes in; out come:
 The original P80 totals, multiplier, calibration, bands and historical results
 remain unchanged as a baseline. New worksheets use `basis: "history"`: three
 recent matching projects' bidder medians, adjusted to the target bid year.
-The informational P50/P70 cards do not reprice worksheet items. Existing
+Selecting a P50 or P70 card switches automatic worksheet prices to that model level.
+Entered prices, selected bid references, vendor quotes and owner-set amounts are retained. Existing
 `p50`, `p70` and `p80` worksheets retain their original basis and meaning.
 
 Every model price on the page is the production estimator's own number. The UI

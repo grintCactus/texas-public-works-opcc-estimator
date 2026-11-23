@@ -412,8 +412,7 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(errors, [])
 
     def test_recent_bid_defaults_preserve_models_and_export_their_sources(self):
-        """Three approved recent medians set item prices, independently of P70;
-        saved model bases still mean what their stored labels say."""
+        """Start from recent bids, switch automatic prices, and export the chosen basis."""
         import io
         import openpyxl
         for engine in self.engines:
@@ -437,6 +436,8 @@ class PageInteractions(unittest.TestCase):
                     S.ws.refs.r3.range = {low: 1.68, median: 2.5, high: 4.5, mean: 2.9};
                     S.ws.refs.r4.history_price = {status: 'insufficient', unit_price: null, n_projects: 2,
                         references: refs.slice(0, 2), reason: 'Only two matching recent projects; enter your unit price.'};
+                    S.ws.refs.r5.range = {low: 90, median: 96.5, high: 110};
+                    S.ws.refs.r5.n_refs = 3;
                     S.ws.lines.r3 = {src: '', note: ''}; S.ws.lines.r4 = {src: '', note: ''};
                     renderWsNow();
                 }""")
@@ -460,13 +461,11 @@ class PageInteractions(unittest.TestCase):
                 self.assertIn("2 recent projects · 3 required", page.inner_text('tr[data-line="r4"] .ref-range'))
                 self.assertEqual(page.locator('#ws-totals .basis button').count(), 0)
                 before = page.evaluate("() => wsDoc()")
-                for basis in ("p50", "p70"):
-                    card = page.locator('#r-headline .bigcard[data-basis="%s"]' % basis)
-                    self.assertIsNone(card.get_attribute("role"))
-                    self.assertIsNone(card.get_attribute("tabindex"))
-                    card.click()
-                    self.assertEqual(page.evaluate("() => wsDoc()"), before)
-                self.assertEqual(page.evaluate("() => S.result.headline"), headline)
+                cards = {basis: page.locator(f'#r-headline button[data-basis="{basis}"]')
+                         for basis in ("p50", "p70")}
+                for card in cards.values():
+                    self.assertTrue(card.is_enabled())
+                    self.assertEqual(card.get_attribute("aria-pressed"), "false")
                 self.assertNotIn("past jobs exceeded", page.inner_text("#ws-totals"))
                 record = next(l for l in before["worksheet"]["lines"] if l["row_id"] == "r3")
                 self.assertEqual(before["worksheet"]["basis"], "history")
@@ -487,9 +486,75 @@ class PageInteractions(unittest.TestCase):
                 for k in (1, 2, 3):
                     self.assertIn("Public reference " + str(k), exported)
                     self.assertIn("2025-0%d-10" % k, exported)
-                # No P70 data is needed to preserve or use the historical price.
-                page.evaluate("() => { delete S.result.headline.p70; delete S.result.headline.p70_multiplier; renderWsNow(); }")
-                self.assertEqual(page.input_value(price), "12.35")
+                # The same schedule includes a hand-entered rate, an explicitly
+                # selected bid reference and a vendor quote alongside the automatic rate.
+                typed = 'tr[data-line="r4"] input.yourp'
+                page.fill(typed, "123.45")
+                page.press(typed, "Tab")
+                note = 'tr[data-line="r3"] input.note'
+                page.fill(note, "Checked excavation quantity")
+                page.press(note, "Tab")
+                page.select_option('tr[data-line="r5"] select.pick', "ref_median")
+                vendor = '#quotes-box input[data-fk="q:r9"]'
+                page.fill(vendor, "50,000")
+                page.press(vendor, "Tab")
+                edits = page.evaluate("() => wsDoc().worksheet.lines")
+                protected = {l["row_id"]: (l["your_unit"], l["your_amount"], l["src"])
+                             for l in edits if l["row_id"] in ("r4", "r5", "r9")}
+                self.assertEqual(protected["r4"][0], 123.45)
+                self.assertEqual(protected["r5"][2], "ref_median")
+                self.assertEqual(protected["r9"][1:], (50000, "quote"))
+                excavation = page.evaluate("() => S.result.lines.find(l => l.row_id === 'r3')")
+                totals = {}
+                for step, (basis, key) in enumerate((("p50", None), ("p70", "Enter"), ("p50", "Space"))):
+                    if key:
+                        cards[basis].focus()
+                        cards[basis].press(key)
+                    else:
+                        cards[basis].click()
+                    page.wait_for_function("b => document.querySelector('button[data-basis=' + b + ']').getAttribute('aria-pressed') === 'true'", arg=basis)
+                    for option, card in cards.items():
+                        self.assertEqual(card.get_attribute("aria-pressed"), str(option == basis).lower())
+                    doc = page.evaluate("() => wsDoc()")
+                    self.assertEqual(doc["worksheet"]["basis"], basis)
+                    multiplier = 1 if basis == "p50" else headline["p70_multiplier"]
+                    self.assertEqual(doc["worksheet"]["basis_multiplier"], multiplier)
+                    rate = excavation["unit_price_p50"] * multiplier
+                    lines = {l["row_id"]: l for l in doc["worksheet"]["lines"]}
+                    self.assertAlmostEqual(lines["r3"]["your_unit"], rate)
+                    self.assertAlmostEqual(lines["r3"]["your_amount"], qty * rate)
+                    self.assertAlmostEqual(float(page.input_value(price).replace(",", "")), rate, delta=0.0051)
+                    self.assertEqual(page.input_value(note), "Checked excavation quantity")
+                    for row_id, preserved in protected.items():
+                        l = lines[row_id]
+                        self.assertEqual((l["your_unit"], l["your_amount"], l["src"]), preserved)
+                    total = doc["totals"]["your_opcc"]
+                    self.assertEqual(page.inner_text("#ws-totals .yours .big"), page.evaluate("n => money(n)", total))
+                    if step == 2:
+                        self.assertEqual(total, totals["p50"])
+                    totals[basis] = total
+                    if basis == "p70":
+                        with page.expect_download() as download:
+                            page.click("#btn-export-xlsx")
+                        with download.value.path().open("rb") as stream:
+                            book = openpyxl.load_workbook(stream, data_only=True)
+                        summary = {label: value for label, value in
+                                   book["Summary"].iter_rows(max_col=2, values_only=True)}
+                        self.assertIn("P70", summary["Prices start from"])
+                        self.assertAlmostEqual(summary["Project Total"], total, places=2)
+                        opcc_row = next(row for row in book["OPCC"].values if row[1] == excavation["description"])
+                        self.assertAlmostEqual(opcc_row[4], rate, places=4)
+                        book.close()
+                self.assertGreater(totals["p70"], totals["p50"])
+                self.assertEqual(page.evaluate("() => S.result.headline"), headline)
+                # A missing project percentile cannot replace a usable basis.
+                page.evaluate("""() => {
+                    delete S.result.headline.p70; delete S.result.headline.p70_multiplier;
+                    renderHeadline(S.result); renderWsNow();
+                }""")
+                self.assertTrue(cards["p70"].is_disabled())
+                self.assertEqual(cards["p50"].get_attribute("aria-pressed"), "true")
+                self.assertEqual(page.evaluate("() => wsDoc().worksheet.basis"), "p50")
                 # Existing saved P80 worksheets are interpreted without migration.
                 page.evaluate("() => { S.ws.basis = 'p80'; S.ws.lines.r3.src = 'model'; renderWsNow(); }")
                 saved = page.evaluate("() => wsDoc()")
@@ -813,7 +878,7 @@ class PageInteractions(unittest.TestCase):
                 page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
                 for basis in ("p50", "p70"):
                     page.click('#r-headline .bigcard[data-basis="%s"]' % basis)
-                    self.assertEqual(page.evaluate("() => S.ws.basis"), "history")
+                    self.assertEqual(page.evaluate("() => S.ws.basis"), basis)
                     self.assertEqual(page.input_value(price), "123.45")
                 self.assertEqual(dialogs, [])
                 for rounding in ("nearest", "off", "up"):
@@ -857,12 +922,13 @@ class PageInteractions(unittest.TestCase):
                 page.fill(price, "")
                 page.press(price, "Tab")
                 page.wait_for_function("() => S.ws.refsReq === S.resultReq")
-                hp = page.evaluate("() => S.ws.refs.r3.history_price")
-                if hp["status"] == "available":
-                    page.wait_for_function("() => S.ws.lines.r3.src === 'history' && S.ws.lines.r3.your_unit > 0")
-                    self.assertNotEqual(page.input_value(price), "")
-                else:
-                    self.assertEqual(page.input_value(price), "")
+                # Clearing the manual price restores the selected P70 model rate.
+                page.wait_for_function("() => S.ws.basis === 'p70' && S.ws.lines.r3.src === 'model'")
+                expected_price = page.evaluate("""() => {
+                    const line = S.result.lines.find(l => l.row_id === 'r3');
+                    return priceText(nicePrice(line.unit_price_p50 * S.result.headline.p70_multiplier, 'up'));
+                }""")
+                self.assertEqual(page.input_value(price), expected_price)
                 self.assertEqual(errors, [])
 
     def test_unmatched_item_is_manual_only_after_explicit_choice(self):
@@ -1109,6 +1175,13 @@ class PageInteractions(unittest.TestCase):
                 it = page.evaluate("() => estimateRequest(5).items.find(i => /contingency/i.test(i.description))")
                 self.assertEqual(it["amount"], 50000)
                 self.assertIsNone(it["amount_pct"])
+                page.click("#btn-estimate")
+                page.wait_for_function("""() => S.result.lines.some(l =>
+                    l.status === 'owner_set' && l.fixed_amount === 50000)""")
+                for basis in ("p50", "p70"):
+                    page.click('#r-headline button[data-basis="%s"]' % basis)
+                    self.assertEqual(page.evaluate("""() => wsDoc().worksheet.lines
+                        .find(l => l.row_id === 'r10').your_amount"""), 50000)
                 self.assertEqual(errors, [])
 
     def test_the_keyboard_toggles_a_focused_line(self):
