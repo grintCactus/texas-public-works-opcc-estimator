@@ -144,6 +144,24 @@ class PageInteractions(unittest.TestCase):
     def expanded(self, page, row):
         return page.get_attribute('tr[data-line="%s"]' % row, "aria-expanded")
 
+    def test_phone_rows_keep_review_price_and_amount_in_view(self):
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.estimate_page(engine, width=390)
+                for width in (320, 390):
+                    page.set_viewport_size({"width": width, "height": 844})
+                    for selector in ("#review-body tr[data-row]:first-child",
+                                     "#result-body tr.st-priced[data-line]"):
+                        row = page.locator(selector).first
+                        self.assertEqual(row.evaluate("row => getComputedStyle(row).display"), "grid")
+                        bounds = row.locator("td").evaluate_all("""cells => cells
+                            .filter(cell => cell.getBoundingClientRect().width > 0)
+                            .map(cell => [cell.getBoundingClientRect().left, cell.getBoundingClientRect().right])""")
+                        self.assertTrue(all(left >= 0 and right <= width + 1 for left, right in bounds),
+                                        (width, selector, bounds))
+                    self.assertTrue(page.locator('#result-body tr.st-priced input.yourp').first.is_visible())
+                self.assertEqual(errors, [])
+
     def test_invalid_bidder_counts_do_not_change_the_estimate(self):
         """A typed count must never be truncated or silently replaced by auto."""
         for engine in self.engines:

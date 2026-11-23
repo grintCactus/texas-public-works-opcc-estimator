@@ -29,7 +29,7 @@
   <nav class="jump" id="jump">
     <a href="#sec-input"><span class="num">1</span>Takeoff</a>
     <a href="#sec-project"><span class="num">2</span>Project</a>
-    <a href="#sec-results" class="off" id="jump-results"><span class="num">3</span>Results</a>
+    <a href="#sec-results" class="off" id="jump-results"><span class="num">3</span>Estimate</a>
     <a href="#sec-export" class="off" id="jump-export"><span class="num">4</span>Export</a>
     <a href="/manual.html" id="user-manual" target="_blank" rel="noopener">User Manual</a>
   </nav>
@@ -116,7 +116,6 @@
             server and not stored. Do not upload confidential documents.</div>
         </div>
       </div>
-      <div class="muted-note">Check each item&rsquo;s classification; use <b>Change</b> to correct it.</div>
     </div>
 
     <div id="parse-notes"></div>
@@ -124,12 +123,13 @@
 
   <div class="gridhead" id="grid-head" hidden>
     <span class="hint" id="review-count"></span>
+    <span class="hint">Review each classification. Select <b>Change</b> to correct it.</span>
     <div class="legend-heading" id="grid-legend-heading" hidden>What the colors mean</div>
     <ul class="legend" id="grid-legend" aria-labelledby="grid-legend-heading"></ul>
     <div class="legend-note">An item without a warning still needs review; it is not a high-confidence rating.</div>
   </div>
   <div class="tablewrap" id="grid-wrap" hidden>
-    <table class="grid" id="review-table">
+    <table class="grid" id="review-table" role="table" aria-label="Takeoff items">
       <thead>
         <tr>
           <th style="width:28px" title="Include in the estimate">&#10003;</th>
@@ -199,17 +199,13 @@
         </label>
         <div id="discount-preview"></div>
       </div>
-      <div>
+      <div id="ownerset-fields" hidden>
         <div class="lab-like">Owner-set amounts <span class="dim">(allowances, contingencies, force accounts)</span></div>
-        <div id="ownerset-box" class="quotes">
-          <div class="muted-note">Read a takeoff first.</div>
-        </div>
+        <div id="ownerset-box" class="quotes"></div>
       </div>
-      <div>
+      <div id="quote-fields" hidden>
         <div class="lab-like">Vendor quotes for not-covered lines</div>
-        <div id="quotes-box" class="quotes">
-          <div class="muted-note">Read a takeoff first.</div>
-        </div>
+        <div id="quotes-box" class="quotes"></div>
       </div>
     </div>
     <div class="hr"></div>
@@ -260,20 +256,20 @@
       </div>
     </div>
     <div class="tablewrap tall">
-      <table class="grid" id="result-table">
+      <table class="grid" id="result-table" role="table" aria-label="OPCC worksheet items">
         <thead>
           <tr>
-            <th style="width:58px">Item</th>
-            <th class="desc">Description</th>
-            <th style="width:70px" class="num">Qty</th>
-            <th style="width:46px">Unit</th>
-            <th style="width:92px" class="num" id="th-model" title="The median of three matching recent projects, adjusted to the bid year">Bid median $/unit</th>
-            <th style="width:136px" class="num" title="Selected recent projects&rsquo; bidder medians, adjusted to the target bid year; open the line for each source">Reference range</th>
-            <th style="width:96px">Model accuracy</th>
-            <th style="width:104px">Your $/unit</th>
-            <th style="width:196px" title="Where your unit price comes from: recent matching bid medians by default; pick another reference here">Reference</th>
-            <th style="width:100px" class="num">Your amount</th>
-            <th style="width:108px">Note</th>
+            <th style="width:4.5%">Item</th>
+            <th style="width:19%" class="desc">Description</th>
+            <th style="width:5.5%" class="num">Qty</th>
+            <th style="width:4%">Unit</th>
+            <th style="width:8.5%" class="num" id="th-model" title="The median of three matching recent projects, adjusted to the bid year">Bid median $/unit</th>
+            <th style="width:12%" class="num" title="Selected recent projects&rsquo; bidder medians, adjusted to the target bid year; open the line for each source">Reference range</th>
+            <th style="width:9%">Model accuracy</th>
+            <th style="width:9.5%">Your $/unit</th>
+            <th style="width:12.5%" title="Where your unit price comes from: recent matching bid medians by default; pick another reference here">Reference</th>
+            <th style="width:9%" class="num">Your amount</th>
+            <th style="width:6.5%">Note</th>
           </tr>
         </thead>
         <tbody id="result-body"></tbody>
@@ -281,6 +277,13 @@
       </table>
     </div>
   </div>
+  <section class="panel" id="sec-export" hidden>
+    <h2><span class="secnum">4</span>Export</h2>
+    <div class="body row-actions">
+      <button class="btn" id="btn-export-xlsx">Download the OPCC (Excel)</button>
+      <button class="btn" id="btn-export-pdf">Download the OPCC (PDF)</button>
+    </div>
+  </section>
   <div class="panel" id="p-similar">
     <h2>Similar past projects <span class="hint" id="sim-sub"></span></h2>
     <div class="body" id="r-similar"></div>
@@ -293,21 +296,12 @@
     <h2>Low confidence <span class="hint">mobilization and general-condition lump sums</span></h2>
     <div class="body" id="r-lowconf"></div>
   </div>
-  <div class="panel">
-    <h2>Competition <span class="hint">bidders and the discount</span></h2>
+  <details class="panel supporting-result">
+    <summary>Competition and bidder discount</summary>
     <div class="body" id="r-competition"></div>
-  </div>
+  </details>
 </section>
 
-<!-- =========================================================== EXPORT -->
-<section class="panel" id="sec-export" hidden>
-  <h2><span class="secnum">4</span>Export</h2>
-  <div class="body row-actions">
-    <button class="btn" id="btn-export-xlsx">Download the OPCC (Excel)</button>
-    <button class="btn" id="btn-export-pdf">Download the OPCC (PDF)</button>
-    <span class="muted-note">Download your worksheet as Excel or a print-ready PDF.</span>
-  </div>
-</section>
 
 <details class="fold panel-fold local-only" id="bidtab-fold">
   <summary>Add a historical bid tabulation (staged for the next data rebuild)</summary>

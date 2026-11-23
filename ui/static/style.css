@@ -212,9 +212,17 @@ main { flex: 1; padding: 14px 16px 30px; max-width: 1680px; width: 100%; margin:
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .grid-input { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
-.grid-project { display: grid; grid-template-columns: 1fr 0.9fr 1.15fr 1.15fr; gap: 18px; }
+.grid-project { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; }
+.grid-project > div { min-width: 0; }
+.grid-project > [hidden] { display: none; }
+.grid-project .field { max-width: 36rem; }
+.supporting-result > summary { padding: 10px 13px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.supporting-result[open] > summary { border-bottom: 1px solid var(--line-soft); }
 @media (max-width: 1150px) {
-  .grid2, .grid-input, .grid-project { grid-template-columns: 1fr; }
+  .grid2, .grid-input { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .grid-project { grid-template-columns: minmax(0, 1fr); gap: 6px; }
 }
 
 /* ---------------------------------------------------------------- forms */
@@ -349,6 +357,13 @@ textarea.cellinput.desc { display: block; resize: none; overflow: hidden; min-he
 /* the worksheet's description keeps room to be read: whole words, a sane minimum width */
 #result-table th.desc, #result-table td.desccell { min-width: 210px; }
 #result-table td.desccell .ldesc { overflow-wrap: break-word; }
+@media (min-width: 1101px) {
+  #result-table { table-layout: fixed; }
+  #result-table th { white-space: normal; }
+  #result-table td { overflow-wrap: anywhere; }
+  #result-table td.ref-range { white-space: normal; }
+  #result-table .yourcell input { min-width: 0; max-width: 100%; }
+}
 .money { font-family: var(--mono); white-space: nowrap; }
 .money.p50 { font-weight: 650; }
 .dim { color: var(--ink-faint); }
@@ -439,7 +454,7 @@ ul.tight { margin: 3px 0 0; padding-left: 18px; }
 }
 
 .headline { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
-@media (max-width: 1100px) { .headline { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .headline { grid-template-columns: minmax(0, 1fr); gap: 8px; } }
 .bigcard {
   background: var(--panel-2); border: 1px solid var(--line);
   border-radius: 6px; padding: 14px 16px; text-align: left; cursor: pointer;
@@ -915,3 +930,76 @@ span.hashint:not(.badge) { text-decoration: underline dotted; text-underline-off
 /* a price just set from the Reference column flashes once */
 @keyframes yourflash { 0% { background: var(--accent-wash); box-shadow: 0 0 0 3px var(--focus-ring); } 100% { background: transparent; box-shadow: none; } }
 .yourcell .yourp.flash { animation: yourflash 1.6s ease-out 1; }
+
+/* Keep each pay item's editable fields and amount together on narrow screens.
+   The desktop and phone views use the same controls, row order and headers. */
+@media (max-width: 1100px) {
+  #review-table, #result-table,
+  #review-body, #result-body, #result-foot { display: block; }
+  :is(#review-table, #result-table) > thead {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
+  }
+  #grid-wrap, #p-worksheet > .tablewrap { padding: 0 10px 10px; }
+  :is(#review-body, #result-body) > tr[data-row],
+  #result-body > tr[data-line], #result-foot > .controw {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px 14px; margin-top: 10px; padding: 12px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  }
+  :is(#review-body, #result-body, #result-foot) > :is(tr[data-line], tr[data-row]) > td {
+    display: block; min-width: 0; padding: 0; border: 0; text-align: left; white-space: normal;
+  }
+  :is(#review-body, #result-body, #result-foot) > tr > td[data-label]::before,
+  #result-foot .controw > td::before {
+    display: block; margin-bottom: 3px; color: var(--ink-faint); font: 550 12px/1.35 var(--sans);
+  }
+  :is(#review-body, #result-body) > tr > td[data-label]::before { content: attr(data-label); }
+  :is(#review-body, #result-body, #result-foot) :is(.tags, .badge) { max-width: 100%; white-space: normal; }
+  :is(#review-body, #result-body, #result-foot) .cellinput { text-align: left; border-color: var(--line); }
+  :is(#review-body, #result-body, #result-foot) .cellinput.flag { border-color: var(--warn-line); }
+  #review-body > tr > td:is(:nth-child(3), :nth-child(6)) { grid-column: 1 / -1; }
+  #review-body > tr > td:first-child { display: flex; align-items: center; gap: 6px; }
+  #review-body > tr > td:first-child::before { margin: 0; }
+  #review-body > tr > td:first-child input { width: 18px; height: 18px; }
+  #review-body > tr > td:last-child { align-self: end; }
+  #review-body .row-actions { flex-wrap: wrap; gap: 5px; }
+  #review-body .cpctcell { min-width: 0; }
+  #review-body > .checkrow, #result-body > .judgrow { border-inline-start: 3px solid var(--warn); }
+  #result-body > :is(.st-amount-missing, .st-unpriced) { border-inline-start: 3px solid var(--bad); }
+  :is(#review-body, #result-body) > tr > td:first-child { box-shadow: none; }
+  #result-body > tr[data-line] {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-areas: "item desc desc desc" "qty qty unit unit" "price price amount amount"
+                         "model model range range" "accuracy accuracy accuracy accuracy"
+                         "ref ref ref ref" "note note note note";
+  }
+  #result-body > tr[data-line] > td:nth-child(1) { grid-area: item; }
+  #result-body > tr[data-line] > td:nth-child(2) { grid-area: desc; font-weight: 600; }
+  #result-body > tr[data-line] > td:nth-child(3) { grid-area: qty; }
+  #result-body > tr[data-line] > td:nth-child(4) { grid-area: unit; }
+  #result-body > tr[data-line] > td:nth-child(5) { grid-area: model; }
+  #result-body > tr[data-line] > td:nth-child(6) { grid-area: range; }
+  #result-body > tr[data-line] > td:nth-child(7) { grid-area: accuracy; }
+  #result-body > tr[data-line] > td:nth-child(8) { grid-area: price; }
+  #result-body > tr[data-line] > td:nth-child(9) { grid-area: ref; }
+  #result-body > tr[data-line] > td:nth-child(10) { grid-area: amount; }
+  #result-body > tr[data-line] > td:nth-child(11) { grid-area: note; }
+  #result-body .desccell .dim { font-weight: 400; }
+  #result-body .yourcell .yourp, #result-body .refcell select { width: 100%; max-width: none; }
+  #result-body > tr.detail, #result-body > tr.detail > td { display: block; min-width: 0; }
+  #result-body .detailbox { position: static; max-width: none; }
+  #result-body .detailcols { grid-template-columns: minmax(0, 1fr); }
+  #result-body .detailcols dt { white-space: normal; }
+  #result-foot > tr:not(.controw) {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 40%);
+  }
+  #result-foot > tr:not(.controw) > td { display: block; overflow-wrap: anywhere; white-space: normal; }
+  #result-foot > tr:not(.controw) > td:first-child { text-align: left; }
+  #result-foot > tr:not(.controw) > td:last-child, #result-foot .controw > td:empty { display: none; }
+  #result-foot .controw > td:is(:nth-child(1), :nth-child(2), :nth-child(11)) { grid-column: 1 / -1; }
+  #result-foot .controw > td:nth-child(1)::before { content: "Item"; }
+  #result-foot .controw > td:nth-child(5)::before { content: "Model"; }
+  #result-foot .controw > td:nth-child(8)::before { content: "Your contingency"; }
+  #result-foot .controw > td:nth-child(10)::before { content: "Your amount"; }
+  #result-foot .controw > td:nth-child(11)::before { content: "Note"; }
+}

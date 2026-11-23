@@ -1422,10 +1422,17 @@ function gridRow(l, i) {
     cont ? null : el('button', { class: 'btn ghost sm', text: 'Change',
       title: 'Correct the item type, or look at earlier public line items like this one',
       onclick: () => openPicker(l) }),
-    el('button', { class: 'btn ghost sm danger', text: '✕', title: 'Delete row',
+    el('button', { class: 'btn ghost sm danger', text: '✕', title: 'Delete row', 'aria-label': 'Delete row',
       onclick: () => { S.lines = S.lines.filter(x => x !== l); renderGrid(); renderQuotes();
         renderOwnerSet(); markStale(); suggestBidders(); } }),
   ])));
+  const amountLabel = cont ? 'Contingency' : ncTakeoffLine(l) ? 'Vendor quote ($)' : 'Owner-set $';
+  ['Include', 'Item', 'Description', 'Unit', 'Quantity', 'Classification', amountLabel].forEach((label, index) => {
+    const cell = tr.cells[index];
+    cell.dataset.label = label;
+    const field = cell.querySelector(':scope > input, :scope > textarea');
+    if (field) field.setAttribute('aria-label', label);
+  });
   return tr;
 }
 
@@ -2075,20 +2082,10 @@ function renderQuotes() {
 function renderQuotesInto(box) {
   box.innerHTML = '';
   const unc = S.lines.filter(l => l.include && l.cls && l.cls.coverage_class);
-  if (!S.lines.length) {
-    box.appendChild(el('div', { class: 'muted-note', text: 'Read a takeoff first.' }));
-    return;
-  }
-  if (!unc.length) {
-    box.appendChild(el('div', { class: 'muted-note', text: 'No not-covered lines in this '
-      + 'takeoff. Pumps, generators and electrical gear, prefab or pedestrian bridges, tanks, '
-      + 'specialty buildings, synthetic turf / play equipment and meter vaults would be '
-      + 'listed here for a vendor quote.' }));
-    return;
-  }
+  $('#quote-fields').hidden = !unc.length;
+  if (!unc.length) return;
   box.appendChild(el('div', { class: 'muted-note', style: 'margin-bottom:6px', text:
-    'These lines have almost no comparable bid history. They are not priced and not in '
-    + 'P50 / P70. Enter a vendor quote for each to get a complete total.' }));
+    'Enter a total quote for each line. These amounts are added to your worksheet.' }));
   unc.forEach(l => box.appendChild(el('div', { class: 'qrow' }, [
     el('div', { class: 'qdesc' }, [
       el('div', { text: (l.item_no ? l.item_no + '  ' : '') + l.description }),
@@ -2116,22 +2113,10 @@ function renderOwnerSet() {
 function renderOwnerSetInto(box) {
   box.innerHTML = '';
   const al = S.lines.filter(l => l.include && l.cls && l.cls.owner_set_like);
-  if (!S.lines.length) {
-    box.appendChild(el('div', { class: 'muted-note', text: 'Read a takeoff first.' }));
-    return;
-  }
-  if (!al.length) {
-    box.appendChild(el('div', { class: 'muted-note', text: 'No allowance, contingency or '
-      + 'force-account line found. Any other owner-set line can take its amount in the '
-      + 'grid\u2019s "Owner-set $" column.' }));
-    return;
-  }
+  $('#ownerset-fields').hidden = !al.length;
+  if (!al.length) return;
   box.appendChild(el('div', { class: 'muted-note', style: 'margin-bottom:6px', text:
-    'The owner writes these amounts into the bid form and every bidder copies them. Enter '
-    + 'each from the bid form: it goes in at face value, outside the competition discount. '
-    + 'A historical price is not meaningful for an allowance. A contingency is picked from '
-    + 'the list: a share of the subtotal (10% unless you change it), or the owner\u2019s '
-    + 'fixed amount when the bid form prints one.' }));
+    'Enter the amount or contingency percentage specified in the bid form.' }));
   al.forEach(l => {
     const cont = isContingencyLine(l);
     const given = l.amount > 0 || l.amount_pct > 0;
@@ -2534,7 +2519,7 @@ function renderWarnings(r) {
         a = Object.assign({}, a, { more: 0,
           title: open.length + ' line' + (open.length === 1 ? ' has' : 's have') + ' no bid history and '
             + (open.length === 1 ? 'is' : 'are') + ' left out of P50 and P70.',
-          items: open.map(l => String(l.description || l.item_no || '').slice(0, 60)) });
+          items: open.map(l => String(l.description || l.item_no || '')) });
       }
       host.appendChild(a.level === 'info' ? notice('info', null, a.text) : ackNotice(a));
     });
@@ -2551,10 +2536,8 @@ function renderNotCovered(r) {
   const host = $('#r-notcovered');
   host.innerHTML = '';
   $('#nc-sub').textContent = nc.n ? nc.n + ' line' + (nc.n === 1 ? '' : 's') : 'none';
-  if (!nc.n) {
-    host.appendChild(el('div', { class: 'muted-note', text: 'No not-covered lines need a vendor quote.' }));
-    return;
-  }
+  $('#p-notcovered').hidden = !nc.n;
+  if (!nc.n) return;
   const open = ncOpen(r);
   host.appendChild(open.length
     ? notice('caution', 'The expected low bid and the recommended OPCC above EXCLUDE these lines.',
@@ -2600,11 +2583,8 @@ function renderLowConf(r) {
   const host = $('#r-lowconf');
   host.innerHTML = '';
   const lines = lc.lines || [];
-  if (!lines.length) {
-    host.appendChild(el('div', { class: 'muted-note', text: 'No mobilization or general-condition '
-      + 'lump sum in the priced lines.' }));
-    return;
-  }
+  $('#p-lowconf').hidden = !lines.length;
+  if (!lines.length) return;
   host.appendChild(el('div', { class: 'muted-note', style: 'margin-bottom:8px', text:
     'Review these lump sums against the earlier-bid ranges below and enter your own prices. ' }));
   const rows = lines.map(g => {
@@ -3399,7 +3379,7 @@ function resultRow(l, judg, isOpen) {
     const d = $('tr[data-detail="' + CSS.escape(l.row_id) + '"]');
     if (!d) return;
     const open = d.style.display === 'none';
-    d.style.display = open ? 'table-row' : 'none';
+    d.style.display = open ? '' : 'none';
     S.ws.open[l.row_id] = open;
     tr.setAttribute('aria-expanded', String(open));
     chev.textContent = open ? '▾' : '▸';
@@ -3537,6 +3517,12 @@ function resultRow(l, judg, isOpen) {
   tr.appendChild(el('td', {}, el('input', { class: 'cellinput note', type: 'text', value: w.note || '',
     placeholder: 'note', 'data-fk': focusKey('ws', l.row_id, 'note'),
     onchange: e => { w.note = e.target.value; } })));
+  const modelLabel = worksheetBasis() === 'history' ? 'Bid median $/unit' : basisLabel() + ' model $/unit';
+  const labels = ['Item', '', 'Quantity', 'Unit', modelLabel, 'Reference range', 'Model accuracy',
+    'Your $/unit', 'Reference', 'Your amount', 'Note'];
+  labels.forEach((label, index) => { if (label) tr.cells[index].dataset.label = label; });
+  inp.setAttribute('aria-label', 'Your $/unit');
+  tr.querySelector('input.note').setAttribute('aria-label', 'Note');
   return tr;
 }
 
