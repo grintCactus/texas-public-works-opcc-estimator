@@ -115,7 +115,7 @@ What `build_bundle.py` guarantees:
 ## After a deploy
 
 1. `curl https://<site>/api/health` answers.
-2. `python deploy/tools/live_check.py https://<site>` prices the public fixture on the live site. It must print the same P50 and P80 as the same command against a local run (`http://127.0.0.1:8017`) and as the known-answer check in `docs/HANDOFF.md`.
+2. `python deploy/tools/live_check.py https://<site> --expect-p50 765836.50 --expect-p70 887482.17 --expect-p80 1043089.75` checks all three percentiles on the public fixture. Run it against `http://127.0.0.1:8017` with the same expectations.
 3. Note the deploy (date, commit, bundle tag) in `docs/HANDOFF.md` under "Deploy log".
 
 ## Other hosts

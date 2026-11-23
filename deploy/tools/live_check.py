@@ -1,24 +1,24 @@
-"""Ask a running site to price a takeoff, the way the page does, and print
-P50 and P80.
+"""Ask a running site to price a takeoff and check its published percentiles.
 
     python deploy/tools/live_check.py https://129-146-109-44.sslip.io
-    python deploy/tools/live_check.py http://127.0.0.1:8017 --expect-p50 765836.50 --expect-p80 1043089.75
+    python deploy/tools/live_check.py http://127.0.0.1:8017 --expect-p50 765836.50 --expect-p70 887482.17 --expect-p80 1043089.75
 
 It uploads the takeoff to POST /api/takeoff/file, classifies the lines with
 POST /api/classify and prices them with POST /api/estimate: three requests,
 nothing stored on the server. The default takeoff is the public fixture
 ui/fixtures/takeoff_public_creek_bank.csv with the inputs of the
-known-answer check in docs/HANDOFF.md. With --expect-p50 / --expect-p80 it
-exits 1 when a figure differs by more than half a cent.
+known-answer check in docs/HANDOFF.md. Each requested percentile must be
+present, finite and within half a cent of its expected value.
 
 Use it after a deploy: the live site and a local run of the same commit and
-bundle must give the same two numbers.
+bundle must give the same numbers.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import ssl
 import sys
@@ -65,6 +65,7 @@ def main(argv=None):
     ap.add_argument("--bidders", type=int, default=5)
     ap.add_argument("--bid-date", default="2025-03-10")
     ap.add_argument("--expect-p50", type=float)
+    ap.add_argument("--expect-p70", type=float)
     ap.add_argument("--expect-p80", type=float)
     a = ap.parse_args(argv)
     base = a.site.rstrip("/")
@@ -86,17 +87,20 @@ def main(argv=None):
                    "quantity": l["quantity"],
                    "amount": float(amount[l["row_id"]]) if amount.get(l["row_id"]) else None}
                   for l in lines]}).encode())
-    p50, p80 = res["headline"]["p50"], res["headline"]["p80"]
     print("%s: %d lines, market %s, %d bidders, bid date %s"
           % (base, len(lines), a.market, a.bidders, a.bid_date))
-    print("P50 (expected low bid)  %16s" % "{:,.2f}".format(p50))
-    print("P80 (recommended OPCC)  %16s" % "{:,.2f}".format(p80))
-    bad = [n for n, got, want in (("P50", p50, a.expect_p50), ("P80", p80, a.expect_p80))
-           if want is not None and abs(got - want) > 0.005]
+    expected = {"p50": a.expect_p50, "p70": a.expect_p70, "p80": a.expect_p80}
+    bad = []
+    for key, want in expected.items():
+        got = res["headline"].get(key)
+        valid = isinstance(got, (int, float)) and math.isfinite(got)
+        print("%s  %s" % (key.upper(), "{:,.2f}".format(got) if valid else "unavailable"))
+        if want is not None and (not valid or not math.isfinite(want) or abs(got - want) > 0.005):
+            bad.append(key.upper())
     if bad:
         print("RESULT: DIFFERENT (%s)" % ", ".join(bad))
         return 1
-    if a.expect_p50 is not None or a.expect_p80 is not None:
+    if any(value is not None for value in expected.values()):
         print("RESULT: AS EXPECTED")
     return 0
 
