@@ -1425,6 +1425,12 @@ and unit prices. Independent publication dates are available for a smaller subse
   documented source positions for 6,035 comparable item positions found one
   fully eligible direct replacement. It increased absolute extended error by
   $474.33 against the Round 23 candidate.
+  A review of the City of Aubrey's 8,133 LF of 18-inch HDD sewer force main
+  traced the $41.34/LF model price to ten TxDOT communications duct references.
+  The original low bidder priced the carrier pipe at $185/LF. Six bidders'
+  median was $300.275/LF. The tab had a separate steel casing item.
+  All 66 original line extensions reconciled to the six base bids.
+  [Official city packet, page 137](https://aubreytx.api.civicclerk.com/v1/Meetings/GetMeetingFileStream(fileId=601,plainText=false)#page=137)
 - **Round 41.** A conditional calibration used the predeclared 25% threshold
   for the share of modeled variable cost excluded from the score. Of 57
   triggered targets, 12 had the required 40 earlier comparable histories.
