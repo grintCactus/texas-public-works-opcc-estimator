@@ -194,6 +194,17 @@ class ProjectAccuracyTests(unittest.TestCase):
         pair = paired({"job": score(original)}, {"job": score(changed)})
         self.assertEqual(pair["unmatched"], {"job": "different_or_unverified_quantities_or_units"})
 
+    def test_printed_ls_overrides_an_archived_physical_quantity(self):
+        main = line("pavement", "SY", "priced", 60, 82, bid_scope="base", quantity=2,
+                    model_unit_price=30, winner_unit="SY", winner_quantity=2, winner_unit_price=41)
+        excavation = line("excavation", "CY", "priced", 40, 48, bid_scope="base", quantity=10,
+                          model_unit_price=4, winner_quantity=1, winner_unit="LS", winner_unit_price=48)
+        result = project_score([main, excavation], forecasts(), verify_base_bid=True)
+        self.assertEqual(result["counts"]["lump_sum"], 1)
+        self.assertEqual(result["counts"]["eligible"], 1)
+        self.assertEqual(result["actual"], 82)
+        self.assertEqual(result["predictions"], forecasts(72, 93.6, 108))
+
 
 if __name__ == "__main__":
     unittest.main()

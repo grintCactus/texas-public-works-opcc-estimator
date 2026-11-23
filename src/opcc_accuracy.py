@@ -21,8 +21,9 @@ EXPLICIT_LS = re.compile(r"\b(?:pay(?:ment)?\s+unit|unit\s+of\s+(?:payment|measu
 
 
 def lump_sum(row):
+    """A printed LS payment governs even if its description gives an approximate CY or SF quantity."""
     explicit_unit = False
-    for unit in (row.get("unit_raw"), row.get("unit")):
+    for unit in (row.get("unit_raw"), row.get("unit"), row.get("winner_unit")):
         outside = str(unit or "").partition("(")[0]
         letters = re.sub(r"[^A-Z]", "", outside.upper()).removeprefix("PER")
         if letters in LS_UNITS:

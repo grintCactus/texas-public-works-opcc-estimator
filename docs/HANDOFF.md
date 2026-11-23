@@ -50,6 +50,10 @@ as well as the issued `model_unit_price` on priced rows. Record `unit`
 and `winner_unit` in the same canonical payment units, preserving scale.
 Both extensions must reconcile within half a cent. Differences in quantity,
 payment unit or extended dollars hold the project and identify the row.
+Record the original payment unit on excluded rows too. A printed LS keeps
+the line out of both subtotals even if the model read a parenthetical CY or
+SF quantity as its payment basis. The issued price still participates in
+the original whole-schedule allocation.
 An explicitly reported common-row sensitivity can accompany this hold.
 Reissuing a base-only schedule requires running the estimator again.
 
