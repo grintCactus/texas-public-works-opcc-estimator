@@ -1442,6 +1442,77 @@ The registered inputs, forecasts and results are in the corresponding
 `round38_source_certified_blend`, `round39_scoped_calibration`,
 `round40_unit_underbid` and `round41_scope_exposure` local study directories.
 
+### Recent municipal references, construction scope and source dates (Rounds 42–49)
+
+Two large pavement misses illustrate why a recent price in the right unit can
+still buy different work. North Richland Hills specified 115,000 SY of 2-inch
+Type D asphalt surface and paid separately for cold milling. Its three surface
+bids were $14.90, $18.34 and $18.13/SY. The $1.69/SY model rate reproduced
+from two friction treatments and one reinforcing grid, with a historical
+median of $1.53 times the date adjustment of 1.10235. Mansfield's pavement
+repair included a 12-inch aggregate base. Neither contract supports pricing
+plain overlay and combined base repair from the same pool.
+[North Richland Hills bid tab](https://nrhtx.legistar1.com/nrhtx/attachments/894f9862-6c69-47c2-a032-6fc3ad29e510.pdf)
+and [Mansfield bid tab](https://legistar.granicus.com/Mansfield/attachments/1be2b3bd-40ba-4dda-8ad8-5546c2307cdc.pdf).
+
+The force-main review reconciled 38 bidder extensions on eight items across
+three further official tabs. On one Highland Village contract, three bidders'
+medians were $230/LF for 1,730 LF of directionally drilled 6-inch PE4710
+pressure pipe and $160/LF for 460 LF of open cut. The within-bidder ratios
+of drilled to open-cut prices ranged from 0.66 to 1.92. Both quantities and
+installation method differed. No earlier verified like-for-like 18-inch PVC
+price qualified for the Aubrey line. [Highland Village bid tab](https://www.highlandvillage.org/Archive.aspx?ADID=4233).
+
+- **Rounds 44–45.** Thickness-normalized surface prices and a separate
+  documented ton-to-area conversion produced no eligible substitutions on
+  the 6,035 paired historical lines. North Richland Hills' preceding, separately
+  awarded contract did provide the same 2-inch Type D surface on 95,000 SY.
+  The five original quotes had a median of $16.61/SY. The historical index
+  factor was 1.000. Rounded upward to two significant digits, $17.00 was
+  6.2% below the target's $18.13 median and 14.1% above its $14.90 winning
+  unit price. This correction reduced absolute error times quantity by
+  $1,761,041 on the 115,000 SY. No other eligible historical unit changed.
+  The 90% project-resampled interval against Round 23 included zero.
+  [Earlier city bid tab](https://nrhtx.legistar1.com/nrhtx/attachments/12945823-e346-441b-a0a9-8f1ab5333721.pdf).
+  Checking 243 source positions again
+  reproduced one prior eligible substitution. Independently reconciling an
+  opening date or a bid tab's contents alone did not establish when that
+  exact document became available for the original estimate.
+- **Round 46.** Compare the last three matching projects' actual bidder
+  medians to their own model rates, then apply that relative correction
+  to the target's date-specific rate. The recorded-date replay changed
+  60 of 6,035 matched unit rates across 36 of 174 projects. The sum of
+  quantity times absolute unit-price error increased by $1,891 against
+  Round 23. Requiring agreement on direction and taking the smallest
+  correction changed 21 items across 16 projects. Absolute extended error
+  fell by $19,233. The 90% whole-project interval ran from $45,283 less
+  error to $5,523 more. Neither version had three fully verified reference
+  projects on a single line or qualified for a project forecast change.
+- **Round 47.** On five previously reconciled external contracts, 100 of
+  358 physical unit items matched exactly somewhere in the historical donor
+  pool. Only 16 had a prior match in the two-year window. Four had one
+  qualified source under the recorded-date policy and none had two. The
+  three-project correction reached no items. All 358 rates and the five
+  projects' scoped forecasts were identical to Round 23.
+- **Round 49.** Of 1,546 physical items across 19 external projects, 68 had
+  an archived recent comparable. Five had complete contractor prices,
+  reconciled extensions and the required same-year, pre-opening source
+  evidence. The existing estimate already lay within the middle half of
+  contractor prices on all five. A proposed adjustment to the nearer edge
+  of that interval therefore made no changes.
+
+A separate prospective Austin water and wastewater contract, CLMC1159, had
+84 scheduled items and 82 non-LS positions. Seven had a comparable older
+city contract with matching work, quantity and unit, and complete contractor
+prices. The seven unit forecasts were frozen before the scheduled December
+17, 2026 opening. A second PDF reader reconciled the 51 donor unit prices
+and all 51 extensions. These forecasts have no observed target prices yet.
+
+The municipal P80 floor still requires independent verification on identical
+covered non-LS lines. These retrospective experiments did not change released
+pricing. Their registrations, forecasts and results are in the corresponding
+local study directories under `handoff/scratchpad/`.
+
 ## 6. Parser rounds (versions .18 to .34b)
 
 The parser turns PDFs, scans and spreadsheets into one row per bidder × line item. Every change raises `PARSER_VERSION`. The version is part of the parse-cache key, so a new version re-parses everything. Parser rounds alternated with pricing rounds: each install was followed by a full rebuild and a re-score, and the next pricing round ran on the new data.

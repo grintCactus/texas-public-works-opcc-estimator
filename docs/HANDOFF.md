@@ -97,8 +97,18 @@ The owner's subsequent standing request authorizes continued public-data
 collection and iterative pricing experiments. Keep source collection,
 independent evaluation and production adoption separate. The Round 23
 recent-bid blend passed the development unit-price gate and remains a
-candidate for independent confirmation. Rounds 24 and 26–41 did not justify
-a change to it. Round 25 verifies dates against originals. See the dated
+candidate for independent confirmation. Rounds 24 and 26–49 have not justified
+a change to it. Three agreeing recent projects reduced developmental unit
+error on 21 positions, but its 90% interval included an increase. None of the
+358 independently reviewed physical items on five external contracts had
+three qualified references within two years. For pavement, check the priced
+work as well as the unit. Two friction treatments and a reinforcing grid
+reproduced a $1.69/SY estimate for a 2-inch asphalt surface whose original
+low bidder priced it at $14.90/SY. The preceding city contract supported a
+$17.00/SY forecast on that item alone. The opened target's three-bid median
+was $18.13/SY. A separate Austin contract, CLMC1159, now has seven prospective
+unit-price forecasts sealed before its scheduled December 17, 2026 opening.
+Round 25 verifies dates against originals. See the dated
 entries in `docs/HISTORY.md`. The local worksheet and local P70 trial are
 described below. Production still uses its previously adopted model.
 
