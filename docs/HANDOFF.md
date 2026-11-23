@@ -106,7 +106,10 @@ work as well as the unit. Two friction treatments and a reinforcing grid
 reproduced a $1.69/SY estimate for a 2-inch asphalt surface whose original
 low bidder priced it at $14.90/SY. The preceding city contract supported a
 $17.00/SY forecast on that item alone. The opened target's three-bid median
-was $18.13/SY. A separate Austin contract, CLMC1159, now has seven prospective
+was $18.13/SY. The native replay brought that project's P50 to within 0.84%
+of the actual low bid. With forward calibration the Round 23 P80 count moved
+from 134 to 135 of 174. See `handoff/scratchpad/round51_native_overlay/`.
+A separate Austin contract, CLMC1159, now has seven prospective
 unit-price forecasts sealed before its scheduled December 17, 2026 opening.
 Round 25 verifies dates against originals. See the dated
 entries in `docs/HISTORY.md`. The local worksheet and local P70 trial are

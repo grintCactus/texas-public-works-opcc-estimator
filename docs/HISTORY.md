@@ -1513,6 +1513,41 @@ covered non-LS lines. These retrospective experiments did not change released
 pricing. Their registrations, forecasts and results are in the corresponding
 local study directories under `handoff/scratchpad/`.
 
+### What the single pavement correction changes in the entire OPCC
+
+**Round 51** reran the North Richland Hills estimate with the original bidder
+count, historical prices and comparables. The original forecasts reproduced
+to the cent. Replacing that one unit rate with $17/SY moved P50 from $983,202
+to $2,069,124, P70 from $1,146,745 to $2,413,297, and P80 from $1,278,221 to
+$2,689,985. The actual low bid was $2,051,900. The resulting estimates were
+0.84%, 17.61% and 31.10% high, respectively. The model discounted the revised
+line subtotal, then blended it with the four comparable projects.
+
+On the same 174 development projects, holding later calibration constant
+moved P80 coverage from 134 to 135. Updating calibration only after the
+corrected letting's September 8 public release yielded P50/P70/P80 coverage
+of 84/112/135, against 83/112/134 for the Round 23 comparator. The resulting
+P80 coverage of 77.59% remains below 80%. Only the discovery contract had
+a qualifying direct change. This result has no independent replication yet.
+
+Two external comparisons tested whether the earlier overlay price applied
+to other contracts. The North Richland Hills Main Street project specified
+97 and 416 SY of Type D surface, much smaller than the city's two earlier
+contracts of 95,000 and 115,000 SY. In Richardson, the 2023 overlay base
+paid for SP-C mix by the ton. The 2024 base schedules paid for up to 3-inch
+Type D surface by the square yard. The earlier project also paid separately
+for additional milling depth. Neither comparison qualified. The registered
+checks used only the target schedule columns.
+
+**Round 55** tested putting the fixed allowance outside each percentile's
+multiplier while retaining its historical fitted value. On the 174-job
+incumbent replay, 59 forecasts changed, all with historically inferred
+allowances. P70 coverage fell from 112 to 111 and P80 coverage fell from
+134 to 133. Normalized quantile losses improved slightly but the P80 floor
+was missed. The Austin forecast separately preserves the two specified
+allowances, the base schedule and the seven recent-bid predictions so the
+comparison can be scored after opening.
+
 ## 6. Parser rounds (versions .18 to .34b)
 
 The parser turns PDFs, scans and spreadsheets into one row per bidder × line item. Every change raises `PARSER_VERSION`. The version is part of the parse-cache key, so a new version re-parses everything. Parser rounds alternated with pricing rounds: each install was followed by a full rebuild and a re-score, and the next pricing round ran on the new data.
