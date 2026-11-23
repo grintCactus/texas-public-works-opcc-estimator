@@ -6,7 +6,7 @@ and the page's main job is to put useful reference material in front of the
 estimator, who sets their own prices in the **OPCC worksheet** (see below).
 A bid schedule (takeoff) goes in; out come:
 
-- **Expected low bid (P50)** and **Recommended OPCC (P70)** — a local trial
+- **Expected low bid (P50)** and **Recommended OPCC (P70)** — a trial available locally and on the public site
   with a nominal 70% target, calculated from the 30th percentile of earlier
   public forward-scored P50 / actual-low-bid ratios; this is not an
   independently validated P70 hit rate;

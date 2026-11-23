@@ -21,7 +21,7 @@ The public demo runs at https://129-146-109-44.sslip.io: one small cloud VM, two
 | `tools/assemble_space.py` | Build `deploy/space` from this checkout and a bundle; refuses data that is not public; scans the result. |
 | `tools/check_package.sh` | Price 400 public lettings in the checkout and in the package; every number must be equal. |
 | `tools/identity_sweep.py` | The engine behind `check_package.sh`. |
-| `tools/live_check.py` | Price the public fixture on a running site (local or live) through its API and print P50 and P80. |
+| `tools/live_check.py` | Price the public fixture through the local or live API and check P50, P70 and P80. |
 | `tools/build_bundle.py` | Owner's working copy: cut the public bundle from the full `data/clean` (drops test rows, scans every cell). |
 | `tools/trace_reads.py` | Owner's working copy: record which `data/clean` files the server opens (the bundle holds exactly those). |
 | `tools/release_bundle.py` | Owner's working copy: pack `deploy/bundle`, write `bundle.lock.json`, and with `--publish` upload the archive as a release asset. |
@@ -43,6 +43,10 @@ Settings (environment variables): `BIDEST_PUBLIC`, `PORT` (7860), `DEMO_ACCESS_C
 ## A. Update the site from a fresh checkout
 
 Use this when the code changed and the data did not.
+
+For site updates, push the verified revision to the project's GitHub repository
+first. Deploy its tested package to Oracle Cloud and run the public fixture
+against the HTTPS site before reporting the update.
 
 The pinned release plus the registered P70 calibration reproduce the local
 trial. Setup installs the three public aggregate rows when the base calibration
