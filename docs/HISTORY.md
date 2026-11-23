@@ -1548,6 +1548,35 @@ was missed. The Austin forecast separately preserves the two specified
 allowances, the base schedule and the seven recent-bid predictions so the
 comparison can be scored after opening.
 
+### When all three source quantities are similar (Rounds 57–58)
+
+These tests compared the worksheet's three-project starting price with the
+date-specific Round 23 item rate. Both arms had a price on every tested
+line. For evaluation, a blank worksheet field used Round 23. A single
+source quantity below half or above twice the target quantity triggered the
+alternative. The historical selection used the recorded availability dates.
+
+Of 6,035 development prices, 1,111 had an automatic worksheet rate. On the
+166 items where all three quantities qualified, median absolute unit error
+was 22.76% for the worksheet and 24.42% for Round 23. On the 945 items where
+at least one quantity fell outside the band, those errors were 26.28% and
+24.59%. Reverting those 945 rates to Round 23 reduced the sum of quantity
+times absolute unit error by $4.73 million versus the worksheet-led policy.
+The 90% whole-project interval was $2.15 million to $7.97 million less
+error. Compared with using Round 23 on every line, the improvement was
+$60,868 and the interval included $74,071 more error. The 174-project
+resampling frame included eight projects without any paired unit errors.
+
+In the external transfer test, 22 of 358 priced physical items across five
+contracts had an automatic worksheet price. Each of the 22 had at least
+one source outside the quantity band. On the complete 358-line comparison,
+reverting those 22 rates reduced absolute extended error by $4.95 million
+versus the worksheet-led policy and matched Round 23 exactly. The Williamson
+County widening project accounted for $4.68 million of the difference.
+The five contracts provided no external test of the proposed rule on three
+similar quantities. These results concern the unit prices and do not measure
+project-level P70 or P80 coverage.
+
 ## 6. Parser rounds (versions .18 to .34b)
 
 The parser turns PDFs, scans and spreadsheets into one row per bidder × line item. Every change raises `PARSER_VERSION`. The version is part of the parse-cache key, so a new version re-parses everything. Parser rounds alternated with pricing rounds: each install was followed by a full rebuild and a re-score, and the next pricing round ran on the new data.
