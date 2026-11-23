@@ -297,7 +297,7 @@ P80 accuracy figures as P70 or claim demonstrated 70% future coverage.
 | TxDOT engineers' own estimates | 451 | 21% | 14% | n/a | 19 / 22 / 23% |
 
   The goal: P80 below the actual low bid on at most 20% of lettings (met under the historical scope), and within that the smallest overshoot (13% is the aspiration; engineers reach about 25% at the same not-under rate; the project is at 34% for cities). The city gap is almost all in estimating the bidders' typical price per job, not in the step from the median bid to the low bid.
-- **Last deploy.** 2026-11-22 23:07 CST. Oracle Cloud serves commit `3ce350a` with `bundle-2026-11-21` and its registered P70 calibration. See the deploy log at the end.
+- **Last deploy.** 2026-11-22 23:57 CST. Oracle Cloud serves commit `6fafa0e` with `bundle-2026-11-21` and its registered P70 calibration. See the deploy log at the end.
 
 ## 2. The first hour
 
@@ -458,3 +458,4 @@ To publish the whole pipeline, company-specific content left the code. No number
 | 2026-11-21 20:15 | `176d550` | built 2026-11-21 20:08 (parser .34b, round 20) | Allowance alert follows the amount typed; OPCC date is the user's day. |
 | 2026-11-21 23:46 | `ae9d0de`, from a fresh clone | `bundle-2026-11-21` (the same build, as published) | First deploy by the documented path: `fetch_bundle.py`, `assemble_space.py`, `check_package.sh` (identical in 400 schedules), `redeploy.sh`. `live_check.py` on the live site gave the known answer. Pricing unchanged; the package now holds the published code only. |
 | 2026-11-22 23:07 CST | `3ce350a` | `bundle-2026-11-21` with registered P70 calibration | All 400 package comparisons matched. The 43-line fixture on Oracle Cloud returned P50 $765,836.50, P70 $887,482.17 and P80 $1,043,089.75. The public page, manual and worksheet script matched the tested package. The live API preserved 45 units of 100 LF and priced 4,500 LF. |
+| 2026-11-22 23:57 CST | `6fafa0e` | `bundle-2026-11-21` with registered P70 calibration | Restored selectable P50 and P70 estimate cards. Public desktop and 390-pixel touch browser checks switched the worksheet from P50 to P70 and back. Six automatic unit prices changed and were restored. The public fixture matched all three known percentiles. All 400 package comparisons matched. |
