@@ -128,6 +128,72 @@ class ProjectAccuracyTests(unittest.TestCase):
             self.assertEqual(metrics[arm]["quantiles"]["p70"]["n"], 0)
             self.assertEqual(metrics[arm]["quantiles"]["p80"]["n"], 1)
 
+    def test_base_allocation_preserves_issued_size_and_excludes_alternates_once(self):
+        rows = [line("main", "LF", "priced", 60, 82, bid_scope="base", engineer_amount=90,
+                     quantity=2, winner_quantity=2, winner_unit="LF", model_unit_price=30, winner_unit_price=41),
+                line("allowance", "DOL", "owner_set", winner=10, fixed_amount=10, bid_scope="base",
+                     engineer_amount=10, quantity=1, winner_quantity=1, winner_unit="DOL", winner_unit_price=10),
+                line("alternate", "EA", "priced", 40, bid_scope="alternate"),
+                line("alternate_ls", "LS", "owner_set", fixed_amount=15, bid_scope="alternate"),
+                line("alternate_open", "LS", "not_covered", bid_scope="alternate")]
+        result = project_score(rows, forecasts(125, 150, 175), verify_base_bid=True)
+        self.assertEqual(result["predictions"], forecasts(70, 85, 100))
+        self.assertEqual((result["actual"], result["engineer"]), (92, 100))
+        self.assertEqual(result["issued_scope"], "base_with_alternates")
+        self.assertEqual(result["counts"], dict(total=5, eligible=2, excluded=3, alternate=3,
+                                               lump_sum=2, not_covered=1, both=1))
+        rows[2]["market_amount"] = None
+        self.assertIn("missing_model_allocation", project_score(rows, forecasts())["reasons"])
+
+    def test_section_labels_must_be_complete_and_known(self):
+        legacy = line("a", "EA", "priced", 100, 100)
+        base = dict(legacy, bid_scope="base", quantity=10, winner_quantity=10,
+                    winner_unit="EA", model_unit_price=10, winner_unit_price=10)
+        old = project_score([legacy], forecasts())
+        named = project_score([base], forecasts(), verify_base_bid=True)
+        self.assertEqual(named["scope_sha256"], old["scope_sha256"])
+        self.assertEqual(summarize([old, named])["scored_by_issued_scope"],
+                         {"unspecified": 1, "base_only": 1})
+        self.assertIn("missing_bid_scope", project_score([legacy], forecasts(), verify_base_bid=True)["reasons"])
+        for rows in ([base, dict(legacy, row_id="b")], [dict(legacy, row_id="b"), base]):
+            self.assertIn("missing_bid_scope", project_score(rows, forecasts())["reasons"])
+        for value in ("", "unresolved", None):
+            self.assertIn("unknown_bid_scope", project_score([dict(base, bid_scope=value)], forecasts())["reasons"])
+        self.assertIn("no_eligible_lines", project_score([dict(base, bid_scope="alternate")], forecasts())["reasons"])
+
+    def test_printed_quantities_are_checked_on_retained_lines(self):
+        row = line("deep", "VLF", "priced", 40, 50, quantity=79, winner_quantity=78.7, bid_scope="base")
+        held = project_score([row], forecasts())
+        self.assertEqual(held["reasons"], ["different_bid_quantities"])
+        self.assertEqual(held["row_evidence_errors"], {"deep": ["different_bid_quantities"]})
+        for v in (None, False, -1):
+            self.assertIn("missing_comparable_quantity", project_score([dict(row, quantity=v)], forecasts())["reasons"])
+        matched = dict(row, quantity=78.7)
+        alternate = dict(row, row_id="alt", bid_scope="alternate")
+        result = project_score([matched, alternate], forecasts())
+        self.assertEqual(result["status"], "scored")
+        self.assertEqual(result["actual"], 50)
+
+    def test_strict_receipts_bind_quantities_units_and_extensions(self):
+        original = line("main", "LF", "priced", 50, 65, quantity=10, winner_quantity=10,
+                        winner_unit="LF", model_unit_price=5, winner_unit_price=6.50, bid_scope="base")
+        def score(row):
+            return project_score([row], forecasts(), verify_base_bid=True)
+        for field, reason in (("winner_quantity", "missing_comparable_quantity"),
+                              ("winner_unit", "missing_comparable_payment_unit"),
+                              ("model_unit_price", "missing_model_unit_price"),
+                              ("winner_unit_price", "missing_winner_unit_price")):
+            changed = original.copy()
+            del changed[field]
+            self.assertIn(reason, score(changed)["row_evidence_errors"]["main"])
+        changed = dict(original, quantity=9, winner_quantity=9)
+        self.assertEqual(set(score(changed)["row_evidence_errors"]["main"]),
+                         {"market_amount_does_not_reconcile", "winner_amount_does_not_reconcile"})
+        self.assertIn("different_payment_units", score(dict(original, winner_unit="100 LF"))["reasons"])
+        changed = dict(original, quantity=5, winner_quantity=5, model_unit_price=10, winner_unit_price=13)
+        pair = paired({"job": score(original)}, {"job": score(changed)})
+        self.assertEqual(pair["unmatched"], {"job": "different_or_unverified_quantities_or_units"})
+
 
 if __name__ == "__main__":
     unittest.main()

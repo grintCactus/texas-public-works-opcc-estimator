@@ -36,16 +36,51 @@ def money(value):
             and math.isfinite(value))
 
 
-def project_score(lines, headline):
+def row_evidence_errors(row, strict):
+    """Compare model inputs and original low-bid cells in their common payment unit."""
+    problems = []
+    quantity, winner_quantity = row.get("quantity"), row.get("winner_quantity")
+    if strict or "winner_quantity" in row:
+        if not all(money(v) and v >= 0 for v in (quantity, winner_quantity)):
+            problems.append("missing_comparable_quantity")
+        elif quantity != winner_quantity:
+            problems.append("different_bid_quantities")
+    if strict or "winner_unit" in row:
+        unit, winner_unit = (v.strip().upper() if isinstance(v, str) else ""
+                             for v in (row.get("unit"), row.get("winner_unit")))
+        if unit in UNKNOWN_UNITS or winner_unit in UNKNOWN_UNITS:
+            problems.append("missing_comparable_payment_unit")
+        elif unit != winner_unit:
+            problems.append("different_payment_units")
+    checks = [("winner_unit_price", winner_quantity, "winner_amount")]
+    if row.get("status") == "priced":
+        checks.append(("model_unit_price", quantity, "market_amount"))
+    for field, qty, extension_field in checks:
+        if not strict and field not in row:
+            continue
+        rate, amount = row.get(field), row.get(extension_field)
+        if not money(rate):
+            problems.append("missing_" + field)
+        elif money(qty) and money(amount) and not math.isclose(qty * rate, amount, rel_tol=0, abs_tol=0.00500001):
+            problems.append(extension_field + "_does_not_reconcile")
+    return problems
+
+
+def project_score(lines, headline, *, verify_base_bid=False):
     """Return a scored receipt or an explicit hold. All monetary fields are dollars.
 
     The caller supplies the complete original schedule, its frozen status flags,
     and extensions from one verified original low bidder aligned by row identity.
-    Engineer amounts are optional. Owner-fixed money remains at face value.
+    On a sectioned tab label every issued position as base or alternate.
+    Allocate the original forecast before excluding alternates. On retained
+    rows, an optional winning quantity must match the issued quantity in the
+    same payment unit. Owner-fixed money remains at face value.
     """
     fixed, variable, eligible_fixed, eligible_variable = [], [], [], []
     retained, engineer, seen, reasons = {}, [], set(), set()
     counts = dict(total=0, lump_sum=0, not_covered=0, both=0, excluded=0, eligible=0)
+    labeled = alternates = 0
+    row_problems, verified_positions = {}, []
     for row in lines:
         counts["total"] += 1
         row_id = str(row.get("row_id", "")).strip()
@@ -55,7 +90,14 @@ def project_score(lines, headline):
         ls = lump_sum(row)
         status = row.get("status")
         uncovered = status in UNCOVERED
-        eligible = not (ls or uncovered)
+        section = row.get("bid_scope")
+        if "bid_scope" in row:
+            labeled += 1
+            if section not in ("base", "alternate"):
+                reasons.add("unknown_bid_scope")
+        alternate = section == "alternate"
+        alternates += alternate
+        eligible = not (ls or uncovered or alternate)
         counts["lump_sum"] += ls
         counts["not_covered"] += uncovered
         counts["both"] += ls and uncovered
@@ -78,6 +120,13 @@ def project_score(lines, headline):
         elif eligible:
             reasons.add("unpriced_eligible_line")
         if eligible:
+            problems = row_evidence_errors(row, verify_base_bid)
+            if problems:
+                reasons.update(problems)
+                row_problems[row_id] = problems
+            elif verify_base_bid:
+                verified_positions.append((row_id, float(row["winner_quantity"]).hex(),
+                                           row["winner_unit"].strip().upper()))
             if all(str(row.get(key) or "").strip().upper() in UNKNOWN_UNITS
                    for key in ("unit", "unit_raw")):
                 reasons.add("unknown_eligible_unit")
@@ -89,6 +138,10 @@ def project_score(lines, headline):
             if money(row.get("engineer_amount")):
                 engineer.append(row["engineer_amount"])
 
+    if (verify_base_bid or labeled) and labeled != counts["total"]:
+        reasons.add("missing_bid_scope")
+    if labeled:
+        counts["alternate"] = alternates
     if not counts["eligible"]:
         reasons.add("no_eligible_lines")
     actual = math.fsum(retained.values())
@@ -110,13 +163,22 @@ def project_score(lines, headline):
     if not estimates:
         reasons.update(missing_quantiles.values())
     if reasons:
-        return {"status": "held", "counts": counts, "reasons": sorted(reasons)}
+        result = {"status": "held", "counts": counts, "reasons": sorted(reasons)}
+        if row_problems:
+            result["row_evidence_errors"] = row_problems
+        return result
     # Bind paired comparisons to the identical source positions AND winning amounts.
     pairs = sorted((key, float(value).hex()) for key, value in retained.items())
     signature = hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode()).hexdigest()
-    return {"status": "scored", "counts": counts, "scope_sha256": signature, "actual": actual,
-            "engineer": math.fsum(engineer) if len(engineer) == counts["eligible"] else None,
-            "predictions": estimates, "missing_quantiles": missing_quantiles}
+    result = {"status": "scored", "counts": counts, "scope_sha256": signature, "actual": actual,
+              "engineer": math.fsum(engineer) if len(engineer) == counts["eligible"] else None,
+              "predictions": estimates, "missing_quantiles": missing_quantiles}
+    if labeled:
+        result["issued_scope"] = "base_with_alternates" if alternates else "base_only"
+    if verify_base_bid:
+        digest_input = json.dumps(sorted(verified_positions), separators=(",", ":")).encode()
+        result["quantity_unit_sha256"] = hashlib.sha256(digest_input).hexdigest()
+    return result
 
 
 def _metrics(pairs):
@@ -144,6 +206,7 @@ def summarize(results):
     p80 = quantiles["p80"]
     return {"scope": SCOPE, "projects": len(results), "scored": len(scored),
             "held": len(results) - len(scored), "hold_reasons": dict(held),
+            "scored_by_issued_scope": dict(Counter(r.get("issued_scope", "unspecified") for r in scored)),
             "quantiles": quantiles,
             "observed_p80_meets_floor": (5 * p80["at_or_above"] >= 4 * p80["n"]
                                          if p80["n"] else None),
@@ -159,6 +222,8 @@ def paired(baseline, candidate):
             unmatched[key] = "missing_or_held_project"
         elif a["scope_sha256"] != b["scope_sha256"]:
             unmatched[key] = "different_rows_or_winning_amounts"
+        elif a.get("quantity_unit_sha256") != b.get("quantity_unit_sha256"):
+            unmatched[key] = "different_or_unverified_quantities_or_units"
         else:
             common = a["predictions"].keys() & b["predictions"].keys()
             if not common:
@@ -174,7 +239,7 @@ def paired(baseline, candidate):
             **{arm: summarize(records) for arm, records in matched.items()}}
 
 
-def read_receipts(path):
+def read_receipts(path, *, verify_base_bid=False):
     scores = {}
     with path.open(encoding="utf-8") as stream:
         for line in stream:
@@ -184,7 +249,8 @@ def read_receipts(path):
             key = project["project_key"]
             if not isinstance(key, str) or not key.strip() or key in scores:
                 raise ValueError("Project keys must be nonempty and unique within an arm")
-            scores[key] = project_score(project["lines"], project["headline"])
+            scores[key] = project_score(project["lines"], project["headline"],
+                                        verify_base_bid=verify_base_bid)
     return scores
 
 
@@ -192,11 +258,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("receipts", type=Path, help="one verified public project per JSON line")
     parser.add_argument("--compare", type=Path, help="candidate receipts to compare on identical rows")
+    parser.add_argument("--verify-base-bid", action="store_true",
+                        help="require section labels and reconcile retained quantities, units and extensions")
     args = parser.parse_args()
-    scores = read_receipts(args.receipts)
+    scores = read_receipts(args.receipts, verify_base_bid=args.verify_base_bid)
     report = {"summary": summarize(scores.values()), "per_project": scores}
     if args.compare:
-        report["paired"] = paired(scores, read_receipts(args.compare))
+        report["paired"] = paired(scores, read_receipts(args.compare, verify_base_bid=args.verify_base_bid))
     print(json.dumps(report, indent=2, allow_nan=False))
 
 

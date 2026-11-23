@@ -13,8 +13,8 @@ Use the pay item's unit, including source spellings such as `L.S.` and
 `Lump Sum`. A quantity of one by itself does not identify a lump sum.
 
 For **project OPCC accuracy**, issue each full-schedule forecast first. Score
-only covered, non-LS rows. Compare each percentile subtotal to the sum of the
-original base low bidder's extensions for those same rows. A printed zero is
+covered, non-LS base rows. Determine the low bidder from the complete original
+base bid, then use that bidder's extensions on the retained rows. A printed zero is
 a price. A missing winning amount, missing eligible model price, or empty or
 nonpositive comparison subtotal makes the job unscorable. Keep single EA rows
 and covered low-confidence prices. Count the union of LS and Not Covered once.
@@ -29,7 +29,7 @@ bidder. Supply `market_amount` on priced rows and `fixed_amount` on owner-set
 rows. Optional `engineer_amount` must cover the same retained lines. For each
 percentile, hold specified amounts at face value and distribute the balance
 among all priced lines proportional to their market amounts before excluding
-LS. This preserves the forecast made with the original project size and mix.
+LS and alternatives. This preserves the forecast made with the original project size and mix.
 The error is (retained estimate / retained low-bid amount) minus one. Each
 scored letting contributes one observation. Report held jobs and the counts
 behind the P80 floor. Historical forecasts without P70 still count for each
@@ -38,7 +38,22 @@ the report identifies unequal project scopes and uses a common denominator for
 each percentile. Historical whole-bid figures retain their original
 definitions and must be replayed before comparison with these results.
 
-The date-specific municipal development replay scored 174 of 235 schedules.
+For new original-tab audits, mark each issued position with `bid_scope` set
+to `base` or `alternate` and pass `--verify-base-bid` to the scoring command.
+Include all originally issued rows and their model allocations, even if an
+alternate was eventually awarded. The report distinguishes complete base-only
+issues from base amounts allocated out of a mixed issue. Older unlabelled
+receipts appear under `unspecified`. A partly labelled or unknown section
+holds the job. The strict check requires the frozen `quantity` and the
+printed `winner_quantity` and `winner_unit_price` on every retained row,
+as well as the issued `model_unit_price` on priced rows. Record `unit`
+and `winner_unit` in the same canonical payment units, preserving scale.
+Both extensions must reconcile within half a cent. Differences in quantity,
+payment unit or extended dollars hold the project and identify the row.
+An explicitly reported common-row sensitivity can accompany this hold.
+Reissuing a base-only schedule requires running the estimator again.
+
+The historical municipal development replay initially scored 174 of 235 schedules.
 It used the original low bidder’s panel quantities and unit prices. Of 7,526
 positions on scored jobs, 889 were LS, 12 were Not Covered, and five met both
 conditions. The other 6,630 positions entered both sides. Two jobs with verified
@@ -46,7 +61,14 @@ zero-quantity positions have zero extensions on both sides; an unknown quantity
 has no such interpretation. The incumbent met or exceeded actual on 81/174 at
 P50, 112/174 at P70 and 134/174 at P80. Median absolute errors were 21.0%,
 25.9% and 38.8%. On these same jobs the earlier scope gave P80 coverage of
-151/174. The new score falls below the 80% floor. Historical bidder counts and
+151/174. These counts predate the original-document base-scope audit and
+cannot establish base-only coverage. The original Watauga parking lot,
+Watauga Park Vista and Aubrey Phase 2A W5 tabulations identified priced
+alternates in the historical comparison. Watauga's Water/Wastewater CIP
+Group 2 also contains two fractional VLF quantities that were rounded in
+the archive. The low bidder can be correctly identified while the rows on
+both sides still differ from the original base. The historical score falls
+below the 80% floor. Historical bidder counts and
 uncertain source availability limit the interpretation. Among 12 scored projects with items directly affected by using three recent references
 in place of one, that choice reduced the sum of absolute P70 errors by $6,331.51.
 P80 met or exceeded the comparable bid subtotal on 134 of 174 for both policies. The local audit is at
