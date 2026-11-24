@@ -2937,6 +2937,7 @@ class QaRegressions20261120(unittest.TestCase):
         self.assertIn('href="#p-worksheet">Worksheet</a>', html)
         self.assertLess(html.index('id="p-worksheet"'), html.index('id="p-similar"'))
         self.assertLess(html.index('id="p-similar"'), html.index('id="p-notcovered"'))
+        self.assertLess(html.index('id="bidtab-fold"'), html.index('id="sec-export"'))
         self.assertIn('id="ws-hint"', html)
         hint = _js_function(js, "showRowHint")
         self.assertIn("try {", hint)

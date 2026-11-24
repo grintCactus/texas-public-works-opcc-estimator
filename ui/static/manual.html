@@ -112,7 +112,7 @@
         <figcaption>An illustration of the idea, not this project's data or a fitted prediction curve.</figcaption>
       </figure>
       <p>In the left picture, the entire area represents possible low bids: 50% lies below P50, another 20% between P50 and P70, and 30% above P70. The right picture shows the same shares as a running total.</p>
-      <p>Select <strong>Expected low bid (P50)</strong> or <strong>Recommended OPCC (P70)</strong> to use that estimate's automatic unit prices in the worksheet. The selected card has a highlighted border.</p>
+      <p><strong>Expected low bid (P50)</strong> and <strong>Recommended OPCC (P70)</strong> are model estimates for the project. The recent-bid card adds up quantity × recent bid median for the items with enough matching bids. Its item count shows how much of the schedule it covers.</p>
       <p>The 50% and 80% historical ranges describe two-sided intervals. Each budget percentile gives a single upper threshold.</p>
       <p class="manual-callout">The 70% target is not an independently verified P70 success rate or a guarantee for one project. P70 can still fall short. Missing scope and not-covered lines require separate attention; add their prices before treating an OPCC as complete.</p>
     </section>
@@ -140,12 +140,13 @@
     <section id="worksheet">
       <h2>7. Your OPCC worksheet</h2>
       <p>On a phone or tablet, each pay item has its own card. Edit <strong>Your $/unit</strong> beside <strong>Your amount</strong>. Tap the description to see the bids behind the price.</p>
-      <p>New worksheets start from <strong>Recent bid median</strong>, a reference selected separately for each item. Choose a P50 or P70 card in <strong>Estimate</strong> to switch the automatic prices. The worksheet keeps prices you entered, individual bid references you picked, vendor quotes and owner-set amounts.</p>
+      <p>New worksheets start from <strong>Recent bid median</strong>. In <strong>Estimate</strong>, select P50, P70 or the recent-bid card at any time to change the source of automatic unit prices. All three references stay visible for comparison. Your own prices, individual reference picks, vendor quotes and owner-set amounts stay in the worksheet.</p>
       <p>For each eligible item, the tool selects three distinct public projects in the same market with closely matching work, unit, size and quantity. Each must have a precise bid date before your bid date and within the preceding two calendar years. Eligible projects from the most recent year are preferred. Older projects are not added to make up a missing third reference.</p>
       <p>Each project's own bidder median is adjusted to your bid year before taking the median of the three adjusted values. The adjustment uses an annual index of matching public bids dated before your bid date, with at least ten matched items for each annual step. The factor can raise or lower a price. Original bidder medians, dates, factors and the index evidence remain attached to the selected prices.</p>
       <p>If fewer than three eligible projects are available, or a required price adjustment is unavailable, the default stays blank. Review the available references and enter your unit price. Loading or missing references never cause a model P70 price to be substituted.</p>
       <dl class="manual-definitions">
-        <dt>Bid median $/unit</dt><dd>The selected recent-bid reference for this item. Open the line to see all three source projects and the adjustment evidence.</dd>
+        <dt>Recent bid median</dt><dd>The middle of three matching projects' adjusted median unit prices. Open the line to see each project's bids and price adjustment.</dd>
+        <dt>P50 and P70 model unit prices</dt><dd>The P50 unit price comes from the model. The P70 unit price applies the project's P70 multiplier to that P50 price. Both use the pay item's unit. The percentiles describe the project's low bid.</dd>
         <dt>Your $/unit</dt><dd>The price used in your OPCC. You can keep the recent bid median, choose another source from Reference, or enter your own price.</dd>
         <dt>Rounding</dt><dd>The default uses unit-price cents, so quantity times the visible unit price equals the line amount. The full adjusted median is retained in the source record. You may choose rounding up or to a convenient amount; a price you type is never automatically rounded.</dd>
         <dt>Engineer input</dt><dd>Mobilization and temporary erosion-control lump sums remain your input. An explicitly selected <strong>New item / Other</strong> also starts blank. Your entered prices survive reference loading and re-estimation.</dd>
@@ -168,9 +169,17 @@
 
     <section id="references">
       <h2>9. Reference evidence</h2>
-      <p>The selected <strong>Recent bid median</strong> evidence is shown first when you open a line. Other reference bids can cover a wider period and are available for your review; they do not automatically fill a missing recent median.</p>
-      <p><strong>Reference range</strong> shows the low, median and high of this line's reference projects' median-bidder unit prices, adjusted to the bid year. These are reference observations, not a prediction interval for your exact item.</p>
-      <p>Open a worksheet line to inspect project dates, quantities, units and bid prices. Review size or unit differences before choosing a price. Converted-unit prices are hints; different units can describe different products.</p>
+      <p>Open a worksheet line to see the <strong>Recent bid median</strong>. Each project card identifies the original pay item, its quantity and the number of distinct bidders who quoted it. <strong>Median at bid date</strong> is the middle of those bidders’ unit prices. With an even number of prices, take the average of the two middle values. Multiply this median by the <strong>Price adjustment</strong> to express it in your bid year's dollars. A factor of 1 leaves the price unchanged.</p>
+      <p>Each qualifying project has one vote. For example, if three adjusted project medians are $27.03, $33.50 and $42.91 per CY, the recent bid median is $33.50/CY. The recent reference range is $27.03–$42.91/CY. The calculation uses the underlying precision before the result is displayed in cents. A missing third project or missing adjustment leaves the recent reference price unavailable.</p>
+      <p><strong>Historical bids behind model P50</strong> can include older projects. Each row summarizes the matching unit-price quotes in one historical project. The model can group several similar items from the same bid tab. Open the project name for the complete bid tab or the bid count for individual quotes.</p>
+      <dl class="manual-definitions">
+        <dt>Project low bid (total)</dt><dd>The lowest recorded bid for the entire historical project, in dollars.</dd>
+        <dt>Average and median bid $/unit</dt><dd>The arithmetic mean and middle value of the matching unit quotes at the time of bidding. A second value labeled with a year is the equivalent rate in that year's dollars.</dd>
+        <dt>Project low bidder’s $/unit</dt><dd>The matching unit rate from the contractor with the lowest project total. When several of that contractor's items match, the table gives their median unit rate.</dd>
+        <dt>Lowest–highest $/unit</dt><dd>The smallest and largest matching unit quotes within that one historical project. The bidder offering the smallest unit price can differ from the bidder offering the lowest project total.</dd>
+        <dt>Matched quantity</dt><dd>The quantity of the matched historical work in the displayed unit. If the group includes several quantities, the table shows their median.</dd>
+      </dl>
+      <p>Review size and unit differences before choosing a price. Converted-unit prices are hints because different units can describe different products.</p>
       <p>For horizontal directional drilling (HDD), check which pipe the earlier bidder installed. A utility carrier pipe, a steel casing and a communications duct can all be bid by the linear foot. If the product differs, use a comparable bid or enter an engineer-reviewed price.</p>
       <p><strong>Similar past projects</strong> shows actual public projects with overlapping work. Their matched lines, full bid tabulations and source links help you explain a choice. A similar project can still differ in scope or site conditions.</p>
       <p><strong>Model accuracy</strong> is the historical P50 item indicator. It is not a confidence score for the newly selected recent bid median.</p>

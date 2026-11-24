@@ -260,11 +260,11 @@
         <thead>
           <tr>
             <th style="width:4.5%">Item</th>
-            <th style="width:19%" class="desc">Description</th>
+            <th style="width:17%" class="desc">Description</th>
             <th style="width:5.5%" class="num">Qty</th>
             <th style="width:4%">Unit</th>
-            <th style="width:8.5%" class="num" id="th-model" title="The median of three matching recent projects, adjusted to the bid year">Bid median $/unit</th>
-            <th style="width:12%" class="num" title="Selected recent projects&rsquo; bidder medians, adjusted to the target bid year; open the line for each source">Reference range</th>
+            <th style="width:11.5%" id="th-model" title="The recent bid median and the unit rates from the project's P50 and P70 models">Unit price comparison</th>
+            <th style="width:11%" class="num" title="Range of the recent projects&rsquo; bidder medians, adjusted to the bid year">Recent bid range</th>
             <th style="width:9%">Model accuracy</th>
             <th style="width:9.5%">Your $/unit</th>
             <th style="width:12.5%" title="Where your unit price comes from: recent matching bid medians by default; pick another reference here">Reference</th>
@@ -277,13 +277,6 @@
       </table>
     </div>
   </div>
-  <section class="panel" id="sec-export" hidden>
-    <h2><span class="secnum">4</span>Export</h2>
-    <div class="body row-actions">
-      <button class="btn" id="btn-export-xlsx">Download the OPCC (Excel)</button>
-      <button class="btn" id="btn-export-pdf">Download the OPCC (PDF)</button>
-    </div>
-  </section>
   <div class="panel" id="p-similar">
     <h2>Similar past projects <span class="hint" id="sim-sub"></span></h2>
     <div class="body" id="r-similar"></div>
@@ -301,7 +294,6 @@
     <div class="body" id="r-competition"></div>
   </details>
 </section>
-
 
 <details class="fold panel-fold local-only" id="bidtab-fold">
   <summary>Add a historical bid tabulation (staged for the next data rebuild)</summary>
@@ -325,6 +317,14 @@
     </div>
   </div>
 </details>
+
+<section class="panel" id="sec-export" hidden>
+  <h2><span class="secnum">4</span>Export</h2>
+  <div class="body row-actions">
+    <button class="btn" id="btn-export-xlsx">Download the OPCC (Excel)</button>
+    <button class="btn" id="btn-export-pdf">Download the OPCC (PDF)</button>
+  </div>
+</section>
 
 </main>
 <footer class="foot" id="foot">

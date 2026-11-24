@@ -16,16 +16,15 @@ A bid schedule (takeoff) goes in; out come:
   what earlier low bidders gave them;
 - every line at the P50 level with its basis and a **typical accuracy** badge;
 - the competition step, and the **similar past projects** the estimate leans on;
-- the **OPCC worksheet**: per line a recent bid median, the reference range, your
-  own price with quick picks and a note, and **Your OPCC** next to P50 / P70;
+- the **OPCC worksheet** shows each item's recent bid median and its P50 and P70 model unit prices alongside the price used in your OPCC;
 - for every project shown, its **full bid tabulation** and its **public source
   page**;
-- a CSV / Excel export of all of it, and of the worksheet (your deliverable).
+- the final **Export** section downloads the worksheet as an Excel workbook or a PDF.
 
 The original P80 totals, multiplier, calibration, bands and historical results
 remain unchanged as a baseline. New worksheets use `basis: "history"`: three
 recent matching projects' bidder medians, adjusted to the target bid year.
-Selecting a P50 or P70 card switches automatic worksheet prices to that model level.
+Select the recent-bid card to use the item medians or select P50 or P70 to use model prices. The recent-bid subtotal includes only items with a qualifying median. The P50 and P70 project figures come from the model.
 Entered prices, selected bid references, vendor quotes and owner-set amounts are retained. Existing
 `p50`, `p70` and `p80` worksheets retain their original basis and meaning.
 
@@ -316,7 +315,7 @@ appendix.
 ## OPCC worksheet
 
 The results' line table is the estimator's worksheet. Per line: item,
-description, quantity, unit; the **recent bid median**; the
+description, quantity, unit; the **recent bid median** and the model unit prices at P50 and P70; the
 **reference range** — low, median and high of the line's reference projects'
 median-bidder unit prices, escalated to the bid year; the model's historical accuracy badge;
 **your unit price** (defaults to the selected recent bid median; quick picks: the model, the

@@ -232,6 +232,30 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(self.expanded(page, "r3"), "true")
                 self.assertTrue(page.is_visible("#detail-r3"))
                 self.assertEqual(page.inner_text(row + " .chev"), "▾")
+                details = page.locator("#detail-r3")
+                self.assertIn("Historical bids behind model P50", details.inner_text())
+                history = page.evaluate("() => S.ws.refs.r3.history_price")
+                recent = details.locator(".history-evidence")
+                projects = recent.locator(".history-project")
+                self.assertEqual(projects.count(), len(history.get("references", [])))
+                for index, ref in enumerate(history.get("references", [])):
+                    text = projects.nth(index).inner_text()
+                    self.assertIn(ref["project"], text)
+                    self.assertIn("Median at bid date", text)
+                    self.assertIn("Price adjustment", text)
+                    self.assertIn(f'Median in {history["target_year"]} dollars', text)
+                summary = recent.locator(".history-summary")
+                if history["status"] == "available":
+                    self.assertEqual(projects.count(), 3)
+                    adjusted = sorted(ref["adjusted_median"] for ref in history["references"])
+                    for value in adjusted:
+                        self.assertIn(page.evaluate("v => rate(v)", value), summary.inner_text())
+                else:
+                    self.assertIn(history["reason"], summary.inner_text())
+                page.click('#r-headline button[data-basis="p70"]')
+                page.wait_for_selector('#r-headline button[data-basis="p70"][aria-pressed="true"]')
+                self.assertTrue(recent.is_visible())
+                self.assertEqual(projects.count(), len(history.get("references", [])))
                 page.click(row + " td:nth-child(3)")          # the quantity cell
                 self.assertEqual(self.expanded(page, "r3"), "false")
                 self.assertFalse(page.is_visible("#detail-r3"))
@@ -244,8 +268,16 @@ class PageInteractions(unittest.TestCase):
                 row = 'tr[data-line="r4"]'
                 page.click(row + " input.yourp")
                 page.click(row + " input.note")
-                page.select_option(row + " select.pick", "model")
+                page.select_option(row + " select.pick", "model_p70")
                 self.assertEqual(self.expanded(page, "r4"), "false")
+                page.wait_for_function("sel => document.querySelector(sel).value !== ''", arg=row + " input.yourp")
+                picked = page.input_value(row + " input.yourp")
+                self.assertGreater(float(picked.replace(",", "")), 0)
+                for basis in ("p50", "history"):
+                    page.click(f'#r-headline button[data-basis="{basis}"]')
+                    page.wait_for_selector(f'#r-headline button[data-basis="{basis}"][aria-pressed="true"]')
+                    self.assertEqual(page.input_value(row + " input.yourp"), picked)
+                    self.assertEqual(page.input_value(row + " select.pick"), "model_p70")
                 page.fill(row + " input.note", "checked with the vendor")
                 page.keyboard.press("Enter")       # Enter in a field: no toggle
                 self.assertEqual(self.expanded(page, "r4"), "false")
@@ -463,8 +495,18 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(page.input_value(price), "12.35")
                 self.assertEqual(page.input_value('tr[data-line="r4"] input.yourp'), "")
                 self.assertIn("rounded to cents", page.inner_text('tr[data-line="r3"]'))
-                self.assertIn("Bid median", page.text_content("#th-model"))
+                self.assertEqual(page.inner_text("#th-model").lower(), "unit price comparison")
                 row = page.locator('tr[data-line="r3"]')
+                comparison = row.locator(".unit-comparison")
+                rates = {basis: comparison.locator(f'[data-rate="{basis}"] .comparison-value')
+                         for basis in ("history", "p50", "p70")}
+                displayed = {basis: rate.inner_text() for basis, rate in rates.items()}
+                p50_rate = page.evaluate("() => S.result.lines.find(l => l.row_id === 'r3').unit_price_p50")
+                for basis, expected in (("history", 12.345), ("p50", p50_rate),
+                                        ("p70", p50_rate * headline["p70_multiplier"])):
+                    self.assertTrue(rates[basis].is_visible())
+                    self.assertAlmostEqual(float(displayed[basis].lstrip("$").replace(",", "")),
+                                           expected, delta=0.0051)
                 self.assertIn("3 recent projects", row.locator(".desccell").inner_text())
                 self.assertNotIn("2 earlier projects", row.inner_text())
                 self.assertNotIn("2 references", row.inner_text())
@@ -480,10 +522,18 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(page.locator('#ws-totals .basis button').count(), 0)
                 before = page.evaluate("() => wsDoc()")
                 cards = {basis: page.locator(f'#r-headline button[data-basis="{basis}"]')
-                         for basis in ("p50", "p70")}
-                for card in cards.values():
+                         for basis in ("history", "p50", "p70")}
+                for basis, card in cards.items():
                     self.assertTrue(card.is_enabled())
-                    self.assertEqual(card.get_attribute("aria-pressed"), "false")
+                    self.assertEqual(card.get_attribute("aria-pressed"), str(basis == "history").lower())
+                recent_lines = [line for line in before["worksheet"]["lines"] if line["src"] == "history"]
+                recent_total = sum(line["your_amount"] for line in recent_lines)
+                recent_card = cards["history"]
+                recent_text = recent_card.inner_text()
+                self.assertIn(f'{len(recent_lines)} of {page.evaluate("() => S.result.lines.length")} lines',
+                              recent_text)
+                self.assertEqual(recent_card.locator(".big").inner_text(),
+                                 page.evaluate("v => money(v)", recent_total))
                 self.assertNotIn("past jobs exceeded", page.inner_text("#ws-totals"))
                 record = next(l for l in before["worksheet"]["lines"] if l["row_id"] == "r3")
                 self.assertEqual(before["worksheet"]["basis"], "history")
@@ -542,6 +592,7 @@ class PageInteractions(unittest.TestCase):
                     self.assertAlmostEqual(lines["r3"]["your_unit"], rate)
                     self.assertAlmostEqual(lines["r3"]["your_amount"], qty * rate)
                     self.assertAlmostEqual(float(page.input_value(price).replace(",", "")), rate, delta=0.0051)
+                    self.assertEqual({key: value.inner_text() for key, value in rates.items()}, displayed)
                     self.assertEqual(page.input_value(note), "Checked excavation quantity")
                     for row_id, preserved in protected.items():
                         l = lines[row_id]
@@ -565,7 +616,19 @@ class PageInteractions(unittest.TestCase):
                         book.close()
                 self.assertGreater(totals["p70"], totals["p50"])
                 self.assertEqual(page.evaluate("() => S.result.headline"), headline)
+                cards["history"].click()
+                page.wait_for_selector('#r-headline button[data-basis="history"][aria-pressed="true"]')
+                self.assertEqual(page.input_value(price), "12.35")
+                self.assertEqual(page.input_value(note), "Checked excavation quantity")
+                self.assertEqual(recent_card.inner_text(), recent_text)
+                restored = page.evaluate("() => wsDoc().worksheet")
+                self.assertEqual(restored["basis"], "history")
+                for line in restored["lines"]:
+                    if line["row_id"] in protected:
+                        self.assertEqual((line["your_unit"], line["your_amount"], line["src"]),
+                                         protected[line["row_id"]])
                 # A missing project percentile cannot replace a usable basis.
+                cards["p50"].click()
                 page.evaluate("""() => {
                     delete S.result.headline.p70; delete S.result.headline.p70_multiplier;
                     renderHeadline(S.result); renderWsNow();
@@ -579,7 +642,7 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(saved["worksheet"]["basis"], "p80")
                 self.assertEqual(saved["worksheet"]["basis_multiplier"], headline["p80_multiplier"])
                 self.assertEqual(saved["model"]["p80"], headline["p80"])
-                self.assertIn("Model", page.text_content("#th-model"))
+                self.assertEqual(page.inner_text("#th-model").lower(), "unit price comparison")
                 self.assertEqual(errors, [])
 
     def test_recent_bid_loading_preserves_typed_prices_and_ignores_stale_responses(self):
@@ -794,6 +857,11 @@ class PageInteractions(unittest.TestCase):
         for engine in self.engines:
             with self.subTest(engine=engine):
                 page, errors = self.estimate_page(engine)
+                self.assertTrue(page.is_visible("main > #sec-export:last-child"))
+                self.assertEqual(page.get_attribute("#jump-export", "href"), "#sec-export")
+                page.click("#jump-export")
+                self.assertTrue(page.url.endswith("#sec-export"))
+                self.assertEqual(page.locator("#sec-export button").count(), 2)
                 for gone in ("#ws-tools", "#ws-filter", "#ws-save", "#ws-open", "#ws-xlsx",
                              "#ws-csv", "#ws-json", "#btn-export-csv"):
                     self.assertEqual(page.locator(gone).count(), 0, gone)

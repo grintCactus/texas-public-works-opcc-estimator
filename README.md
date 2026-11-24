@@ -39,7 +39,7 @@ Or run it on your own machine (see [Running it](#running-it)), then open http://
    - A contingency line (a lump sum worded as a contingency) has no item type and is not priced from history. Pick its size from a list: 5–25% of the subtotal (10% by default), or the owner's fixed amount when the bid form prints one.
    - Vendor quotes for specialty items the tool does not price (pumps, generators, prefabricated bridges, …).
 3. **Read the estimate.**
-   - The two cards show Expected low bid (P50) and Recommended OPCC (P70). The User Manual explains the percentiles, the historical accuracy figures and the P80 baseline.
+   - P50 and P70 show the model's project estimates. The recent-bid subtotal adds up only the pay items with three qualifying project medians. Each worksheet row shows the available unit prices side by side. Select any of the three bases to fill automatic prices.
    - The items left out for a vendor quote, and the lump sums whose prices are uncertain.
    - Warnings are one short sentence each, with what to do and the lines involved. Tick a warning once you have checked it and it turns gray. A not-covered line stops being flagged once it has your number: a vendor quote, or your own price in the worksheet.
 4. **Check the evidence.**

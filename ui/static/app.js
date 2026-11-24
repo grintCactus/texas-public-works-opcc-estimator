@@ -2237,7 +2237,7 @@ async function runEstimate() {
   S.ws.refsReq = null;
   S.ws.refsError = '';
   if (worksheetBasis() === 'history') Object.values(S.ws.lines).forEach(w => {
-    if (w.src === 'history') {
+    if (w.src === 'history' && !w.pickedHistory) {
       w.your_unit = null; w.raw = null; w.history_price = null; w.src_label = ''; w.src_date = '';
     }
   });
@@ -2481,23 +2481,44 @@ function renderHeadline(r) {
       : 'No estimate', nc.as_a_whole ? (nc.why || []).join('; ')
         + ' — price the job from vendor / specialty quotes.'
       : 'The estimator could not price this schedule; see the warnings below.'));
-    return;
+    if (!(r.lines || []).some(l => l.quantity > 0 && isNum(recentUnit(l)))) return;
   }
   const card = (basis, label) => el('button', {
     type: 'button', class: 'bigcard', 'data-basis': basis, 'data-fk': focusKey('basis', basis),
-    'aria-pressed': String(worksheetBasis() === basis), disabled: !isNum(h[basis]),
-    title: 'Use ' + basis.toUpperCase() + ' model prices in the worksheet',
+    'aria-pressed': String(worksheetBasis() === basis), disabled: basis !== 'history' && !isNum(h[basis]),
+    title: 'Use ' + basisLabel(basis) + ' for automatic worksheet prices',
     onclick: () => setBasis(basis),
   }, [
     el('span', { class: 'cap', text: label }),
     el('span', { class: 'big', text: money(h[basis]) }),
+    basis === 'history' ? el('span', { class: 'coverage' }) : null,
   ]);
-  host.appendChild(el('div', { class: 'headline' }, [
+  host.appendChild(el('div', { class: 'basis-instruction', text: 'Select a starting point for automatic worksheet prices.' }));
+  host.appendChild(el('div', { class: 'headline', role: 'group', 'aria-label': 'Worksheet price basis' }, [
     card('p50', 'Expected low bid (P50)'),
     card('p70', 'Recommended OPCC (P70)'),
+    card('history', 'Recent bid median subtotal'),
   ]));
-  if (!isNum(h.p70)) host.appendChild(notice('caution', 'P70 unavailable',
+  updateRecentSubtotal(r);
+  if (isNum(h.p50) && !isNum(h.p70)) host.appendChild(notice('caution', 'P70 unavailable',
     'A P70 estimate is not available for this schedule. Review the P50 comparison and your worksheet prices.'));
+}
+
+function updateRecentSubtotal(r) {
+  const card = $('#r-headline [data-basis="history"]');
+  if (!card) return;
+  const lines = r.lines || [];
+  let amount = 0, count = 0;
+  for (const l of lines) {
+    const price = recentUnit(l);
+    if (isNum(price) && l.quantity > 0) {
+      amount += Math.round((price + Number.EPSILON) * 100) / 100 * l.quantity;
+      count++;
+    }
+  }
+  card.querySelector('.big').textContent = money(count ? amount : null);
+  card.querySelector('.coverage').textContent = S.ws.refsError ? 'Recent bids unavailable'
+    : !S.ws.refs ? 'Loading recent bids' : count + ' of ' + lines.length + ' lines with a recent median';
 }
 
 // Alerts are decided on the result's keys by the server; the estimator's own
@@ -2642,8 +2663,9 @@ function wsMult() { return basisMultiplier(worksheetBasis()); }
 function basisLabel(basis = worksheetBasis()) { return basis === 'history' ? 'Recent bid median' : basis.toUpperCase(); }
 function modelBasis() { return worksheetBasis() === 'history' ? 'p70' : worksheetBasis(); }
 function modelLabel() { return modelBasis().toUpperCase(); }
-function modelUnit(l) {
-  const multiplier = basisMultiplier(modelBasis());
+function modelUnit(l, basis = modelBasis()) {
+  if (!isNum(((S.result || {}).headline || {})[basis])) return null;
+  const multiplier = basisMultiplier(basis);
   return l && isNum(l.unit_price_p50) && isNum(multiplier) ? l.unit_price_p50 * multiplier : null;
 }
 function historyPrice(l) { return (wsRefs(l) || {}).history_price || null; }
@@ -2651,6 +2673,11 @@ function availableHistory(hp) {
   return hp && hp.status === 'available' && hp.n_projects === 3
     && Array.isArray(hp.references) && hp.references.length === 3
     && isNum(hp.unit_price) && hp.unit_price > 0;
+}
+function recentUnit(l) {
+  const hp = historyPrice(l);
+  return availableHistory(hp) && !engineerInput(l) && !shareOrContingency(l)
+    && !['owner_set', 'not_covered', 'not_covered_whole'].includes(l.status) ? Number(hp.unit_price) : null;
 }
 function historyRate(value, raw = false) {
   return isNum(value) ? '$' + Number(value).toLocaleString('en-US', {
@@ -2688,41 +2715,32 @@ function referenceRange(l) {
     cell.appendChild(el('span', { class: 'dim', text: S.ws.refsError ? 'unavailable' : 'loading' }));
     return cell;
   }
-  if (worksheetBasis() === 'history') {
-    const hp = historyPrice(l);
-    const refs = (hp && hp.references) || [];
-    const values = refs.map(r => r.adjusted_median).filter(v => isNum(v) && v > 0).map(Number);
-    cell.title = 'Selected recent projects’ bidder medians, adjusted to the target bid year. Open this line for original bids and price adjustments.';
-    if (!refs.length) cell.appendChild(el('span', { class: 'dim', text: '—' }));
-    else {
-      cell.appendChild(el('div', { text: values.length === refs.length
-        ? historyRate(Math.min(...values)) + ' – ' + historyRate(Math.max(...values)) : 'adjustment unavailable' }));
-      cell.appendChild(el('div', { class: 'dim', text: availableHistory(hp)
-        ? 'median ' + historyRate(hp.unit_price) + ' · ' + refs.length + ' projects'
-        : refs.length + ' recent project' + (refs.length === 1 ? '' : 's') + (refs.length < 3 ? ' · 3 required' : '') }));
-    }
-    return cell;
+  const hp = historyPrice(l);
+  const refs = (hp && hp.references) || [];
+  const values = refs.map(r => r.adjusted_median).filter(v => isNum(v) && v > 0).map(Number);
+  cell.title = 'Selected recent projects’ bidder medians, adjusted to the target bid year. Open this line for original bids and price adjustments.';
+  if (!refs.length) cell.appendChild(el('span', { class: 'dim', text: '—' }));
+  else {
+    cell.appendChild(el('div', { text: values.length === refs.length
+      ? historyRate(Math.min(...values)) + ' – ' + historyRate(Math.max(...values)) : 'adjustment unavailable' }));
+    cell.appendChild(el('div', { class: 'dim', text: availableHistory(hp)
+      ? 'median ' + historyRate(hp.unit_price) + ' · ' + refs.length + ' projects'
+      : refs.length + ' recent project' + (refs.length === 1 ? '' : 's') + (refs.length < 3 ? ' · 3 required' : '') }));
   }
-  const x = wsRefs(l);
-  cell.title = x && x.range ? 'Median-bidder unit prices of ' + x.n_refs
-    + ' reference project(s), escalated to ' + x.to_year + ' dollars' : '';
-  if (x && x.range) cell.append(
-    el('div', { text: rate(x.range.low) + ' – ' + rate(x.range.high) }),
-    el('div', { class: 'dim', text: 'median ' + rate(x.range.median) + ' · ' + x.n_refs + ' ref' + (x.n_refs === 1 ? '' : 's') }));
-  else cell.appendChild(el('span', { class: 'dim', text: x && x.special ? '—' : 'none' }));
   return cell;
 }
 function setBasis(b) {
-  if (!S.result || !['p50', 'p70', 'p80'].includes(b) || worksheetBasis() === b) return;
-  if (!isNum((S.result.headline || {})[b])) {
+  if (!S.result || !['history', 'p50', 'p70', 'p80'].includes(b) || worksheetBasis() === b) return;
+  if (b !== 'history' && !isNum((S.result.headline || {})[b])) {
     toast(basisLabel(b) + ' is not available for this estimate. Re-estimate before choosing it.', 'err');
     return;
   }
-  if (worksheetBasis() === 'history') {
-    for (const w of Object.values(S.ws.lines)) {
-      if (w.src === 'history' && !w.pickedHistory) {
-        Object.assign(w, { src: '', src_label: '', src_date: '', raw: null, your_unit: null, history_price: null });
-      }
+  for (const w of Object.values(S.ws.lines)) {
+    if (w.src === 'model' && worksheetBasis() === 'history') {
+      // Older worksheets used "model" for an explicit P70 pick in recent-bid mode.
+      w.src = 'model_p70';
+    } else if ((w.src === 'history' && !w.pickedHistory) || w.src === 'model') {
+      Object.assign(w, { src: '', src_label: '', src_date: '', raw: null, your_unit: null, history_price: null });
     }
   }
   S.ws.basis = b;
@@ -2758,9 +2776,9 @@ function wsLine(l) {
     // the engineer sets it: no default price of yours (the model's price
     // stays a quick pick)
     w.your_unit = null; w.raw = null; w.src_label = engineerInputLabel(l);
-  } else if (worksheetBasis() === 'history' && (!w.src || w.src === 'history')) {
+  } else if (worksheetBasis() === 'history' && (!w.src || (w.src === 'history' && !w.pickedHistory))) {
     const hp = historyPrice(l);
-    if (availableHistory(hp) && !engineerInput(l)) {
+    if (isNum(recentUnit(l))) {
       w.src = 'history'; w.raw = Number(hp.unit_price); w.history_price = hp;
       w.src_label = historySource(hp); w.src_date = historyDate(hp);
     } else {
@@ -2910,8 +2928,14 @@ function wsPicks(l) {
       short: 'Identical item ' + String(ident.date).slice(0, 7) + ' \u00b7 ' + rate(v),
       note: 'used ' + tagOf(ident) + ' average bid (identical item)' });
   }
-  if (isNum(modelUnit(l))) out.push({ v: 'model', price: modelUnit(l), label: 'Model ' + modelLabel() + ' project-adjusted price ' + rate(modelUnit(l)),
-    short: 'Model ' + modelLabel() + ' · ' + rate(modelUnit(l)) });
+  const modelBases = worksheetBasis() === 'p80' ? ['p50', 'p70', 'p80'] : ['p50', 'p70'];
+  for (const basis of modelBases) {
+    const price = modelUnit(l, basis);
+    if (!isNum(price)) continue;
+    const label = basis.toUpperCase() + ' model';
+    out.push({ v: 'model_' + basis, price, label: label + ' unit price for this project: ' + historyRate(price),
+      short: label + ' · ' + historyRate(price) });
+  }
   if (x && x.range && isNum(x.range.mean)) out.push({ v: 'ref_mean', price: x.range.mean, label: 'Reference average ('
     + x.n_refs + ', ' + yr + ') ' + rate(x.range.mean), note: 'average bid of ' + x.n_refs + ' reference projects',
     short: 'Ref. average (' + x.n_refs + ') \u00b7 ' + rate(x.range.mean) });
@@ -3071,12 +3095,6 @@ function renderWsTotals(r) {
   const host = $('#ws-totals');
   host.innerHTML = '';
   const t = wsTotals(r);
-  const th = $('#th-model');
-  if (th) th.innerHTML = worksheetBasis() === 'history'
-    ? 'Bid median $/unit' : 'Model $/unit<br><span class="dim">' + basisLabel() + '</span>';
-  if (th) th.title = worksheetBasis() === 'history'
-    ? 'Median of three matching recent projects, adjusted to the bid year'
-    : 'The model unit price at the ' + basisLabel() + ' level';
   const basis = el('div', { class: 'basis' }, [
     el('span', { class: 'lab', text: worksheetBasis() === 'history' ? 'Recent bid median'
       : 'Prices from ' + basisLabel() }),
@@ -3194,6 +3212,8 @@ async function loadWsRefs() {
         S.ws.refs = {};
         (x.lines || []).forEach(v => { S.ws.refs[v.row_id] = v; });
         S.ws.refsReq = req; S.ws.refsLoading = false;
+        if (isNum(S.result.headline.p50)) updateRecentSubtotal(S.result);
+        else renderHeadline(S.result);
         renderWorksheet(S.result);
         if ((x.lines || []).some(v => v.unit_hint)) renderGrid();
         return;
@@ -3204,6 +3224,7 @@ async function loadWsRefs() {
           continue;
         }
         S.ws.refsError = String(e.message || e); S.ws.refsLoading = false;
+        updateRecentSubtotal(S.result);
         renderWorksheet(S.result);
         toast('Recent bids could not be loaded. Enter missing prices or re-estimate.', 'err');
         return;
@@ -3428,12 +3449,13 @@ function resultRow(l, judg, isOpen) {
       document.createTextNode(' ' + capText(l))]) : null]));
   tr.appendChild(el('td', { class: 'num money', text: qtyFmt(l.quantity) }));
   tr.appendChild(el('td', { text: l.unit }));
-  const hp = historyPrice(l);
-  const baseline = worksheetBasis() === 'history'
-    ? (availableHistory(hp) && !engineerInput(l) ? hp.unit_price : null) : modelUnit(l);
-  tr.appendChild(el('td', { class: 'num money', text: isNum(baseline)
-    ? (worksheetBasis() === 'history' ? historyRate(baseline) : rate(baseline))
-    : l.status === 'owner_set' ? 'owner-set' : '—' }));
+  const rates = [['history', 'Recent median', recentUnit(l)],
+    ['p50', 'P50 model', modelUnit(l, 'p50')], ['p70', 'P70 model', modelUnit(l, 'p70')]];
+  tr.appendChild(el('td', { class: 'unit-comparison' }, el('div', { class: 'rate-list' },
+    rates.map(([basis, label, price]) => el('div', { 'data-rate': basis }, [
+      el('span', { class: 'comparison-label', text: label }),
+      el('span', { class: 'comparison-value', text: historyRate(price) }),
+    ])))));
   tr.appendChild(referenceRange(l));
   tr.appendChild(el('td', {}, accBadge(l.accuracy)));
   // your unit price
@@ -3469,17 +3491,20 @@ function resultRow(l, judg, isOpen) {
   // starts with recent bid medians; saved model bases keep their meaning.
   // A deliberate choice here changes the price and flashes once.
   const picks = wsPicks(l);
-  const cur = picks.find(p => p.v === w.src) || null;
+  const currentSource = w.src === 'model' ? 'model_' + modelBasis() : w.src;
+  const pinned = w.pickedHistory || (w.src || '').startsWith('model_');
+  const cur = picks.find(p => p.v === currentSource && (!pinned || p.price === w.raw)) || null;
+  const sourceLabel = w.src === 'you' ? 'your price' : pinned && isNum(w.raw)
+    ? (w.src === 'history' ? 'Recent bid median' : w.src.slice(6).toUpperCase() + ' model') + ' · ' + historyRate(w.raw)
+    : w.src && w.src !== 'history' ? w.src_label || 'selected reference'
+      : engineerInput(l) ? 'engineer input' : worksheetBasis() === 'history' ? 'enter your price' : 'choose a reference';
   let ref;
   if (locked) ref = el('span', { class: 'dim', text: 'owner-set' });
   else if (ncl) ref = el('span', { class: 'dim', text: l.quote > 0 ? 'vendor quote' : '\u2014' });
-  else if (!picks.length) ref = el('span', { class: 'dim', text: w.src === 'you' ? 'your price'
-    : w.src && w.src !== 'history' ? w.src_label || 'selected reference'
-      : worksheetBasis() === 'history' ? historyReason(l) : '\u2014' });
+  else if (!picks.length) ref = el('span', { class: 'dim', text: sourceLabel });
   else {
     const lead = cur ? [] : [el('option', { value: '', selected: true,
-      text: w.src === 'you' ? 'your price' : w.src && w.src !== 'history' ? w.src_label || 'selected reference'
-        : engineerInput(l) ? 'engineer input' : worksheetBasis() === 'history' ? 'enter your price' : 'choose a reference' })];
+      text: sourceLabel })];
     const select = el('select', { class: 'pick', title: cur ? cur.label : 'Where this price comes from: pick a reference',
       'aria-label': 'Reference for this price', 'data-fk': focusKey('ws', l.row_id, 'pick'),
       onchange: e => {
@@ -3517,8 +3542,7 @@ function resultRow(l, judg, isOpen) {
   tr.appendChild(el('td', {}, el('input', { class: 'cellinput note', type: 'text', value: w.note || '',
     placeholder: 'note', 'data-fk': focusKey('ws', l.row_id, 'note'),
     onchange: e => { w.note = e.target.value; } })));
-  const modelLabel = worksheetBasis() === 'history' ? 'Bid median $/unit' : basisLabel() + ' model $/unit';
-  const labels = ['Item', '', 'Quantity', 'Unit', modelLabel, 'Reference range', 'Model accuracy',
+  const labels = ['Item', '', 'Quantity', 'Unit', 'Unit price comparison', 'Recent bid range', 'Model accuracy',
     'Your $/unit', 'Reference', 'Your amount', 'Note'];
   labels.forEach((label, index) => { if (label) tr.cells[index].dataset.label = label; });
   inp.setAttribute('aria-label', 'Your $/unit');
@@ -3527,35 +3551,47 @@ function resultRow(l, judg, isOpen) {
 }
 
 function historyEvidence(l) {
-  if (worksheetBasis() !== 'history') return null;
   const hp = historyPrice(l);
+  const title = 'Recent bid median';
   if (!hp) return el('div', { class: 'history-evidence' }, [
-    el('h5', { text: 'Recent bid median' }), el('p', { text: historyReason(l) }),
+    el('h5', { text: title }), el('p', { class: 'history-summary', text: historyReason(l) }),
   ]);
   const refs = hp.references || [];
+  const unit = l.unit ? '/' + l.unit : '';
+  const adjustedLabel = hp.target_year ? 'Median in ' + hp.target_year + ' dollars' : 'Adjusted median';
+  const summary = availableHistory(hp)
+    ? 'Adjusted project medians, lowest to highest: '
+      + refs.map(r => r.adjusted_median).sort((a, b) => a - b).map(v => historyRate(v)).join(', ')
+      + '. The middle price is ' + historyRate(hp.unit_price) + unit + '.'
+    : hp.reason || historyReason(l);
   return el('div', { class: 'history-evidence' }, [
-    el('h5', { text: 'Recent bid median' + (hp.target_year ? ' · adjusted to ' + hp.target_year + ' prices' : '') }),
-    el('p', { text: hp.reason || (availableHistory(hp) ? 'Median of three matching recent projects.' : 'Enter your unit price.') }),
-    (hp.evidence || []).length ? el('ul', {}, hp.evidence.map(text => el('li', { text }))) : null,
-    el('ol', {}, refs.map(r => {
-      const ix = r.index_evidence || {};
-      const adjustment = isNum(r.adjusted_median) ? ' → ' + historyRate(r.adjusted_median, true)
-        + ' adjusted' + (isNum(r.escalation) ? ' (×' + Number(r.escalation).toFixed(4) + ')' : '') : ' · adjustment unavailable';
-      return el('li', {}, [
-        el('strong', { text: [r.date, r.owner, r.project].filter(Boolean).join(' · ') }),
-        el('div', { text: (r.item_no ? r.item_no + ' · ' : '') + (r.item || '') }),
-        el('div', { text: 'Bidder median ' + historyRate(r.median_unit, true) + (r.unit ? '/' + r.unit : '') + adjustment }),
-        ix.reason ? el('div', { class: 'dim', text: ix.reason }) : null,
-        ...(ix.notes || []).map(text => el('div', { class: 'dim', text })),
-        ...(r.match_basis || []).map(text => el('div', { class: 'dim', text })),
+    el('h5', { text: title }),
+    el('p', { class: 'history-summary', text: summary }),
+    refs.length ? el('div', { class: 'history-projects' }, refs.map(r => {
+      const perUnit = r.unit ? '/' + r.unit : unit;
+      const prices = [
+        ['Median at bid date', historyRate(r.median_unit) + perUnit],
+        ['Price adjustment', isNum(r.escalation) ? '×' + Number(r.escalation).toLocaleString('en-US', { maximumFractionDigits: 4 }) : 'Unavailable'],
+        [adjustedLabel, isNum(r.adjusted_median) ? historyRate(r.adjusted_median) + perUnit : 'Unavailable'],
+      ];
+      return el('div', { class: 'history-project' }, [
+        el('strong', { text: r.project || r.owner || 'Public project' }),
+        el('div', { class: 'dim', text: [r.owner, r.date ? 'Bid ' + r.date : ''].filter(Boolean).join(' · ') }),
+        el('div', { text: [r.item_no ? 'Item ' + r.item_no : '', r.item,
+          isNum(r.quantity) ? qtyFmt(r.quantity) + ' ' + (r.unit || l.unit || '') : '',
+          isNum(r.n_bids) ? r.n_bids + ' bidders' : ''].filter(Boolean).join(' · ') }),
+        el('dl', { class: 'history-prices' }, prices.flatMap(([name, value]) =>
+          [el('dt', { text: name }), el('dd', { text: value })])),
+        r.index_evidence && !isNum(r.adjusted_median) ? el('div', { class: 'dim', text: r.index_evidence.reason || '' }) : null,
         srcLinks(r.source),
       ]);
-    })),
+    })) : null,
   ]);
 }
 
 function lineDetail(l) {
   const ev = l.evidence || {};
+  const hp = historyPrice(l);
   const kv = [
     ['Item type', (l.family_label || l.family) + ' \u00b7 ' + l.unit + (l.size_bucket ? ' \u00b7 ' + l.size_bucket : '')
       + (l.family_overridden ? ' (chosen by you)' : '')],
@@ -3571,10 +3607,23 @@ function lineDetail(l) {
     el('span', { class: 'dim', html: '<span class="spinner"></span> loading the references…' }));
   return el('div', { class: 'detailbox' }, [
     historyEvidence(l),
-    el('h5', { text: worksheetBasis() === 'history' ? 'Other public bid references' : 'References behind this price' }),
+    el('h5', { text: 'Historical bids behind model P50' }),
     refsHost,
     el('details', { class: 'fold', style: 'margin-top:8px' }, [
-      el('summary', { text: 'How this was calculated' }),
+      el('summary', { text: 'Matching and price-adjustment details' }),
+      ...(hp && hp.references || []).map(r => {
+        const ix = r.index_evidence || {};
+        const notes = [ix.reason, ...(ix.notes || []), ...(r.match_basis || [])].filter(Boolean);
+        const unit = r.unit || l.unit;
+        return el('div', { class: 'deriv' }, [
+          el('strong', { text: r.project || r.date || 'Recent project' }),
+          isNum(r.median_unit) && isNum(r.escalation) && isNum(r.adjusted_median)
+            ? el('div', { text: historyRate(r.median_unit, true) + '/' + unit + ' × '
+              + Number(r.escalation).toLocaleString('en-US', { maximumFractionDigits: 8 }) + ' ≈ '
+              + historyRate(r.adjusted_median, true) + '/' + unit }) : null,
+          notes.length ? el('span', { text: notes.join(' ') }) : null,
+        ]);
+      }),
       el('div', { class: 'detailcols', style: 'margin-top:6px' }, [
         el('dl', { class: 'kv' }, kv.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: v })])),
         el('div', {}, [
@@ -3689,6 +3738,8 @@ function bidTabView(v, marks, opts) {
     el('span', { class: 'dim', text: v.note || '' }),
   ]);
   box.appendChild(tools);
+  box.appendChild(el('p', { class: 'muted-note',
+    text: 'Each bidder column shows the unit price above the line amount. The column heading gives the whole-project bid.' }));
   const wrap = el('div', { class: 'btwrap' });
   box.appendChild(wrap);
   function paint() {
@@ -3709,8 +3760,9 @@ function bidTabView(v, marks, opts) {
       (ms || []).forEach(m => desc.appendChild(el('div', { class: 'btmatch' }, [
         el('span', { class: 'mk', text: '\u2194 your ' + (m.ours.item_no ? m.ours.item_no + ' ' : '')
           + (m.ours.description || '') }),
-        el('span', { class: 'nums', text: ['their low ' + rate(m.nums.low), 'their median ' + rate(m.nums.median),
-          'ours ' + rate(m.nums.p50)].join(' \u00b7 ') + (m.nums.unit ? ' /' + m.nums.unit : '') }),
+        el('span', { class: 'nums', text: ['Historical low bidder ' + historyRate(m.nums.low) + '/' + ln.unit,
+          'Historical median ' + historyRate(m.nums.median) + '/' + ln.unit,
+          'Your model P50 ' + historyRate(m.nums.p50) + '/' + m.nums.unit].join(' \u00b7 ') }),
       ])));
       const tds = [
         el('td', { class: 'btmk', text: ms ? '\u25b6' : '' }),
@@ -3814,14 +3866,14 @@ function projLink(text, onclick, title) {
 const REF_COLS = [
   ['date', 'Bid date', x => x.date],
   ['project', 'Project', null],
-  ['bidders', 'Bidders', null],
-  ['low_total', 'Project low bid', null],
-  ['item', 'Item as written', null],
-  ['quantity', 'Qty', x => x.quantity || 0],
+  ['bidders', 'Project bidders', null],
+  ['low_total', 'Project low bid (total)', null],
+  ['item', 'Matched item', null],
+  ['quantity', 'Matched quantity', x => x.quantity || 0],
   ['mean_unit', 'Average bid $/unit', x => x.mean_unit || 0],
   ['median_unit', 'Median bid $/unit', x => x.median_unit],
-  ['low_unit', 'Low bid $/unit', null],
-  ['range', 'Bids range', null],
+  ['low_unit', 'Project low bidder’s $/unit', null],
+  ['range', 'Lowest–highest $/unit', null],
 ];
 
 function referencesView(r) {
@@ -3835,18 +3887,16 @@ function referencesView(r) {
   const cell = r.cell || {};
   const what = { tok: 'similarly worded items', band: 'this kind of item at this size and quantity',
     fam: 'this kind of item' }[r.kind] || 'this kind of item';
-  box.appendChild(el('div', { class: 'deriv', text: 'Our price ' + rate(r.p50_unit_price) + '/' + r.unit
-    + ' (in the expected low bid) starts from the median bid on ' + (cell.lettings || '?')
-    + ' earlier public project' + (cell.lettings === 1 ? '' : 's') + ' with ' + what
-    + (cell.years ? ' (' + cell.years + ')' : '') + ': ' + rate(r.market_unit_price) + '/' + r.unit
-    + (r.to_year ? ' in ' + r.to_year + ' dollars' : '') + ', then less the competition discount.' }));
+  box.appendChild(el('div', { class: 'deriv', text: 'For ' + what + ', the model uses price records from '
+    + (cell.lettings || '?') + ' public project' + (cell.lettings === 1 ? '' : 's')
+    + (cell.years ? ' (' + cell.years + ')' : '') + '. The market rate is ' + historyRate(r.market_unit_price)
+    + '/' + r.unit + (r.to_year ? ' in ' + r.to_year + ' dollars' : '')
+    + (isNum(r.p50_unit_price) ? '. The project model assigns ' + historyRate(r.p50_unit_price) + '/' + r.unit + ' to this item at P50.' : '.') }));
   if (r.warning) box.appendChild(notice('caution', null, r.warning));
-  box.appendChild(el('div', { class: 'muted-note repro ' + (rep.price_match && rep.rows_match ? 'ok' : 'bad'),
-    text: (rep.price_match && rep.rows_match)
-      ? '\u2713 Checked: these projects give exactly this price.'
-      : '! These projects do not give exactly this price \u2014 see how it was calculated.' }));
+  if (!rep.price_match || !rep.rows_match) box.appendChild(notice('caution', null,
+    'The source records do not fully reproduce the model rate. Check the calculation below.'));
   box.appendChild(el('details', { class: 'fold howcalc' }, [
-    el('summary', { text: 'How this was calculated' }),
+    el('summary', { text: 'Model price calculation' }),
     el('div', { class: 'howbody' }, [
       el('div', { text: r.derivation }),
       el('div', { style: 'margin-top:4px', text: (rep.price_match && rep.rows_match)
@@ -3886,12 +3936,12 @@ function referencesView(r) {
         state.sort = k;
         paint();
       } : null,
-    })).concat([el('th', {})]));
+    })).concat([el('th', { text: 'Item quotes' })]));
     const body = el('tbody', {});
     rows().forEach(x => {
       const bidsRow = el('tr', { class: 'bidsrow', style: 'display:none' },
         el('td', { colspan: REF_COLS.length + 1 }, bidsTable(x)));
-      body.appendChild(el('tr', {}, [
+      const projectRow = el('tr', {}, [
         el('td', { class: 'nowrap', text: x.date }),
         el('td', { title: x.title || '' }, [
           el('div', {}, projLink(x.project, () => openBidTab(x.key, x.project, refMarks(r, x)))),
@@ -3901,37 +3951,39 @@ function referencesView(r) {
         el('td', { class: 'num', text: x.bidders || '—' }),
         el('td', { class: 'num', text: money(x.low_total) }),
         el('td', { text: x.item }),
-        el('td', { class: 'num', text: qtyFmt(x.quantity) }),
+        el('td', { class: 'num', text: isNum(x.quantity) ? qtyFmt(x.quantity) + ' ' + r.unit : '—' }),
         // the average bid: what an OPCC's unit-cost source usually quotes
         el('td', { class: 'num' }, [
-          el('div', { text: rate(x.mean_unit) }),
-          x.escalated_mean ? el('div', { class: 'dim', text: '≈ ' + rate(x.escalated_mean)
-            + ' in ' + r.to_year + ' $' }) : null,
+          el('div', { text: historyRate(x.mean_unit) }),
+          x.escalation !== 1 && isNum(x.escalated_mean) ? el('div', { class: 'dim', text: r.to_year + ' dollars: '
+            + historyRate(x.escalated_mean) }) : null,
         ]),
         el('td', { class: 'num' }, [
-          el('div', { class: 'strong', text: rate(x.median_unit) }),
-          x.escalated_unit ? el('div', { class: 'dim', text: '≈ ' + rate(x.escalated_unit)
-            + ' in ' + r.to_year + ' $' }) : null,
+          el('div', { class: 'strong', text: historyRate(x.median_unit) }),
+          x.escalation !== 1 && isNum(x.escalated_unit) ? el('div', { class: 'dim', text: r.to_year + ' dollars: '
+            + historyRate(x.escalated_unit) }) : null,
         ]),
-        el('td', { class: 'num', text: rate(x.low_unit) }),
-        el('td', { class: 'num nowrap', text: rate(x.min_unit) + ' – ' + rate(x.max_unit) }),
+        el('td', { class: 'num', text: historyRate(x.low_unit) }),
+        el('td', { class: 'num', text: historyRate(x.min_unit) + ' – ' + historyRate(x.max_unit) }),
         el('td', {}, el('button', { class: 'btn ghost sm', text: x.n_bids + ' bids',
           title: 'Every bid on this item in that letting',
           onclick: () => { bidsRow.style.display = bidsRow.style.display === 'none' ? 'table-row' : 'none'; } })),
-      ]));
+      ]);
+      for (let i = 0; i < REF_COLS.length; i++) projectRow.cells[i].dataset.label = REF_COLS[i][1];
+      body.appendChild(projectRow);
       body.appendChild(bidsRow);
     });
-    tableHost.appendChild(el('table', { class: 'mini reftable' }, [el('thead', {}, head), body]));
-    more.textContent = state.all ? 'show the top ' + (r.top || 3) + ' only'
-      : '… show all ' + all.length + ' reference' + (all.length === 1 ? '' : 's');
+    tableHost.appendChild(el('table', { class: 'mini reftable' + (state.all ? '' : ' ref-overview'),
+      'aria-label': 'Historical unit bids by project' }, [el('thead', {}, head), body]));
+    more.textContent = state.all ? 'Show the top ' + (r.top || 3)
+      : 'Show all ' + all.length + ' reference' + (all.length === 1 ? '' : 's');
     more.hidden = all.length <= (r.top || 3);
   }
   more.addEventListener('click', () => { state.all = !state.all; if (!state.all) state.sort = null; paint(); });
   box.appendChild(el('div', { class: 'muted-note', style: 'margin:6px 0 3px', text:
-    (all.length > (r.top || 3) ? 'The ' + (r.top || 3) + ' most relevant of ' + all.length
-      : 'All ' + all.length) + ' earlier public project' + (all.length === 1 ? '' : 's')
-    + ' bid before ' + r.bid_date + ' (most recent, most alike in wording and quantity, and the same '
-    + 'owner first). The estimator uses their median bid.' }));
+    'Each row summarizes matching quotes from one project bid before ' + r.bid_date
+    + '. Unit prices are dollars per ' + r.unit + ' at the time of bidding unless a different year is shown.'
+    + (all.length > (r.top || 3) ? ' The first ' + (r.top || 3) + ' projects are ranked by relevance.' : '') }));
   box.appendChild(tableHost);
   box.appendChild(more);
   paint();
@@ -3944,13 +3996,13 @@ function bidsTable(x) {
       + (x.source && x.source.document ? x.source.document : '') }),
     srcLinks(x.source),
     el('table', { class: 'mini' }, [
-      el('thead', {}, el('tr', {}, ['Bidder', 'Qty', '$/unit', ''].map((t, k) =>
+      el('thead', {}, el('tr', {}, ['Bidder', 'Quantity', 'Bid $/unit', ''].map((t, k) =>
         el('th', { class: k === 1 || k === 2 ? 'num' : '', text: t })))),
       el('tbody', {}, (x.bids || []).map(b => el('tr', { class: b.low ? 'low' : '' }, [
         el('td', { text: b.bidder || '—' }),
         el('td', { class: 'num', text: qtyFmt(b.quantity) }),
-        el('td', { class: 'num', text: rate(b.unit_price) }),
-        el('td', { class: 'dim', text: b.low ? 'low bidder' : '' }),
+        el('td', { class: 'num', text: historyRate(b.unit_price, true) }),
+        el('td', { class: 'dim', text: b.low ? 'Lowest project total' : '' }),
       ]))),
     ]),
   ]);
