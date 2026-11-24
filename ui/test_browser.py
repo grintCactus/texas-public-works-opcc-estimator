@@ -475,6 +475,63 @@ class PageInteractions(unittest.TestCase):
                 self.assertFalse(page.evaluate("() => S.stale"))
                 self.assertEqual(errors, [])
 
+    def test_pay_item_outlook_uses_dated_unadjusted_bids(self):
+        """Show a conditional direction from comparable project medians in bid-date order."""
+        for engine in self.engines:
+            with self.subTest(engine=engine):
+                page, errors = self.takeoff_page(engine)
+                page.fill("#in-biddate", "2026-11-24")
+                page.press("#in-biddate", "Tab")
+                page.click("#btn-estimate")
+                page.wait_for_function("() => S.result && S.ws.refsReq === S.resultReq", timeout=90000)
+                before = page.evaluate("() => wsDoc().model")
+                row = page.locator('#result-body tr[data-line="r6"]')
+                detail = page.locator("#detail-r6")
+                outlook = detail.locator(".price-outlook")
+                row.press("Enter")
+                self.assertTrue(outlook.is_visible())
+                self.assertTrue(outlook.evaluate("""e => Boolean(e.compareDocumentPosition(
+                    e.closest('tr').querySelector('.history-evidence')) & Node.DOCUMENT_POSITION_FOLLOWING)"""))
+                dates = ["2025-03-10", "2025-09-12", "2026-06-02"]
+                cases = [
+                    ([70, 80, 90], dates, True, "May rise"),
+                    ([90, 80, 70], dates, True, "May fall"),
+                    ([80, 80, 80], dates, True, "May stay level"),
+                    ([70, 90, 80], dates, True, "No clear direction"),
+                    ([70, 80], dates[:2], True, "No clear direction"),
+                    ([70, 80, 90], [dates[0], dates[0], dates[2]], True, "No clear direction"),
+                    ([70, 80, 90], ["2024-11-23", *dates[1:]], True, "No clear direction"),
+                    ([70, 80, 90], dates, False, "May rise"),
+                ]
+                for rates, bid_dates, adjusted, direction in cases:
+                    with self.subTest(raw_medians=rates, dates=bid_dates, adjusted=adjusted):
+                        page.evaluate("""([rates, dates, adjusted]) => {
+                            const item = S.result.lines.find(l => l.row_id === 'r6');
+                            const refs = rates.map((rate, i) => ({
+                                key: 'public-outlook-' + i, project: 'Public test project ' + i,
+                                date: dates[i],
+                                item: item.description, unit: item.unit, quantity: item.quantity,
+                                median_unit: rate, adjusted_median: adjusted ? 160 - rate : null,
+                                escalation: adjusted ? (160 - rate) / rate : null
+                            }));
+                            // Return newest first and make adjusted prices move the other way.
+                            const available = refs.length === 3 && adjusted;
+                            S.ws.refs.r6.history_price = {
+                                status: available ? 'available' : 'insufficient',
+                                bid_date: S.resultReq.bid_date, window_start: '2024-11-24', target_year: 2026,
+                                n_projects: refs.length, references: refs.reverse(), unit_price: available ? 80 : null
+                            };
+                            renderWsNow();
+                        }""", [rates, bid_dates, adjusted])
+                        self.assertEqual(outlook.locator("strong").inner_text(), direction)
+                        self.assertIn("2026-11-24", outlook.inner_text())
+                        if direction == "May rise":
+                            evidence = outlook.locator("p").inner_text()
+                            self.assertLess(evidence.index("$70.00"), evidence.index("$80.00"))
+                            self.assertLess(evidence.index("$80.00"), evidence.index("$90.00"))
+                self.assertEqual(page.evaluate("() => wsDoc().model"), before)
+                self.assertEqual(errors, [])
+
     def test_recent_bid_defaults_preserve_models_and_export_their_sources(self):
         """Start from recent bids, switch automatic prices, and export the chosen basis."""
         import io

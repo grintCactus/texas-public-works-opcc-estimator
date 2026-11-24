@@ -3292,7 +3292,7 @@ function saveBlob(blob, name) {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
 }
 
-// "Click a line to see the past bids behind its price": shown with each
+// The hint about opening a line is shown with each
 // estimate until dismissed; the dismissal is remembered in this browser
 // (storage may be blocked: then it is remembered for this page only).
 const HINT_KEY = 'bid-estimator-hint-rows-dismissed';
@@ -3395,7 +3395,7 @@ function resultRow(l, judg, isOpen) {
     + (l.amount_missing ? ' st-amount-missing' : '') + (judg.length ? ' judgrow' : ''),
     tabindex: '0', 'aria-expanded': String(open0), 'aria-controls': 'detail-' + l.row_id,
     'data-fk': focusKey('ws', l.row_id, 'row'),
-    title: 'Click to show or hide the past bids behind this price \u00b7 drag to move the line' });
+    title: 'Open the price outlook and earlier bids \u00b7 drag to move the line' });
   const toggle = () => {
     const d = $('tr[data-detail="' + CSS.escape(l.row_id) + '"]');
     if (!d) return;
@@ -3550,6 +3550,46 @@ function resultRow(l, judg, isOpen) {
   return tr;
 }
 
+function priceOutlook(l, hp) {
+  const bidDate = hp?.bid_date || S.resultReq?.bid_date;
+  const box = el('section', { class: 'price-outlook' });
+  const show = (direction, reason) => {
+    box.append(
+      el('h5', {}, [bidDate ? 'Price outlook for ' + bidDate : 'Bid-date price outlook',
+        el('strong', { text: direction })]),
+      el('p', { text: reason }));
+    return box;
+  };
+  if (l.status !== 'priced' || engineerInput(l) || hp?.status === 'ineligible') {
+    return show('Not applicable', 'This item needs a project-specific price.');
+  }
+  if (!hp && S.ws.refsError) return show('Unavailable', 'Recent bids could not be loaded.');
+  if (!hp && !S.ws.refs) return show('Loading', 'Checking recent bids.');
+  if (hp?.status === 'engineer_review') {
+    return show('No clear direction', 'The matching bids need an engineer’s review.');
+  }
+  const refs = hp?.references || [];
+  if (refs.length !== 3 || !bidDate || !hp.window_start || refs.some(r =>
+    !r.key || !r.date || r.date < hp.window_start || r.date >= bidDate || r.unit !== l.unit
+    || !Number.isFinite(r.median_unit) || r.median_unit <= 0)
+    || new Set(refs.map(r => r.key)).size !== 3) {
+    return show('No clear direction', 'Three matching project bids within two years are needed.');
+  }
+  const ordered = [...refs].sort((a, b) => a.date.localeCompare(b.date));
+  if (new Set(ordered.map(r => r.date)).size !== 3) {
+    return show('No clear direction', 'The three matching projects need distinct bid dates to show a trend.');
+  }
+  // Compare the original bid medians at the same precision the user sees.
+  const prices = ordered.map(r => historyRate(r.median_unit));
+  const change = i => prices[i] === prices[i - 1] ? 0
+    : Math.sign(ordered[i].median_unit - ordered[i - 1].median_unit);
+  const first = change(1), last = change(2);
+  let direction = 'No clear direction';
+  if (first === last) direction = first > 0 ? 'May rise' : first < 0 ? 'May fall' : 'May stay level';
+  const history = ordered.map((r, i) => prices[i] + ' (' + r.date + ')').join(' → ');
+  return show(direction, 'Past bid medians per ' + l.unit + ' · ' + history);
+}
+
 function historyEvidence(l) {
   const hp = historyPrice(l);
   const title = 'Recent bid median';
@@ -3606,6 +3646,7 @@ function lineDetail(l) {
   const refsHost = el('div', { class: 'refs', 'data-refs': l.row_id },
     el('span', { class: 'dim', html: '<span class="spinner"></span> loading the references…' }));
   return el('div', { class: 'detailbox' }, [
+    priceOutlook(l, hp),
     historyEvidence(l),
     el('h5', { text: 'Historical bids behind model P50' }),
     refsHost,

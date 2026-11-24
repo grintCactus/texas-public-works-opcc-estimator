@@ -537,6 +537,10 @@ dl.simkv dd.strong { font-family: var(--mono); font-size: 12.5px; }
   margin: 0 0 7px; font-size: 13px;
   color: var(--ink);
 }
+.price-outlook { margin-bottom: 12px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--accent-wash); }
+.price-outlook h5 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin: 0; font-weight: 500; }
+.price-outlook h5 strong { font-weight: 700; }
+.price-outlook p { margin: 3px 0 0; color: var(--ink-dim); font-size: 13px; overflow-wrap: anywhere; }
 .detailcols { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
 @media (max-width: 1250px) { .detailcols { grid-template-columns: 1fr; } }
 .deriv { font-size: 12.5px; color: var(--ink); line-height: 1.55; margin-bottom: 6px; }
