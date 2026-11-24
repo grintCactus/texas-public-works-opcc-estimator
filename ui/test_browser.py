@@ -149,6 +149,8 @@ class PageInteractions(unittest.TestCase):
         return page.get_attribute('tr[data-line="%s"]' % row, "aria-expanded")
 
     def assert_project_total(self, page, expected=None):
+        # A field commits its value before the queued worksheet redraw.
+        page.wait_for_function("() => afterQueue.length === 0")
         worksheet = page.inner_text("#ws-totals .yours .big")
         self.assertEqual(page.inner_text('#r-headline [data-basis="history"] .big'), worksheet)
         self.assertEqual(page.inner_text("#result-foot tr.wstotal td.money"), worksheet)
