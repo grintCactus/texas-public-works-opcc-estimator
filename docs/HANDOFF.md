@@ -325,7 +325,7 @@ P80 accuracy figures as P70 or claim demonstrated 70% future coverage.
 | TxDOT engineers' own estimates | 451 | 21% | 14% | n/a | 19 / 22 / 23% |
 
   The goal: P80 below the actual low bid on at most 20% of lettings (met under the historical scope), and within that the smallest overshoot (13% is the aspiration; engineers reach about 25% at the same not-under rate; the project is at 34% for cities). The city gap is almost all in estimating the bidders' typical price per job, not in the step from the median bid to the low bid.
-- **Last deploy.** 2026-11-23 22:55 CST. Oracle Cloud serves commit `0531118` with `bundle-2026-11-21` and its registered P70 calibration. See the deploy log at the end.
+- **Last deploy.** 2026-11-23 23:17 CST. Oracle Cloud serves commit `46609b9` with `bundle-2026-11-21` and its registered P70 calibration. See the deploy log at the end.
 
 ## 2. The first hour
 
@@ -490,3 +490,4 @@ To publish the whole pipeline, company-specific content left the code. No number
 | 2026-11-23 08:25 CST | `60b0ad2` | `bundle-2026-11-21` with registered P70 calibration | Takeoff review and worksheet fields fit phone and tablet screens. The desktop worksheet wraps reference details. Browser checks covered 320, 390, 1024 and 1280 pixels. All 400 package comparisons matched. The six public web assets and the three known fixture totals matched after deployment. |
 | 2026-11-23 22:27 CST | `c0bbd20` | `bundle-2026-11-21` with registered P70 calibration | The worksheet shows recent bid medians and both model unit prices together. Historical bids explain the price adjustment and the middle of the three project medians. Export is the final section. Desktop and phone checks on the public site switched between all three bases and retained a typed price. All 400 package comparisons and all three public fixture totals matched. |
 | 2026-11-23 22:55 CST | `0531118` | `bundle-2026-11-21` with registered P70 calibration | Construction contingency is selected before Estimate. New worksheets round automatic unit prices up by default. The third Estimate card and worksheet displayed the same project total on desktop and phone at 0%, 10% and 15%. The first live browser check timed out waiting for references. Both viewport checks then passed with HTTP 200 from the estimate and reference endpoints. All 400 package comparisons and all three public fixture totals matched. |
+| 2026-11-23 23:17 CST | `46609b9` | `bundle-2026-11-21` with registered P70 calibration | Open a worksheet item to see its bid-date outlook and the original project medians in date order. Desktop and phone checks covered mixed prices, missing references and switching worksheet price bases. All 400 package comparisons and all three public fixture totals matched. |
