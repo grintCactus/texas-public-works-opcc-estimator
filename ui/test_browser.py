@@ -119,7 +119,7 @@ class PageInteractions(unittest.TestCase):
             cls.proc.terminate()
             cls.proc.wait(timeout=30)
 
-    def estimate_page(self, engine, width=1280, height=900, extra=()):
+    def takeoff_page(self, engine, width=1280, height=900, extra=()):
         browser = getattr(self.pw, engine).launch()
         self.addCleanup(browser.close)
         page = browser.new_page(viewport={"width": width, "height": height})
@@ -133,6 +133,10 @@ class PageInteractions(unittest.TestCase):
                           "\n".join(extra))
         page.click("#btn-parse-text")
         page.wait_for_function("n => S.lines.length === n && S.lines.every(l => l.cls)", arg=9 + len(extra))
+        return page, errors
+
+    def estimate_page(self, engine, width=1280, height=900, extra=()):
+        page, errors = self.takeoff_page(engine, width, height, extra)
         page.click("#btn-estimate")
         page.wait_for_function("() => S.result && S.ws.refs && S.ws.refsReq === S.resultReq",
                                timeout=90000)
@@ -143,6 +147,14 @@ class PageInteractions(unittest.TestCase):
 
     def expanded(self, page, row):
         return page.get_attribute('tr[data-line="%s"]' % row, "aria-expanded")
+
+    def assert_project_total(self, page, expected=None):
+        worksheet = page.inner_text("#ws-totals .yours .big")
+        self.assertEqual(page.inner_text('#r-headline [data-basis="history"] .big'), worksheet)
+        self.assertEqual(page.inner_text("#result-foot tr.wstotal td.money"), worksheet)
+        if expected is not None:
+            self.assertAlmostEqual(float(worksheet.replace("$", "").replace(",", "")),
+                                   expected, delta=0.5)
 
     def test_phone_rows_keep_review_price_and_amount_in_view(self):
         for engine in self.engines:
@@ -308,30 +320,30 @@ class PageInteractions(unittest.TestCase):
                 page.wait_for_timeout(300)
                 self.assertTrue(shown().startswith("Ref. median ("), shown())
                 got = float(page.input_value(row + " input.yourp").replace(",", ""))
-                self.assertAlmostEqual(got, float(page.evaluate("p => priceText(p)", want)), places=2)
+                self.assertAlmostEqual(got, page.evaluate("p => nicePrice(p, 'up')", want), places=2)
                 self.assertIn("flash", page.get_attribute(row + " input.yourp", "class"))
                 self.assertEqual(self.expanded(page, "r3"), "false")
                 # a price you type: the column says so
                 page.fill(row + " input.yourp", "44")
                 page.press(row + " input.yourp", "Tab")
                 page.wait_for_timeout(300)
-                self.assertEqual(shown(), "your price")
+                self.assertEqual(shown().lower(), "your price")
                 self.assertEqual(errors, [])
 
     def test_opcc_conventions_on_the_worksheet(self):
-        """Recent medians use cents by default; optional rounding still works;
+        """Automatic prices round up by default; optional rounding still works;
         mobilization and temporary erosion control are the engineer's to
         fill in; the references show the average bid. P50/P70 guidance
         opens in the User Manual without losing the worksheet."""
         for engine in self.engines:
             with self.subTest(engine=engine):
                 page, errors = self.estimate_page(engine)
-                self.assertEqual(page.input_value("#ws-round"), "off")
+                self.assertEqual(page.input_value("#ws-round"), "up")
                 for k in ("r3", "r4", "r7"):
                     hp = page.evaluate("k => S.ws.refs[k].history_price", k)
                     value = page.input_value('tr[data-line="%s"] input.yourp' % k)
                     if hp["status"] == "available":
-                        want = page.evaluate("v => Math.round((v + Number.EPSILON) * 100) / 100", hp["unit_price"])
+                        want = page.evaluate("v => nicePrice(v, 'up')", hp["unit_price"])
                         self.assertEqual(float(value), want)
                         self.assertEqual(hp["n_projects"], 3)
                     else:
@@ -344,8 +356,8 @@ class PageInteractions(unittest.TestCase):
                 for k in ("r1", "r2"):
                     self.assertEqual(page.input_value('tr[data-line="%s"] input.yourp' % k), "")
                     self.assertEqual(page.get_attribute('tr[data-line="%s"] input.yourp' % k,
-                                                        "placeholder"), "engineer input")
-                    self.assertIn("engineer input", page.inner_text('tr[data-line="%s"]' % k))
+                                                        "placeholder").lower(), "engineer input")
+                    self.assertIn("engineer input", page.inner_text('tr[data-line="%s"]' % k).lower())
                 # the references show the average bid
                 page.click('tr[data-line="r3"] td:nth-child(2)')
                 page.wait_for_selector('[data-refs="r3"][data-loaded="1"]', timeout=30000)
@@ -468,6 +480,7 @@ class PageInteractions(unittest.TestCase):
         for engine in self.engines:
             with self.subTest(engine=engine):
                 page, errors = self.estimate_page(engine)
+                page.select_option("#ws-round", "off")
                 headline = page.evaluate("() => S.result.headline")
                 page.evaluate("""() => {
                     const target = S.result.lines.find(l => l.row_id === 'r3');
@@ -494,7 +507,7 @@ class PageInteractions(unittest.TestCase):
                 price = 'tr[data-line="r3"] input.yourp'
                 self.assertEqual(page.input_value(price), "12.35")
                 self.assertEqual(page.input_value('tr[data-line="r4"] input.yourp'), "")
-                self.assertIn("rounded to cents", page.inner_text('tr[data-line="r3"]'))
+                self.assertIn("rounded to cents", page.inner_text('tr[data-line="r3"]').lower())
                 self.assertEqual(page.inner_text("#th-model").lower(), "unit price comparison")
                 row = page.locator('tr[data-line="r3"]')
                 comparison = row.locator(".unit-comparison")
@@ -512,7 +525,7 @@ class PageInteractions(unittest.TestCase):
                 self.assertNotIn("2 references", row.inner_text())
                 reference_range = row.locator(".ref-range").inner_text()
                 self.assertIn("$11.35 – $13.35", reference_range)
-                self.assertIn("median $12.35 · 3 projects", reference_range)
+                self.assertIn("Median $12.35 · 3 projects", reference_range)
                 self.assertNotIn("$1.68", reference_range)
                 selected = row.locator(".selected-source")
                 self.assertEqual(selected.inner_text(), "Recent bid median · $12.35")
@@ -526,14 +539,9 @@ class PageInteractions(unittest.TestCase):
                 for basis, card in cards.items():
                     self.assertTrue(card.is_enabled())
                     self.assertEqual(card.get_attribute("aria-pressed"), str(basis == "history").lower())
-                recent_lines = [line for line in before["worksheet"]["lines"] if line["src"] == "history"]
-                recent_total = sum(line["your_amount"] for line in recent_lines)
-                recent_card = cards["history"]
-                recent_text = recent_card.inner_text()
-                self.assertIn(f'{len(recent_lines)} of {page.evaluate("() => S.result.lines.length")} lines',
-                              recent_text)
-                self.assertEqual(recent_card.locator(".big").inner_text(),
-                                 page.evaluate("v => money(v)", recent_total))
+                priced = sum(line["your_amount"] for line in before["worksheet"]["lines"]
+                             if line["your_amount"] is not None)
+                self.assert_project_total(page, priced * 1.10)
                 self.assertNotIn("past jobs exceeded", page.inner_text("#ws-totals"))
                 record = next(l for l in before["worksheet"]["lines"] if l["row_id"] == "r3")
                 self.assertEqual(before["worksheet"]["basis"], "history")
@@ -572,6 +580,8 @@ class PageInteractions(unittest.TestCase):
                 self.assertEqual(protected["r4"][0], 123.45)
                 self.assertEqual(protected["r5"][2], "ref_median")
                 self.assertEqual(protected["r9"][1:], (50000, "quote"))
+                manual_total = sum(line["your_amount"] for line in edits if line["your_amount"] is not None) * 1.10
+                self.assert_project_total(page, manual_total)
                 excavation = page.evaluate("() => S.result.lines.find(l => l.row_id === 'r3')")
                 totals = {}
                 for step, (basis, key) in enumerate((("p50", None), ("p70", "Enter"), ("p50", "Space"))):
@@ -598,7 +608,7 @@ class PageInteractions(unittest.TestCase):
                         l = lines[row_id]
                         self.assertEqual((l["your_unit"], l["your_amount"], l["src"]), preserved)
                     total = doc["totals"]["your_opcc"]
-                    self.assertEqual(page.inner_text("#ws-totals .yours .big"), page.evaluate("n => money(n)", total))
+                    self.assert_project_total(page, total)
                     if step == 2:
                         self.assertEqual(total, totals["p50"])
                     totals[basis] = total
@@ -620,7 +630,7 @@ class PageInteractions(unittest.TestCase):
                 page.wait_for_selector('#r-headline button[data-basis="history"][aria-pressed="true"]')
                 self.assertEqual(page.input_value(price), "12.35")
                 self.assertEqual(page.input_value(note), "Checked excavation quantity")
-                self.assertEqual(recent_card.inner_text(), recent_text)
+                self.assert_project_total(page, manual_total)
                 restored = page.evaluate("() => wsDoc().worksheet")
                 self.assertEqual(restored["basis"], "history")
                 for line in restored["lines"]:
@@ -651,6 +661,7 @@ class PageInteractions(unittest.TestCase):
         for engine in self.engines:
             with self.subTest(engine=engine):
                 page, errors = self.estimate_page(engine)
+                page.select_option("#ws-round", "off")
                 page.evaluate("""() => {
                     window.savedFetch = window.fetch; window.pendingRefs = [];
                     window.fetch = (url, options) => url === '/api/worksheet/refs'
@@ -675,6 +686,7 @@ class PageInteractions(unittest.TestCase):
                 page.press(price, "Tab")
                 page.evaluate("() => pendingRefs[0].resolve({lines: testRefs})")
                 page.wait_for_function("() => S.ws.refsReq === S.resultReq")
+                self.assert_project_total(page)
                 self.assertEqual(page.input_value(price), "43.21")
                 self.assertEqual(page.evaluate("() => S.ws.lines.r3.src"), "you")
                 # Two overlapping requests: resolving the old one does not
@@ -715,6 +727,7 @@ class PageInteractions(unittest.TestCase):
                 page.wait_for_function("() => !!S.ws.refsError")
                 self.assertEqual(page.input_value(price), picked)
                 self.assertIn("could not be loaded", page.inner_text("#ws-totals"))
+                self.assert_project_total(page)
                 self.assertEqual(errors, [])
 
     def test_the_contingency_changes_numbers_not_the_layout(self):
@@ -722,11 +735,27 @@ class PageInteractions(unittest.TestCase):
         only; nothing on the page moves."""
         for engine in self.engines:
             with self.subTest(engine=engine):
-                page, errors = self.estimate_page(engine)
-                sel = '#ws-totals select[data-fk="ws:contingency"]'
-                page.locator(sel).scroll_into_view_if_needed()
+                page, errors = self.takeoff_page(engine)
+                sel = "#in-contingency"
+                self.assertEqual(page.locator("#sec-project " + sel).count(), 1)
+                self.assertTrue(page.is_visible(sel))
+                self.assertFalse(page.is_visible("#sec-results"))
+                self.assertEqual(page.input_value(sel), "10")
+                self.assertTrue(page.eval_on_selector(sel, """e =>
+                    Boolean(e.compareDocumentPosition(document.querySelector('#btn-estimate')) &
+                            Node.DOCUMENT_POSITION_FOLLOWING)"""))
+                page.select_option(sel, "15")
+                page.click("#btn-estimate")
+                page.wait_for_function("() => S.result && S.ws.refsReq === S.resultReq", timeout=90000)
+                self.assertEqual(page.input_value("#ws-round"), "up")
+                self.assertEqual(page.locator('#ws-totals select').count(), 0)
+                totals = page.evaluate("() => wsDoc().totals")
+                self.assertGreater(totals["subtotal"], 0)
+                self.assertEqual(totals["contingency_pct"], 15)
+                self.assert_project_total(page, totals["subtotal"] * 1.15)
+                page.evaluate("document.documentElement.style.scrollBehavior = 'auto'")
                 boxes = lambda: page.evaluate("""() => [
-                    '#ws-totals select[data-fk="ws:contingency"]', '#ws-totals .wstot .cmp',
+                    '#in-contingency', '#ws-totals .wstot .cmp',
                     '#ws-totals .wstot .yours', '#ws-meta', '#result-table'].map(q => {
                       const b = document.querySelector(q).getBoundingClientRect();
                       return [Math.round(b.x), Math.round(b.y + window.scrollY)]; })""")
@@ -736,6 +765,7 @@ class PageInteractions(unittest.TestCase):
                 for v in ("0", "5", "10", "0"):
                     page.select_option(sel, v)
                     page.wait_for_timeout(300)
+                    self.assert_project_total(page, totals["subtotal"] * (1 + int(v) / 100))
                     self.assertEqual(boxes(), ref, v)
                     self.assertEqual(page.locator("#ws-totals .cguide table").count(), 0)
                     self.assertNotIn("Your OPCC is", page.inner_text("#ws-totals .cguide"))
@@ -743,7 +773,7 @@ class PageInteractions(unittest.TestCase):
                     self.assertEqual(page.locator("#result-foot tr.wscont").count(), 1)
                 self.assertIn("(0% of the subtotal)", page.inner_text("#result-foot tr.wscont"))
                 self.assertIn("$0", page.inner_text("#result-foot tr.wscont"))
-                self.assertIn("construction contingency 0% $0", page.inner_text("#ws-totals .yours"))
+                self.assertIn("construction contingency 0% $0", page.inner_text("#ws-totals .yours").lower())
                 self.assertEqual(errors, [])
 
     def test_every_edit_reaches_the_exported_excel(self):
@@ -778,7 +808,7 @@ class PageInteractions(unittest.TestCase):
                 page.fill(q, "50,000")
                 page.press(q, "Tab")
                 page.wait_for_timeout(300)
-                page.select_option('#ws-totals select[data-fk="ws:contingency"]', "15")
+                page.select_option("#in-contingency", "15")
                 page.wait_for_timeout(400)
                 # what the page shows now
                 doc = page.evaluate("() => wsDoc()")
@@ -950,7 +980,7 @@ class PageInteractions(unittest.TestCase):
                 page.click("#btn-reestimate")
                 page.wait_for_function("() => !S.stale && S.result.lines.find(l => l.row_id === 'r3').pricing_mode === 'engineer'", timeout=60000)
                 self.assertEqual(page.input_value(price), "")
-                self.assertEqual(page.get_attribute(price, "placeholder"), "engineer input")
+                self.assertEqual(page.get_attribute(price, "placeholder").lower(), "engineer input")
                 self.assertGreaterEqual(page.evaluate("() => wsTotals(S.result).missing"), missing_before)
                 blank = page.evaluate("() => wsDoc().worksheet.lines.find(l => l.row_id === 'r3')")
                 self.assertIsNone(blank["your_unit"])
@@ -1038,7 +1068,7 @@ class PageInteractions(unittest.TestCase):
                 page.wait_for_function("k => !S.stale && S.result.lines.find(l => l.row_id === k).pricing_mode === 'engineer'", arg=key, timeout=60000)
                 price = '#result-body tr[data-line="%s"] input.yourp' % key
                 self.assertEqual(page.input_value(price), "")
-                self.assertEqual(page.get_attribute(price, "placeholder"), "engineer input")
+                self.assertEqual(page.get_attribute(price, "placeholder").lower(), "engineer input")
                 self.assertTrue(page.evaluate("k => engineerInput(S.result.lines.find(l => l.row_id === k))", key))
                 self.assertEqual(errors, [])
 
@@ -1077,7 +1107,7 @@ class PageInteractions(unittest.TestCase):
                 page.click("#btn-reestimate")
                 page.wait_for_function("() => !S.stale && S.result.lines.find(l => l.row_id === 'r3').pricing_mode === 'engineer'", timeout=60000)
                 self.assertEqual(page.input_value(price), "")
-                self.assertEqual(page.get_attribute(price, "placeholder"), "engineer input")
+                self.assertEqual(page.get_attribute(price, "placeholder").lower(), "engineer input")
                 self.assertFalse(page.is_visible("#stale-banner"))
                 self.assertEqual(errors, [])
 
@@ -1214,7 +1244,10 @@ class PageInteractions(unittest.TestCase):
         references; the worksheet's own contingency is a list too."""
         for engine in self.engines:
             with self.subTest(engine=engine):
-                page, errors = self.estimate_page(engine, extra=["110\tOwner's Contingency Allowance\tLS\t1"])
+                page, errors = self.takeoff_page(engine, extra=["110\tOwner's Contingency Allowance\tLS\t1"])
+                self.assertEqual(page.input_value("#in-contingency"), "0")
+                page.click("#btn-estimate")
+                page.wait_for_function("() => S.result && S.ws.refsReq === S.resultReq", timeout=90000)
                 k = page.evaluate("() => S.lines.find(l => /contingency/i.test(l.description)).row_id")
                 row = 'tr[data-row="%s"]' % k
                 self.assertEqual(page.locator(row).get_by_role("button", name="Change", exact=True).count(), 0)
@@ -1234,6 +1267,7 @@ class PageInteractions(unittest.TestCase):
                 self.assertAlmostEqual(share, 0.10, places=6)
                 t = page.evaluate("() => { const t = wsTotals(S.result); return [t.sub, t.below, t.yours]; }")
                 self.assertAlmostEqual(t[2], t[0] * 1.10, places=4)
+                self.assert_project_total(page, t[0] * 1.10)
                 # The worksheet carries the breakdown; the headline only shows totals.
                 self.assertEqual(page.locator("#r-headline .bigcard .csplit").count(), 0)
                 self.assertIn("10% of the subtotal", page.inner_text("#result-foot tr.controw"))
@@ -1242,11 +1276,12 @@ class PageInteractions(unittest.TestCase):
                     self.assertAlmostEqual(float(shown.replace("$", "").replace(",", "")), amount, delta=0.5)
                 # the schedule carries a contingency: the worksheet's own one
                 # starts at 0%, picked from a list
-                sel = '#ws-totals select[data-fk="ws:contingency"]'
+                sel = "#in-contingency"
                 self.assertEqual(page.input_value(sel), "0")
                 page.select_option(sel, "15")
                 page.wait_for_timeout(300)
                 self.assertEqual(page.evaluate("() => S.ws.contingency"), 15)
+                self.assert_project_total(page, t[0] * 1.25)
                 # 15% on the line goes into the next estimate as a share
                 page.select_option(row + " select.cpct", "15")
                 page.wait_for_timeout(300)
@@ -1343,7 +1378,7 @@ class PageInteractions(unittest.TestCase):
                     # history suggestions for the fragment: "... Excavation"
                     self.assertIn("EXCAVATION", page.inner_text(
                         'tr[data-row="r3"] .suggest').upper())
-                    self.assertIn("assumed", page.inner_text('tr[data-row="r1"] .clscell'))
+                    self.assertIn("assumed", page.inner_text('tr[data-row="r1"] .clscell').lower())
                     sw = page.evaluate("() => [document.documentElement.scrollWidth, "
                                        "document.documentElement.clientWidth]")
                     self.assertLessEqual(sw[0], sw[1])
@@ -1669,7 +1704,7 @@ class PageInteractions(unittest.TestCase):
                 page.click("#btn-parse-text")
                 page.wait_for_function("() => S.lines.length === 6 && S.lines.every(l => l.cls)", timeout=30000)
                 page.wait_for_function("() => S.lines.filter(l => l.cls.unit_hint).length === 2", timeout=30000)
-                self.assertIn("unit: few bids", page.inner_text("#review-body"))
+                self.assertIn("unit: few bids", page.inner_text("#review-body").lower())
                 page.click("#btn-estimate")
                 page.wait_for_function("() => S.result && S.ws.refs", timeout=30000)
                 page.evaluate("() => { document.documentElement.style.scrollBehavior = 'auto'; }")

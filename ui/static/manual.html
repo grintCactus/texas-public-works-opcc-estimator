@@ -47,9 +47,9 @@
       <ol class="manual-steps">
         <li><strong>Read a takeoff.</strong> Paste rows from Excel, upload a schedule, or use the takeoff template. Each pay item needs a description, unit and quantity.</li>
         <li><strong>Review the items.</strong> Check quantities, units and item types. Use <strong>Change</strong> for a wrong classification and resolve any line marked <strong>check</strong>.</li>
-        <li><strong>Set project details.</strong> Choose the market and bid date, review the expected bidders, and enter owner-set amounts and vendor quotes where needed.</li>
+        <li><strong>Set project details.</strong> Choose the market and bid date, review the expected bidders, and enter any owner-set amounts or vendor quotes. Choose Construction Contingency before selecting Estimate.</li>
         <li><strong>Press Estimate.</strong> Review the model comparison totals and any warnings. The worksheet loads recent matching public bid medians separately.</li>
-        <li><strong>Finish your OPCC.</strong> Review the three selected reference projects, enter prices that need your judgment, choose Construction Contingency, and download the Excel workbook or PDF.</li>
+        <li><strong>Finish your OPCC.</strong> Review the three selected reference projects, enter prices that need your judgment, and download the Excel workbook or PDF.</li>
       </ol>
       <p>Reading a takeoff classifies its lines. It does not price them until you press <strong>Estimate</strong>.</p>
     </section>
@@ -112,7 +112,7 @@
         <figcaption>An illustration of the idea, not this project's data or a fitted prediction curve.</figcaption>
       </figure>
       <p>In the left picture, the entire area represents possible low bids: 50% lies below P50, another 20% between P50 and P70, and 30% above P70. The right picture shows the same shares as a running total.</p>
-      <p><strong>Expected low bid (P50)</strong> and <strong>Recommended OPCC (P70)</strong> are model estimates for the project. The recent-bid card adds up quantity × recent bid median for the items with enough matching bids. Its item count shows how much of the schedule it covers.</p>
+      <p><strong>Expected low bid (P50)</strong> and <strong>Recommended OPCC (P70)</strong> are model estimates for the project. The third card shows your current worksheet total, including Construction Contingency, entered prices and vendor quotes. Its missing-price count identifies work still to be priced.</p>
       <p>The 50% and 80% historical ranges describe two-sided intervals. Each budget percentile gives a single upper threshold.</p>
       <p class="manual-callout">The 70% target is not an independently verified P70 success rate or a guarantee for one project. P70 can still fall short. Missing scope and not-covered lines require separate attention; add their prices before treating an OPCC as complete.</p>
     </section>
@@ -140,7 +140,7 @@
     <section id="worksheet">
       <h2>7. Your OPCC worksheet</h2>
       <p>On a phone or tablet, each pay item has its own card. Edit <strong>Your $/unit</strong> beside <strong>Your amount</strong>. Tap the description to see the bids behind the price.</p>
-      <p>New worksheets start from <strong>Recent bid median</strong>. In <strong>Estimate</strong>, select P50, P70 or the recent-bid card at any time to change the source of automatic unit prices. All three references stay visible for comparison. Your own prices, individual reference picks, vendor quotes and owner-set amounts stay in the worksheet.</p>
+      <p>New worksheets start from <strong>Recent bid median</strong>. In <strong>Estimate</strong>, select P50 or P70 to use model prices. Select the worksheet total card to return to recent bid medians. All three references stay visible for comparison. Your own prices, individual reference picks, vendor quotes and owner-set amounts stay in the worksheet.</p>
       <p>For each eligible item, the tool selects three distinct public projects in the same market with closely matching work, unit, size and quantity. Each must have a precise bid date before your bid date and within the preceding two calendar years. Eligible projects from the most recent year are preferred. Older projects are not added to make up a missing third reference.</p>
       <p>Each project's own bidder median is adjusted to your bid year before taking the median of the three adjusted values. The adjustment uses an annual index of matching public bids dated before your bid date, with at least ten matched items for each annual step. The factor can raise or lower a price. Original bidder medians, dates, factors and the index evidence remain attached to the selected prices.</p>
       <p>If fewer than three eligible projects are available, or a required price adjustment is unavailable, the default stays blank. Review the available references and enter your unit price. Loading or missing references never cause a model P70 price to be substituted.</p>
@@ -148,7 +148,7 @@
         <dt>Recent bid median</dt><dd>The middle of three matching projects' adjusted median unit prices. Open the line to see each project's bids and price adjustment.</dd>
         <dt>P50 and P70 model unit prices</dt><dd>The P50 unit price comes from the model. The P70 unit price applies the project's P70 multiplier to that P50 price. Both use the pay item's unit. The percentiles describe the project's low bid.</dd>
         <dt>Your $/unit</dt><dd>The price used in your OPCC. You can keep the recent bid median, choose another source from Reference, or enter your own price.</dd>
-        <dt>Rounding</dt><dd>The default uses unit-price cents, so quantity times the visible unit price equals the line amount. The full adjusted median is retained in the source record. You may choose rounding up or to a convenient amount; a price you type is never automatically rounded.</dd>
+        <dt>Rounding</dt><dd>New worksheets use <strong>Up to a round number</strong>. For example, a $33.50/CY reference becomes $35.00/CY in Your $/unit. Reference prices keep their original values, and prices you type stay as entered. Choose another rounding option to recalculate automatic prices.</dd>
         <dt>Engineer input</dt><dd>Mobilization and temporary erosion-control lump sums remain your input. An explicitly selected <strong>New item / Other</strong> also starts blank. Your entered prices survive reference loading and re-estimation.</dd>
         <dt>Missing prices</dt><dd>A blank price is excluded from Your OPCC. Complete these lines before exporting a finished estimate.</dd>
         <dt>Your OPCC</dt><dd>Your line amounts, plus the schedule's contingency amounts and any additional Construction Contingency. It is independent of the model P50, P70 and retained P80 totals.</dd>
@@ -161,7 +161,7 @@
     <section id="contingency">
       <h2>8. Construction Contingency</h2>
       <p>Construction Contingency covers what the estimate cannot see yet: scope that may change, unknown site conditions and omitted items. It is separate from P70's margin for pricing uncertainty.</p>
-      <p>A percentage contingency is calculated from your worksheet subtotal and shown below it. The project total is the subtotal plus the contingency amounts. The default additional contingency is 10% when the schedule has no contingency allowance.</p>
+      <p>Choose Construction Contingency under <strong>Project details</strong> before pressing <strong>Estimate</strong>. The default is 10%. The worksheet applies the selected percentage to its subtotal. Its project total includes that amount and any schedule contingency. Changing the percentage updates both the worksheet total and the third estimate card.</p>
       <p>If the schedule already carries a contingency allowance, additional contingency starts at 0% to avoid counting it twice. Add more only for risks that allowance does not cover.</p>
       <p>P70 plus a contingency can be useful while design scope is changing. For a final design, adding more for the same pricing uncertainty can raise the total without covering a new risk. Review what each allowance is intended to cover.</p>
       <p>The <a href="#accuracy">historical accuracy tables</a> describe the project model, not the recent-bid worksheet defaults. They show how often several percentages above model P50 still fell below the low bid. They do not measure unknown scope or recommend a contingency for your specific project.</p>

@@ -24,7 +24,7 @@ A bid schedule (takeoff) goes in; out come:
 The original P80 totals, multiplier, calibration, bands and historical results
 remain unchanged as a baseline. New worksheets use `basis: "history"`: three
 recent matching projects' bidder medians, adjusted to the target bid year.
-Select the recent-bid card to use the item medians or select P50 or P70 to use model prices. The recent-bid subtotal includes only items with a qualifying median. The P50 and P70 project figures come from the model.
+Select the worksheet total card to use recent item medians or select P50 or P70 to use model prices. The third card always shows the current worksheet total, including priced lines, schedule contingencies and the construction contingency selected under Project details. The P50 and P70 project figures come from the model.
 Entered prices, selected bid references, vendor quotes and owner-set amounts are retained. Existing
 `p50`, `p70` and `p80` worksheets retain their original basis and meaning.
 
@@ -334,8 +334,7 @@ projects leaves the default blank, with an engineer-input reason.
 `history_inflation.py` adjusts each selected median using annual matched-item
 price changes from earlier public bids in that market. Each year pair requires
 ten matched items; no borrowed market, forecast rate or flat carry hides missing
-index evidence. The final default is the median of the three adjusted prices,
-charged to cents. Original medians, adjustment factors and full source records
+index evidence. The reference is the median of the three adjusted prices. The worksheet applies the selected rounding to its unit price. Original medians, adjustment factors and full source records
 are preserved in `worksheet.lines[].history_price` and the export appendix.
 The full method and its verification rules are registered in `docs/METHOD.md`
 section 1.5. This evidence is not a calibrated confidence percentage.
@@ -345,8 +344,7 @@ request finishes; errors stay visible. A delayed response cannot overwrite a
 typed price or a newer estimate. Re-estimation refreshes automatic history
 defaults and preserves deliberate selections, quotes, fixed amounts and notes.
 Mobilization, temporary erosion-control lump sums, and New item / Other still
-require the engineer's price. New worksheets start without convenience-price
-rounding; an explicitly chosen rounding option remains available.
+require the engineer's price. New worksheets default to **Up to a round number**. Users can change the rounding option and keep manually entered prices.
 
 Lines where the model is weak are marked **needs your judgment**: fewer than
 3 references, a generic or unclassified match, lump sums, low confidence or

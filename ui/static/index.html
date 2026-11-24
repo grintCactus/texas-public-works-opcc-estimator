@@ -103,7 +103,7 @@
             <span class="muted-note">Read drawings and documents by AI (coming later).</span>
           </div>
           <div class="aimode-panel" id="ai-mode-panel" hidden>
-            <div class="aimode-head">AI mode <span class="soon">coming later</span></div>
+            <div class="aimode-head">AI mode <span class="soon">Coming later</span></div>
             <p>Reading drawings and specifications by AI is not available yet.</p>
             <div class="row-actions">
               <button class="btn primary" id="btn-ai-read" type="button" disabled>Read by AI</button>
@@ -171,14 +171,14 @@
         <label class="field">
           <span class="lab">Owner <span class="dim">(optional)</span></span>
           <input type="text" id="in-owner" list="owner-list" autocomplete="off"
-                 placeholder="type or pick an owner">
+                 placeholder="Type or pick an owner">
           <datalist id="owner-list"></datalist>
           <span class="sub" id="owner-note">Choose from the list or type an owner.</span>
         </label>
         <label class="field">
           <span class="lab">Work type <span class="dim">(optional)</span></span>
           <input type="text" id="in-worktype" list="worktype-list" autocomplete="off"
-                 placeholder="type or pick a work type">
+                 placeholder="Type or pick a work type">
           <datalist id="worktype-list"></datalist>
           <span class="sub" id="worktype-note">Choose from the list or type a work type.</span>
         </label>
@@ -191,8 +191,8 @@
         <label class="field">
           <span class="lab">Expected bidders</span>
           <div class="inline">
-            <input type="number" id="in-bidders" min="1" max="60" step="1" placeholder="auto">
-            <button class="btn ghost sm" id="btn-bidders-reset" hidden>use suggestion</button>
+            <input type="number" id="in-bidders" min="1" max="60" step="1" placeholder="Auto">
+            <button class="btn ghost sm" id="btn-bidders-reset" hidden>Use suggestion</button>
           </div>
           <span class="sub" id="bidders-hint">Prefilled from earlier jobs once the
             takeoff is read. Edit it if you know better.</span>
@@ -209,6 +209,18 @@
       </div>
     </div>
     <div class="hr"></div>
+    <label class="field" for="in-contingency">
+      <span class="lab" id="contingency-label">Construction contingency</span>
+      <select id="in-contingency" data-fk="ws:contingency" aria-labelledby="contingency-label" aria-describedby="contingency-note">
+        <option value="0">None (0%)</option>
+        <option value="5">5%</option>
+        <option value="10" selected>10%</option>
+        <option value="15">15%</option>
+        <option value="20">20%</option>
+        <option value="25">25%</option>
+      </select>
+      <span class="sub" id="contingency-note">Added to the worksheet subtotal.</span>
+    </label>
     <div class="row-actions">
       <button class="btn primary big" id="btn-estimate" disabled>Estimate</button>
       <span class="muted-note" id="estimate-hint"></span>
@@ -235,19 +247,19 @@
     </div>
   </div>
   <div class="panel flush" id="p-worksheet">
-    <h2>OPCC worksheet <span class="hint">review and enter your unit prices</span></h2>
+    <h2>OPCC worksheet <span class="hint">Review and enter your unit prices</span></h2>
     <div class="body">
       <div id="ws-totals"></div>
       <!-- the export's heading, and how picked prices are rounded -->
       <div class="wsmeta" id="ws-meta">
         <label>Project <input type="text" id="ws-project" class="cellinput"></label>
-        <label>Prepared by <input type="text" id="ws-prepared" class="cellinput" placeholder="initials"></label>
+        <label>Prepared by <input type="text" id="ws-prepared" class="cellinput" placeholder="Initials"></label>
         <label>Project no. <input type="text" id="ws-projno" class="cellinput"></label>
-        <label title="The model's and the quick picks' prices are rounded to a round number ($5 to $1,000 steps by size). Recent bid defaults use cents. A price you type is never rounded.">Round prices
+        <label title="Automatic unit prices round up by default. The step depends on the price. Prices you enter are kept as typed.">Round prices
           <select id="ws-round">
-            <option value="up">up to a round number</option>
-            <option value="nearest">to the nearest round number</option>
-            <option value="off">cents only</option>
+            <option value="up">Up to a round number</option>
+            <option value="nearest">To the nearest round number</option>
+            <option value="off">Cents only</option>
           </select></label>
       </div>
       <div class="hintline" id="ws-hint" role="note" hidden>
@@ -310,7 +322,7 @@
       </div>
       <div class="dropzone" id="bidtab-drop">
         <div class="big">Drop a public bid tabulation (.xlsx / .pdf)</div>
-        <div class="small">one row per bidder per line item</div>
+        <div class="small">One row per bidder per line item</div>
       </div>
       <input type="file" id="bidtab-input" hidden accept=".xlsx,.xlsm,.pdf">
       <div id="bidtab-result" style="margin-top:11px"></div>

@@ -2877,7 +2877,7 @@ class QaRegressions20261120(unittest.TestCase):
         """Editing a cell and clicking straight into the next one lost the
         click (the change event rebuilt the block under the pointer): grid
         quantity / owner-set cells, the owner-set box, the worksheet's
-        price, pick and contingency."""
+        price and reference pick."""
         js = self.js
         self.assertIn("function afterInput(", js)
         self.assertIn("function restoreFocus(", js)
@@ -2889,8 +2889,7 @@ class QaRegressions20261120(unittest.TestCase):
             body = m.group(1)
             self.assertNotRegex(body, r"(?<!afterInput\()\brender(Grid|OwnerSet|Worksheet|WsTotals)\(",
                                 body[:120])
-        for fk in ("'g', l.row_id, 'quantity'", "'o', l.row_id", "'ws', l.row_id, 'price'",
-                   "'ws:contingency'"):
+        for fk in ("'g', l.row_id, 'quantity'", "'o', l.row_id", "'ws', l.row_id, 'price'"):
             self.assertIn(fk, js)
 
     def test_did_you_mean_is_not_rebuilt_under_the_click(self):
@@ -3015,7 +3014,7 @@ class QaRegressions20261120(unittest.TestCase):
         """Bug 18: a lump sum with no item number showed an empty "item "."""
         body = _js_function(self.js, "renderLowConf")
         self.assertIn("const its = (g.items || []).filter(x => x);", body)
-        self.assertIn("its.length ? el('div', { class: 'dim', text: 'item ' + its.join(', ') }) : null",
+        self.assertIn("its.length ? el('div', { class: 'dim', text: 'Item ' + its.join(', ') }) : null",
                       body)
 
     def test_change_opens_on_our_reading_not_on_the_last_item_type(self):
@@ -3032,7 +3031,7 @@ class QaRegressions20261120(unittest.TestCase):
         self.assertIn("text: f.label,", body)                 # no "· internal_id"
         for old in ("'Use family'", "'Use family + '", "'Family'", "'usable'", "'too thin'"):
             self.assertNotIn(old, body)
-        self.assertIn("'plenty of bids'", body)
+        self.assertIn("'Plenty of bids'", body)
         self.assertIn("'Use this item type and its unit (' + c.unit + ')'", body)
 
     def test_no_explanatory_text_under_12px_and_no_ellipsis(self):

@@ -1,11 +1,9 @@
 // An OPCC usually carries a contingency; 10% is the common default (user,
-// 2026-11-21). Applied to your line amounts except owner-set allowances.
+// 2026-11-21). Applied to the worksheet subtotal.
 const DEFAULT_CONTINGENCY = 10;
 // Contingency percentages are picked from a list, not typed (user,
-// 2026-11-21): a contingency line's share of the other lines, and the
-// worksheet's own contingency.
+// 2026-11-21) for a contingency line's share of the other lines.
 const LINE_CONTINGENCY_PCTS = [5, 10, 15, 20, 25];
-const WS_CONTINGENCY_PCTS = [0, 5, 10, 15, 20, 25];
 // A contingency allowance is a lump sum: LS, an allowance unit, no unit, or
 // one EA. A "contingency item" measured in SY, CY, TON... is a bid item that
 // bidders price. (Public bid history, 316 contingency lines: about 230 are
@@ -39,8 +37,8 @@ const S = {
   stale: false,
   // the OPCC worksheet: the estimator's own prices -- OUTPUT ONLY, never part
   // of an estimate request
-  ws: { lines: {}, contingency: DEFAULT_CONTINGENCY, refs: null, refsReq: null, filter: false,
-        open: {}, name: '', round: 'off', prepared_by: '', project_no: '', basis: 'history',
+  ws: { lines: {}, contingency: DEFAULT_CONTINGENCY, contTouched: false, refs: null, refsReq: null, filter: false,
+        open: {}, name: '', round: 'up', prepared_by: '', project_no: '', basis: 'history',
         refsLoading: false, refsError: '', refsPromise: null, refsPendingReq: null },
 };
 
@@ -201,7 +199,7 @@ function ackNotice(a) {
   const key = ackKey(a);
   const done = !!(S.acks && S.acks[key]);
   const items = (a.items || []).map(t => el('li', { text: t }));
-  if (a.more) items.push(el('li', { class: 'dim', text: 'and ' + a.more + ' more' }));
+  if (a.more) items.push(el('li', { class: 'dim', text: 'And ' + a.more + ' more' }));
   const box = el('div', { class: 'notice ack ' + (done ? 'acked' : a.level), 'data-ack': a.code || '' }, [
     el('label', { class: 'ackchk', title: 'Tick once you have read and checked this' },
       el('input', { type: 'checkbox', checked: done, 'aria-label': 'Checked: ' + (a.title || a.text || ''),
@@ -879,10 +877,10 @@ function unreadNote(p) {
       + 'If one is a pay item, add it to the grid and fill in its unit and quantity.' }),
     el('ul', { class: 'unread-list' }, list.map(s => el('li', {}, [
       el('span', { class: 'rawtext', text: clipText(s.raw, 120) }),
-      el('span', { class: 'why', text: (s.row ? 'line ' + s.row + ' \u00b7 ' : '') + s.reason }),
+      el('span', { class: 'why', text: (s.row ? 'Line ' + s.row + ' \u00b7 ' : '') + s.reason }),
       addToGridButton(s.raw),
     ]))),
-    n > list.length ? el('div', { class: 'muted-note', text: 'and ' + (n - list.length) + ' more' }) : null,
+    n > list.length ? el('div', { class: 'muted-note', text: 'And ' + (n - list.length) + ' more' }) : null,
   ]);
 }
 
@@ -1056,13 +1054,13 @@ function contingencyControl(l, ns) {
       if (!l.cont_fixed) l.amount = null;
       l.amount_src = 'user';
       done();
-    } }, (none ? [el('option', { value: '', text: 'pick…', selected: true })] : [])
+    } }, (none ? [el('option', { value: '', text: 'Pick…', selected: true })] : [])
       .concat(pcts.map(p => el('option', { value: String(p), selected: !fixed && cur === p, text: p + '%' })))
-      .concat([el('option', { value: 'fixed', text: 'fixed $', selected: fixed })]));
+      .concat([el('option', { value: 'fixed', text: 'Fixed $', selected: fixed })]));
   if (!fixed) return el('div', { class: 'cpctcell' }, [sel,
     el('span', { class: 'dim', text: 'of the subtotal' })]);
   return el('div', { class: 'cpctcell' }, [sel, el('input', { type: 'text',
-    class: 'cellinput num' + (l.amount > 0 ? '' : ' hintfill'), placeholder: 'owner’s $',
+    class: 'cellinput num' + (l.amount > 0 ? '' : ' hintfill'), placeholder: 'Owner’s $',
     value: l.amount > 0 ? qtyFmt(l.amount) : '', 'data-fk': focusKey(ns, l.row_id, 'amount'),
     title: 'The owner’s fixed contingency amount, from the bid form',
     onchange: e => {
@@ -1171,23 +1169,24 @@ function renderGrid() {
     + (unc ? ' · ' + unc + ' not covered' : '')
     + (byc ? ' · ' + byc + ' read by Claude' : '');
   restoreFocus(focus);
+  syncProjectContingency();
   refreshEstimateButton();
 }
 
 function renderGridLegend(body) {
   const labels = [
-    ['lowc', 'low confidence', 'Lump-sum prices, such as mobilization, vary widely; review the reference range.'],
-    ['manual', 'engineer input', 'No matching item type was chosen; enter your own worksheet price.'],
-    ['check', 'check', 'Review the stated issue in this line before estimating.'],
-    ['unc', 'not covered', 'Too little comparable bid history; enter a vendor quote.'],
-    ['missing', 'allowance amount missing', "Enter the owner's stated allowance amount."],
-    ['no', 'unit issue', 'Check the unit against the original schedule.'],
-    ['uncl', 'unclassified', 'Use Change to choose an item type.'],
-    ['allow', 'owner-set', "The owner's amount, used at face value."],
-    ['remembered', 'remembered', 'Your earlier classification for this wording.'],
-    ['info', 'your input', 'A classification you chose or a vendor quote you supplied.'],
-    ['unith', 'unit: few bids', 'Few bids use this unit; review the unit suggestion on the line.'],
-    ['claude', 'read by Claude', 'Read from a PDF by Claude; check it against the document.'],
+    ['lowc', 'Low confidence', 'Lump-sum prices, such as mobilization, vary widely; review the reference range.'],
+    ['manual', 'Engineer input', 'No matching item type was chosen; enter your own worksheet price.'],
+    ['check', 'Check', 'Review the stated issue in this line before estimating.'],
+    ['unc', 'Not covered', 'Too little comparable bid history; enter a vendor quote.'],
+    ['missing', 'Allowance amount missing', "Enter the owner's stated allowance amount."],
+    ['no', 'Unit issue', 'Check the unit against the original schedule.'],
+    ['uncl', 'Unclassified', 'Use Change to choose an item type.'],
+    ['allow', 'Owner-set', "The owner's amount, used at face value."],
+    ['remembered', 'Remembered', 'Your earlier classification for this wording.'],
+    ['info', 'Your input', 'A classification you chose or a vendor quote you supplied.'],
+    ['unith', 'Unit: few bids', 'Few bids use this unit; review the unit suggestion on the line.'],
+    ['claude', 'Read by Claude', 'Read from a PDF by Claude; check it against the document.'],
   ].filter(([kind]) => body.querySelector('.badge.' + kind));
   $('#grid-legend-heading').hidden = !labels.length;
   $('#grid-legend').replaceChildren(...labels.map(([kind, label, meaning]) => el('li', {}, [
@@ -1200,12 +1199,12 @@ function claudeBadge(l) {
   return el('span', { class: 'badge claude',
     title: 'Transcribed by Claude from the PDF' + (l.page ? ' (page ' + l.page + ')' : '')
       + '. Check it against the document.' + ((l.issues || []).length ? '\n' + l.issues.join('\n') : ''),
-    text: 'read by Claude' + (l.page ? ' · p.' + l.page : '') });
+    text: 'Read by Claude' + (l.page ? ' · p.' + l.page : '') });
 }
 
 function clsCell(l) {
   const c = l.cls;
-  if (!c) return el('span', { class: 'dim', text: l.description ? 'classifying…' : '—' });
+  if (!c) return el('span', { class: 'dim', text: l.description ? 'Classifying…' : '—' });
   // a contingency has no item type: no type, unit, size, checks or
   // suggestions, only what it is (user, 2026-11-21)
   if (isContingencyLine(l)) return el('div', { class: 'clscell' }, [
@@ -1217,26 +1216,26 @@ function clsCell(l) {
   const badges = [];
   // not covered: a reminder until you give a vendor quote, then just what it is
   if (c.coverage_class) badges.push(hintPop(l.quote > 0
-    ? el('span', { class: 'badge info', text: 'not covered: ' + c.coverage_label + ' \u00b7 your quote ' + money(l.quote) })
-    : el('span', { class: 'badge unc', text: 'not covered: ' + c.coverage_label }),
+    ? el('span', { class: 'badge info', text: 'Not covered: ' + c.coverage_label + ' \u00b7 your quote ' + money(l.quote) })
+    : el('span', { class: 'badge unc', text: 'Not covered: ' + c.coverage_label }),
     () => ncHintBox(c.nc_hint, c.coverage_label)));
   if (c.lowconf_class) badges.push(el('span', { class: 'badge lowc',
     title: 'Low confidence: lump sums like this vary widely between bidders; see the '
-      + 'low-confidence panel in the results.', text: 'low confidence: ' + c.lowconf_label }));
+      + 'low-confidence panel in the results.', text: 'Low confidence: ' + c.lowconf_label }));
   if (c.owner_set_like && !(l.amount > 0) && !(l.amount_pct > 0)) badges.push(el('span', { class: 'badge missing',
     title: 'Owner-set money (allowance / contingency / force account): enter the amount from '
       + 'the bid form under Project details \u2192 Owner-set amounts (or in "Owner-set $"). '
       + 'Until then it is priced from history, which is not meaningful for an allowance.',
-    text: 'allowance amount missing' }));
+    text: 'Allowance amount missing' }));
   if (l.amount > 0) badges.push(el('span', { class: 'badge allow',
     title: 'Owner-set money, taken at face value and kept out of the competition discount'
       + (l.amount_src === 'file' ? ' (amount read from the uploaded file)' : ''),
-    text: 'owner-set ' + money(l.amount) + (l.amount_src === 'file' ? ' (file)' : '') }));
+    text: 'Owner-set ' + money(l.amount) + (l.amount_src === 'file' ? ' (file)' : '') }));
   if (l.pricing_mode === 'engineer') badges.push(el('span', { class: 'badge manual',
-    text: 'engineer input', title: 'New item / Other: your worksheet price starts blank.' }));
+    text: 'Engineer input', title: 'New item / Other: your worksheet price starts blank.' }));
   else if (c.family === 'other' || c.family === 'needs_review' || !c.family) badges.push(
     el('span', { class: 'badge uncl', title: 'No item type matched: priced from item '
-      + 'words only, if at all. Use Change to pick an item type.', text: 'unclassified' }));
+      + 'words only, if at all. Use Change to pick an item type.', text: 'Unclassified' }));
   const ia0 = c.intake || {};
   const unitChecked = (ia0.reasons || []).some(x => x.code === 'no_unit' || x.code === 'unknown_unit');
   if (!unitChecked) (c.issues || []).filter(x => /unit/.test(x)).forEach(x =>
@@ -1247,9 +1246,9 @@ function clsCell(l) {
       + (l.remembered.family_label || l.remembered.family)
       + (l.remembered.unit ? ', unit ' + l.remembered.unit : '') + '. To forget it: Change \u2192 '
       + '\u201cNot sure \u2014 keep our reading\u201d.',
-    text: 'remembered' }));
+    text: 'Remembered' }));
   const uh = unitHintText(l);
-  if (uh) badges.push(el('span', { class: 'badge unith', text: 'unit: few bids' }));
+  if (uh) badges.push(el('span', { class: 'badge unith', text: 'Unit: few bids' }));
   const ia = Object.assign({}, c.intake || {});
   if (l.pricing_mode === 'engineer') {
     ia.reasons = (ia.reasons || []).filter(x => !['unclassified', 'weak_match'].includes(x.code));
@@ -1259,7 +1258,7 @@ function clsCell(l) {
     title: 'Low confidence \u2014 check this line: ' + (ia.reasons || []).map(x => x.text).join('; ')
       + (ia.best_match !== null && ia.best_match !== undefined
         ? '\nBest match in the public price history: ' + Math.round(100 * ia.best_match) + '%' : ''),
-    text: 'check: ' + (ia.reasons || []).map(x => x.code === 'weak_match' ? 'weak match'
+    text: 'Check: ' + (ia.reasons || []).map(x => x.code === 'weak_match' ? 'weak match'
       : x.code === 'no_quantity' ? 'no quantity' : x.code === 'no_unit' ? 'no unit'
       : x.code === 'unknown_unit' ? 'unit?' : x.code === 'unclassified' ? 'no item type'
       : x.code === 'odd_quantity' ? 'quantity?' : x.code === 'assumed' ? 'unit assumed (LS)'
@@ -1277,7 +1276,7 @@ function clsCell(l) {
       el('span', { class: 't', text: sg.label }),
       el('span', { class: 's', text: ' \u00b7 ' + sg.family_label + (sg.unit ? ' \u00b7 ' + sg.unit : '') }),
     ])))) : (ia.low && ia.suggestions_pending ? el('div', { class: 'suggest dim',
-      text: 'suggestions: the history search is still loading…' }) : null);
+      text: 'Suggestions: the history search is still loading…' }) : null);
   const newItem = ia.low && l.pricing_mode !== 'engineer' ? el('div', { class: 'suggest' }, [
     el('button', { class: 'chip one', type: 'button', 'data-action': 'new-item',
       text: 'New item / Other — Engineer input', onclick: () => markNewItem(l) }),
@@ -1290,7 +1289,7 @@ function clsCell(l) {
           + '\nUnit: ' + (c.unit || 'none') + (c.size_bucket ? '\nSize: ' + c.size_bucket
           + ' (' + c.size_in + ')' : '') + '\nRead as: ' + c.desc_norm,
         text: l.pricing_mode === 'engineer' ? 'New item / Other' : c.family_label }),
-      c.family_overridden ? el('span', { class: 'badge info', text: 'your pick' }) : null,
+      c.family_overridden ? el('span', { class: 'badge info', text: 'Your pick' }) : null,
       c.size_bucket ? el('span', { class: 'size', text: c.size_bucket }) : null,
       el('span', { class: 'unitn', text: c.unit || 'no unit' }),
     ]),
@@ -1740,7 +1739,7 @@ function openPicker(l) {
       selected: l.pricing_mode !== 'engineer' && !!l.family && f.id === l.family }))));
   const list = el('div', {});
   const qinput = el('input', { type: 'text', value: l.description || '',
-    placeholder: 'search earlier public line items…' });
+    placeholder: 'Search earlier public line items…' });
 
   function apply(family, unit) {
     if (family === '__new_item__') { close(); markNewItem(l); return; }
@@ -1780,7 +1779,7 @@ function openPicker(l) {
           c.median_price ? 'median ' + rate(c.median_price) + '/' + c.unit : ''].filter(Boolean).join(' · ') }),
       ]),
       el('span', { class: 'badge ' + (c.n_projects >= 5 ? 'ok' : c.n_projects >= 3 ? 'thin' : 'no'),
-        text: c.n_projects >= 5 ? 'plenty of bids' : c.n_projects >= 3 ? 'few bids' : 'too few bids' }),
+        text: c.n_projects >= 5 ? 'Plenty of bids' : c.n_projects >= 3 ? 'Few bids' : 'Too few bids' }),
       el('button', { class: 'btn sm', text: 'Use this item type',
         title: 'Set this line’s item type to ' + c.family_label,
         onclick: () => apply(c.item_family, '') }),
@@ -1867,6 +1866,11 @@ function initProject() {
   $('#in-worktype').addEventListener('input', onWorkTypeInput);
   $('#in-worktype').addEventListener('change', () => { onWorkTypeInput(); markStale(); suggestBidders(); });
   $('#in-biddate').addEventListener('change', () => { markStale(); suggestBidders(); });
+  $('#in-contingency').addEventListener('change', e => {
+    S.ws.contingency = Number(e.target.value);
+    S.ws.contTouched = true;
+    if (S.result) afterInput(renderWsTotalsNow);
+  });
   $('#in-bidders').addEventListener('input', () => {
     const input = $('#in-bidders');
     S.bidders.mode = input.value.trim() || input.validity.badInput ? 'user' : 'auto';
@@ -1887,6 +1891,20 @@ function initProject() {
   $('#btn-reestimate').addEventListener('click', () => withBusy($('#btn-reestimate'), runEstimate));
 }
 
+function syncProjectContingency() {
+  const scheduled = S.lines.some(l => l.include && isContingencyLine(l));
+  const input = $('#in-contingency');
+  const pct = S.ws.contTouched ? S.ws.contingency : (scheduled ? 0 : DEFAULT_CONTINGENCY);
+  if (!S.result) S.ws.contingency = pct;
+  if (!Array.from(input.options).some(option => Number(option.value) === pct)) {
+    input.add(new Option(pct + '%', String(pct)));
+  }
+  input.value = String(pct);
+  $('#contingency-label').textContent = scheduled ? 'Additional construction contingency' : 'Construction contingency';
+  $('#contingency-note').textContent = scheduled
+    ? 'The takeoff already includes a contingency. This percentage adds to it.'
+    : 'Added to the worksheet subtotal.';
+}
 
 /* ---------------------------------------- owner / work type: type-ahead */
 
@@ -2092,7 +2110,7 @@ function renderQuotesInto(box) {
       el('div', { class: 'dim', text: l.cls.coverage_label + ' · ' + qtyFmt(l.quantity)
         + ' ' + (l.cls.bid_form_unit || l.cls.unit || '') }),
     ]),
-    el('input', { type: 'text', class: 'num', placeholder: 'quote $',
+    el('input', { type: 'text', class: 'num', placeholder: 'Quote $',
       value: l.quote > 0 ? qtyFmt(l.quote) : '', 'data-fk': focusKey('q', l.row_id),
       onchange: e => {
         // the same number as the line's amount cell and your worksheet price
@@ -2133,7 +2151,7 @@ function renderOwnerSetInto(box) {
           : l.amount_pct > 0 ? ' · worked out when you estimate' : note)
           : qtyFmt(l.quantity) + ' ' + (l.cls.bid_form_unit || l.cls.unit || '') + note }),
       ]),
-      cont ? contingencyControl(l, 'o') : el('input', { type: 'text', class: 'num', placeholder: 'amount $',
+      cont ? contingencyControl(l, 'o') : el('input', { type: 'text', class: 'num', placeholder: 'Amount $',
         title: 'The owner\u2019s amount from the bid form, or a share of the subtotal such as "10%"',
         value: amountCellText(l), 'data-fk': focusKey('o', l.row_id),
         onchange: e => {
@@ -2232,6 +2250,7 @@ async function runEstimate() {
   });
   S.result = r;
   S.resultReq = req;
+  if (!S.ws.contTouched) S.ws.contingency = contingencyLines(r).length ? 0 : DEFAULT_CONTINGENCY;
   S.leftOut = S.lines.filter(l => l.include && missingQuantity(l));
   S.ws.refs = null;
   S.ws.refsReq = null;
@@ -2391,7 +2410,7 @@ function ncQuoteInput(l, i) {
   return el('input', {
     class: 'cellinput num' + (l.quote > 0 ? '' : ' hintfill'), type: 'text',
     value: l.quote > 0 ? qtyFmt(l.quote) : '', 'data-col': 'amount', 'data-i': i,
-    'data-fk': focusKey('g', l.row_id, 'quote'), placeholder: 'quote $',
+    'data-fk': focusKey('g', l.row_id, 'quote'), placeholder: 'Quote $',
     title: 'Not covered: your vendor quote for the whole line. The same number as under Project '
       + 'details and your price on the OPCC worksheet; it stays outside P50 / P70.',
     onchange: e => {
@@ -2406,7 +2425,7 @@ function ncQuoteInput(l, i) {
 function renderNcReminders() {
   const r = S.result;
   if (!r) return;
-  renderHeadline(r);
+  renderTopAlerts(r);
   renderWarnings(r);
   renderNotCovered(r);
 }
@@ -2477,11 +2496,10 @@ function renderHeadline(r) {
   const h = r.headline;
   const nc = r.not_covered;
   if (h.p50 === null || h.p50 === undefined) {
-    host.appendChild(notice('severe', nc.as_a_whole ? 'No estimate: the schedule is not covered as a whole'
-      : 'No estimate', nc.as_a_whole ? (nc.why || []).join('; ')
+    host.appendChild(notice('severe', nc.as_a_whole ? 'Model estimate unavailable for this schedule'
+      : 'Model estimate unavailable', nc.as_a_whole ? (nc.why || []).join('; ')
         + ' — price the job from vendor / specialty quotes.'
       : 'The estimator could not price this schedule; see the warnings below.'));
-    if (!(r.lines || []).some(l => l.quantity > 0 && isNum(recentUnit(l)))) return;
   }
   const card = (basis, label) => el('button', {
     type: 'button', class: 'bigcard', 'data-basis': basis, 'data-fk': focusKey('basis', basis),
@@ -2497,28 +2515,25 @@ function renderHeadline(r) {
   host.appendChild(el('div', { class: 'headline', role: 'group', 'aria-label': 'Worksheet price basis' }, [
     card('p50', 'Expected low bid (P50)'),
     card('p70', 'Recommended OPCC (P70)'),
-    card('history', 'Recent bid median subtotal'),
+    card('history', 'Your OPCC (worksheet total)'),
   ]));
-  updateRecentSubtotal(r);
   if (isNum(h.p50) && !isNum(h.p70)) host.appendChild(notice('caution', 'P70 unavailable',
     'A P70 estimate is not available for this schedule. Review the P50 comparison and your worksheet prices.'));
 }
 
-function updateRecentSubtotal(r) {
-  const card = $('#r-headline [data-basis="history"]');
-  if (!card) return;
-  const lines = r.lines || [];
-  let amount = 0, count = 0;
-  for (const l of lines) {
-    const price = recentUnit(l);
-    if (isNum(price) && l.quantity > 0) {
-      amount += Math.round((price + Number.EPSILON) * 100) / 100 * l.quantity;
-      count++;
+function showWorksheetTotalOnCard(totals) {
+  const basis = worksheetBasis();
+  for (const card of document.querySelectorAll('#r-headline [data-basis]')) {
+    card.setAttribute('aria-pressed', String(card.dataset.basis === basis));
+    if (card.dataset.basis !== 'history') continue;
+    card.querySelector('.big').textContent = money(totals.yours);
+    const details = [basis === 'history' ? 'Using recent bid medians' : 'Use recent bid medians'];
+    if (basis === 'history' && !S.ws.refs) {
+      details.push(S.ws.refsError ? 'Recent bids unavailable' : 'Loading recent bids');
     }
+    if (totals.missing) details.push(totals.missing + ' unpriced line' + (totals.missing === 1 ? '' : 's'));
+    card.querySelector('.coverage').textContent = details.join(' · ');
   }
-  card.querySelector('.big').textContent = money(count ? amount : null);
-  card.querySelector('.coverage').textContent = S.ws.refsError ? 'Recent bids unavailable'
-    : !S.ws.refs ? 'Loading recent bids' : count + ' of ' + lines.length + ' lines with a recent median';
 }
 
 // Alerts are decided on the result's keys by the server; the estimator's own
@@ -2614,7 +2629,7 @@ function renderLowConf(r) {
     const its = (g.items || []).filter(x => x);
     return el('tr', {}, [
       el('td', {}, [el('div', { text: g.label }),
-        its.length ? el('div', { class: 'dim', text: 'item ' + its.join(', ') }) : null]),
+        its.length ? el('div', { class: 'dim', text: 'Item ' + its.join(', ') }) : null]),
       el('td', { class: 'num', text: g.ours_p50 !== null ? money(g.ours_p50) : '—' }),
       el('td', { class: 'num', text: pct(g.share_of_p50, 1) }),
       el('td', { class: 'num', text: h ? pct(h.p25, 1) + ' – ' + pct(h.p75, 1) : '—',
@@ -2623,8 +2638,8 @@ function renderLowConf(r) {
       el('td', { class: 'num', text: g.implied_range ? money(g.implied_range[0]) + ' – '
         + money(g.implied_range[1]) : 'too few past jobs' }),
       el('td', {}, pos ? el('span', { class: 'badge ' + (pos === 'within' ? 'ok' : 'thin'),
-        text: pos === 'within' ? 'within the range'
-          : pos === 'above' ? 'above: likely too high here' : 'below: likely too low here' }) : null),
+        text: pos === 'within' ? 'Within the range'
+          : pos === 'above' ? 'Above: likely too high here' : 'Below: likely too low here' }) : null),
     ]);
   });
   host.appendChild(el('table', { class: 'mini' }, [
@@ -2640,7 +2655,8 @@ function accBadge(a) {
   const cls = 'acc ' + a.tier + (a.weak ? ' weak' : '');
   const prefix = a.tier === 'na' ? '' : a.weak === 'lump_sum' ? 'LS · '
     : a.weak === 'unclassified' ? '? · ' : a.weak === 'allowance' ? 'allow · ' : '';
-  return el('span', { class: cls, title: a.tooltip || '', text: prefix + a.text });
+  const label = prefix + a.text;
+  return el('span', { class: cls, title: a.tooltip || '', text: label.charAt(0).toUpperCase() + label.slice(1) });
 }
 
 /* ------------------------------------------------------ the OPCC worksheet */
@@ -2712,7 +2728,7 @@ function historySummary(hp) {
 function referenceRange(l) {
   const cell = el('td', { class: 'num money ref-range' });
   if (!S.ws.refs) {
-    cell.appendChild(el('span', { class: 'dim', text: S.ws.refsError ? 'unavailable' : 'loading' }));
+    cell.appendChild(el('span', { class: 'dim', text: S.ws.refsError ? 'Unavailable' : 'Loading' }));
     return cell;
   }
   const hp = historyPrice(l);
@@ -2722,9 +2738,9 @@ function referenceRange(l) {
   if (!refs.length) cell.appendChild(el('span', { class: 'dim', text: '—' }));
   else {
     cell.appendChild(el('div', { text: values.length === refs.length
-      ? historyRate(Math.min(...values)) + ' – ' + historyRate(Math.max(...values)) : 'adjustment unavailable' }));
+      ? historyRate(Math.min(...values)) + ' – ' + historyRate(Math.max(...values)) : 'Adjustment unavailable' }));
     cell.appendChild(el('div', { class: 'dim', text: availableHistory(hp)
-      ? 'median ' + historyRate(hp.unit_price) + ' · ' + refs.length + ' projects'
+      ? 'Median ' + historyRate(hp.unit_price) + ' · ' + refs.length + ' projects'
       : refs.length + ' recent project' + (refs.length === 1 ? '' : 's') + (refs.length < 3 ? ' · 3 required' : '') }));
   }
   return cell;
@@ -2839,10 +2855,10 @@ function engineerInput(l) {
 }
 
 function engineerInputLabel(l) {
-  if (l.pricing_mode === 'engineer') return 'engineer input: new item / no matching item type';
+  if (l.pricing_mode === 'engineer') return 'Engineer input: new item / no matching item type';
   return (l.family === 'mobilization' || l.lowconf_class === 'mobilization')
-    ? 'engineer input: mobilization, if the job has it'
-    : 'engineer input: depends on the site (creek or river), its size and difficulty';
+    ? 'Engineer input: mobilization, if the job has it'
+    : 'Engineer input: depends on the site (creek or river), its size and difficulty';
 }
 
 // Your SUBTOTAL: your amounts for every line except a contingency, which
@@ -2981,10 +2997,6 @@ function renderLines(r) { renderWorksheet(r); loadWsRefs(); }
 function renderWorksheet(r) {
   r = r || S.result;
   if (!r) return;
-  // the worksheet's own contingency starts at 10%, or at 0% when the schedule
-  // already carries a contingency allowance (so it is not counted twice),
-  // until the user sets it
-  if (!S.ws.contTouched) S.ws.contingency = contingencyLines(r).length ? 0 : DEFAULT_CONTINGENCY;
   const focus = focusState();
   syncWsMeta(r);
   renderWorksheetRows(r);
@@ -3004,7 +3016,7 @@ function syncWsMeta(r) {
   if (rs) {
     rs.value = S.ws.round || 'off';
     const off = rs.querySelector('option[value="off"]');
-    if (off) off.textContent = worksheetBasis() === 'history' ? 'cents only' : 'off (exact)';
+    if (off) off.textContent = worksheetBasis() === 'history' ? 'Cents only' : 'Off (exact)';
   }
 }
 
@@ -3095,6 +3107,7 @@ function renderWsTotals(r) {
   const host = $('#ws-totals');
   host.innerHTML = '';
   const t = wsTotals(r);
+  showWorksheetTotalOnCard(t);
   const basis = el('div', { class: 'basis' }, [
     el('span', { class: 'lab', text: worksheetBasis() === 'history' ? 'Recent bid median'
       : 'Prices from ' + basisLabel() }),
@@ -3108,18 +3121,10 @@ function renderWsTotals(r) {
     const sg = d > 0 ? '+' : '\u2212';
     return sg + money(Math.abs(d)) + ' (' + sg + Math.abs(100 * (t.yours / m - 1)).toFixed(1) + '%)';
   };
-  // picked from a list (a saved worksheet's other value is kept in it)
-  const curC = isNum(S.ws.contingency) ? Number(S.ws.contingency) : 0;
-  const cpcts = WS_CONTINGENCY_PCTS.slice();
-  if (!cpcts.includes(curC)) { cpcts.push(curC); cpcts.sort((a, b) => a - b); }
-  const cin = el('select', { class: 'cpct', 'data-fk': 'ws:contingency', 'aria-label': 'Your contingency',
-    title: 'Added to your line amounts; owner-set allowances are left out',
-    onchange: e => { S.ws.contingency = Number(e.target.value); S.ws.contTouched = true; afterInput(renderWsTotalsNow); } },
-    cpcts.map(p => el('option', { value: String(p), text: p ? p + '%' : 'none (0%)', selected: p === curC })));
   const plusNc = t.nc ? ' + not-covered ' : ' ';
   const cl = t.contLines;
   // subtotal + contingency = total, in words
-  const parts = ['subtotal ' + money(t.sub) + (t.own ? ' (incl. owner-set allowances ' + money(t.own) + ')' : '')
+  const parts = ['Subtotal ' + money(t.sub) + (t.own ? ' (incl. owner-set allowances ' + money(t.own) + ')' : '')
     + (t.quotes ? ' (incl. vendor quotes ' + money(t.quotes) + ')' : '')];
   if (cl.length) parts.push(contingencyLabel(r.headline.contingency).toLowerCase() + ' ' + money(t.below));
   // always named, 0% included: changing the percentage changes numbers,
@@ -3136,13 +3141,11 @@ function renderWsTotals(r) {
     ]),
     el('div', { class: 'cmp' }, [
       el('div', {}, [el('span', { class: 'lab', text: 'P50' + plusNc }), el('span', { class: 'v', text: money(t.m50) }),
-        el('span', { class: 'dim', text: '  you ' + vs(t.m50) })]),
+        el('span', { class: 'dim', text: '  Difference: ' + vs(t.m50) })]),
       el('div', {}, [el('span', { class: 'lab', text: 'P70' + plusNc }), el('span', { class: 'v', text: money(t.m70) }),
-        el('span', { class: 'dim', text: '  you ' + vs(t.m70) })]),
+        el('span', { class: 'dim', text: '  Difference: ' + vs(t.m70) })]),
       t.nc ? el('div', { class: 'dim small', text: 'P50 ' + money(t.p50) + ' and P70 ' + money(t.p70)
         + ' leave the not-covered lines out; your ' + money(t.nc) + ' for them is added to both here.' }) : null,
-      el('div', { class: 'cont' }, [el('span', { class: 'lab', text: (cl.length ? 'Additional construction contingency '
-        : 'Construction contingency ') }), cin, el('span', { class: 'dim', text: ' of the subtotal' })]),
       contingencyGuide(r, t),
     ]),
   ]));
@@ -3212,8 +3215,6 @@ async function loadWsRefs() {
         S.ws.refs = {};
         (x.lines || []).forEach(v => { S.ws.refs[v.row_id] = v; });
         S.ws.refsReq = req; S.ws.refsLoading = false;
-        if (isNum(S.result.headline.p50)) updateRecentSubtotal(S.result);
-        else renderHeadline(S.result);
         renderWorksheet(S.result);
         if ((x.lines || []).some(v => v.unit_hint)) renderGrid();
         return;
@@ -3224,7 +3225,6 @@ async function loadWsRefs() {
           continue;
         }
         S.ws.refsError = String(e.message || e); S.ws.refsLoading = false;
-        updateRecentSubtotal(S.result);
         renderWorksheet(S.result);
         toast('Recent bids could not be loaded. Enter missing prices or re-estimate.', 'err');
         return;
@@ -3381,7 +3381,7 @@ function contingencyRow(l) {
   tr.appendChild(el('td', {}));                    // Reference
   tr.appendChild(el('td', { class: 'num money p50', text: amt === null ? '\u2014' : money(amt) }));
   tr.appendChild(el('td', {}, el('input', { class: 'cellinput note', type: 'text', value: w.note || '',
-    placeholder: 'note', 'data-fk': focusKey('ws', l.row_id, 'note'),
+    placeholder: 'Note', 'data-fk': focusKey('ws', l.row_id, 'note'),
     onchange: e => { w.note = e.target.value; } })));
   return tr;
 }
@@ -3422,12 +3422,12 @@ function resultRow(l, judg, isOpen) {
   const ncBadge = (l.status === 'not_covered' || l.status === 'not_covered_whole') && l.coverage_class;
   const shown = ncBadge ? judg.filter(j => j !== 'not covered') : judg;
   if (shown.length) tags.push(el('span', { class: 'badge judg', title: 'Review this price: ' + judg.join('; '),
-    text: 'needs your judgment: ' + shown.join(', ') }));
-  if (l.status === 'owner_set') tags.push(el('span', { class: 'badge allow', text: 'owner-set' }));
+    text: 'Needs your judgment: ' + shown.join(', ') }));
+  if (l.status === 'owner_set') tags.push(el('span', { class: 'badge allow', text: 'Owner-set' }));
   if (ncBadge) {
     const has = ncNumber(l) !== null;
     tags.push(hintPop(el('span', { class: 'badge ' + (has ? 'info' : 'unc'),
-      text: has ? 'not covered \u00b7 your number in' : 'not covered: needs a quote' }),
+      text: has ? 'Not covered \u00b7 your number in' : 'Not covered: needs a quote' }),
       () => ncHintBox(l.nc_hint, l.coverage_label)));
   }
   tr.appendChild(el('td', { class: 'dim nowrap' }, [chev, document.createTextNode(l.item_no || '')]));
@@ -3443,9 +3443,9 @@ function resultRow(l, judg, isOpen) {
           : l.basis ? ' · ' + l.basis : '') }),
     tags.length ? el('span', { class: 'tags' }, tags) : null,
     // reference only: a price converted from another unit, a printed cap
-    (wsRefs(l) || {}).unit_hint ? el('div', { class: 'unithint' }, [el('span', { class: 'badge unith', text: 'unit: few bids' }),
+    (wsRefs(l) || {}).unit_hint ? el('div', { class: 'unithint' }, [el('span', { class: 'badge unith', text: 'Unit: few bids' }),
       document.createTextNode(' ' + wsRefs(l).unit_hint.text)]) : null,
-    l.printed_cap ? el('div', { class: 'unithint' }, [el('span', { class: 'badge unith', text: 'printed cap' }),
+    l.printed_cap ? el('div', { class: 'unithint' }, [el('span', { class: 'badge unith', text: 'Printed cap' }),
       document.createTextNode(' ' + capText(l))]) : null]));
   tr.appendChild(el('td', { class: 'num money', text: qtyFmt(l.quantity) }));
   tr.appendChild(el('td', { text: l.unit }));
@@ -3467,8 +3467,8 @@ function resultRow(l, judg, isOpen) {
   const locked = l.status === 'owner_set';
   const inp = el('input', { class: 'cellinput num yourp' + (isNum(w.your_unit) || isNum(ncUnit) || locked ? '' : ' flag'), type: 'text',
     value: locked ? '' : ncl ? (isNum(ncUnit) ? priceText(ncUnit) : '') : priceText(w.your_unit),
-    placeholder: locked ? 'owner-set' : l.pricing_mode === 'engineer' ? 'engineer input' : ncl ? 'quote $/unit'
-      : (engineerInput(l) ? 'engineer input' : 'your $/unit'),
+    placeholder: locked ? 'Owner-set' : l.pricing_mode === 'engineer' ? 'Engineer input' : ncl ? 'Quote $/unit'
+      : (engineerInput(l) ? 'Engineer input' : 'Your $/unit'),
     title: ncl ? 'Not covered: the same number as the vendor quote under Project details and the '
       + 'line\u2019s amount in the takeoff (per unit here)' : null,
     disabled: locked, 'data-fk': focusKey('ws', l.row_id, 'price'), 'data-wsrow': l.row_id,
@@ -3494,13 +3494,13 @@ function resultRow(l, judg, isOpen) {
   const currentSource = w.src === 'model' ? 'model_' + modelBasis() : w.src;
   const pinned = w.pickedHistory || (w.src || '').startsWith('model_');
   const cur = picks.find(p => p.v === currentSource && (!pinned || p.price === w.raw)) || null;
-  const sourceLabel = w.src === 'you' ? 'your price' : pinned && isNum(w.raw)
+  const sourceLabel = w.src === 'you' ? 'Your price' : pinned && isNum(w.raw)
     ? (w.src === 'history' ? 'Recent bid median' : w.src.slice(6).toUpperCase() + ' model') + ' · ' + historyRate(w.raw)
-    : w.src && w.src !== 'history' ? w.src_label || 'selected reference'
-      : engineerInput(l) ? 'engineer input' : worksheetBasis() === 'history' ? 'enter your price' : 'choose a reference';
+    : w.src && w.src !== 'history' ? w.src_label || 'Selected reference'
+      : engineerInput(l) ? 'Engineer input' : worksheetBasis() === 'history' ? 'Enter your price' : 'Choose a reference';
   let ref;
-  if (locked) ref = el('span', { class: 'dim', text: 'owner-set' });
-  else if (ncl) ref = el('span', { class: 'dim', text: l.quote > 0 ? 'vendor quote' : '\u2014' });
+  if (locked) ref = el('span', { class: 'dim', text: 'Owner-set' });
+  else if (ncl) ref = el('span', { class: 'dim', text: l.quote > 0 ? 'Vendor quote' : '\u2014' });
   else if (!picks.length) ref = el('span', { class: 'dim', text: sourceLabel });
   else {
     const lead = cur ? [] : [el('option', { value: '', selected: true,
@@ -3530,8 +3530,8 @@ function resultRow(l, judg, isOpen) {
   // a price rounded from its source says so; an engineer-input line says what it needs
   const cents = w.src === 'history' && S.ws.round === 'off' && isNum(w.raw) && isNum(w.your_unit)
     && Math.abs(w.your_unit - w.raw) > 1e-9;
-  const rounded = cur && w.src !== 'model' && isNum(w.raw) && isNum(w.your_unit) && Math.abs(w.your_unit - w.raw) > 0.004;
-  const sub = cents ? 'rounded to cents' : rounded ? 'rounded ' + (S.ws.round === 'nearest' ? '' : S.ws.round === 'down' || w.src === 'cap' ? 'down ' : 'up ')
+  const rounded = cur && isNum(w.raw) && isNum(w.your_unit) && Math.abs(w.your_unit - w.raw) > 0.004;
+  const sub = cents ? 'Rounded to cents' : rounded ? 'Rounded ' + (S.ws.round === 'nearest' ? '' : S.ws.round === 'down' || w.src === 'cap' ? 'down ' : 'up ')
       + 'from ' + rate(w.raw)
     : ((!w.src || w.src === 'history') && w.src_label && !isNum(w.your_unit) ? w.src_label : '');
   tr.appendChild(el('td', {}, [el('div', { class: 'yourcell' }, [inp]),
@@ -3540,7 +3540,7 @@ function resultRow(l, judg, isOpen) {
   const amt = wsAmount(l, w);
   tr.appendChild(el('td', { class: 'num money p50', text: amt === null ? '—' : money(amt) }));
   tr.appendChild(el('td', {}, el('input', { class: 'cellinput note', type: 'text', value: w.note || '',
-    placeholder: 'note', 'data-fk': focusKey('ws', l.row_id, 'note'),
+    placeholder: 'Note', 'data-fk': focusKey('ws', l.row_id, 'note'),
     onchange: e => { w.note = e.target.value; } })));
   const labels = ['Item', '', 'Quantity', 'Unit', 'Unit price comparison', 'Recent bid range', 'Model accuracy',
     'Your $/unit', 'Reference', 'Your amount', 'Note'];
@@ -3683,7 +3683,7 @@ function srcLinks(src) {
     kids.push(el('a', { class: 'srclink', href: url, target: '_blank', rel: 'noopener noreferrer',
       title: url, text: 'Source page: ' + (src.host || 'public page') + (src.kind ? ' — ' + src.kind : '') }));
   } else {
-    kids.push(el('span', { class: 'dim', text: 'no public link recorded' }));
+    kids.push(el('span', { class: 'dim', text: 'No public link recorded' }));
   }
   const mirror = safeGithub(src.mirror_url);
   if (mirror) {
@@ -4094,7 +4094,7 @@ function simCard(c, r, detail, grid) {
       el('dt', { text: 'Size' }), el('dd', { text: isNum(c.size_vs_this_job)
         ? c.size_vs_this_job.toFixed(2) + '× this job' : '—',
         title: 'their low bid / our expected low bid' }),
-      el('dt', { text: 'Overlap' }), el('dd', { title: simTip, text: 'shares ' + sh.types + ' of '
+      el('dt', { text: 'Overlap' }), el('dd', { title: simTip, text: 'Shares ' + sh.types + ' of '
         + sh.of_types + ' item types, ' + pct(sh.dollar_share) + ' of the dollars' }),
       el('dt', { text: 'At their prices' }), el('dd', {
         title: at ? 'This job priced from this project\u2019s low-bid prices alone (adjusted to '
@@ -4108,7 +4108,7 @@ function simCard(c, r, detail, grid) {
       srcLinks(c.source),
     ]),
     el('div', { class: 'simfoot' }, [btn,
-      el('span', { class: 'dim', title: simTip, text: 'score ' + (isNum(c.similarity) ? c.similarity.toFixed(2) : '—') })]),
+      el('span', { class: 'dim', title: simTip, text: 'Score ' + (isNum(c.similarity) ? c.similarity.toFixed(2) : '—') })]),
   ]);
   const toggle = () => {
     const open = card.classList.contains('sel');
@@ -4174,7 +4174,7 @@ function renderCompetition(r) {
     s ? el('dt', { text: 'Suggested' }) : null,
     s ? el('dd', { text: s.n + '  \u2014 ' + (s.cell === 'default' ? 'too few similar earlier jobs, so the usual 4'
       : 'the typical number on ' + s.history_lettings + ' earlier ' + s.cell_label) }) : null,
-    el('dt', { text: 'Competition discount' }), el('dd', { text: c.available ? 'the low bid is typically '
+    el('dt', { text: 'Competition discount' }), el('dd', { text: c.available ? 'The low bid is typically '
       + Number(c.f).toFixed(2) + ' \u00d7 the median bid' : 'none \u2014 no estimate' }),
     c.available ? el('dt', { text: 'Based on' }) : null,
     c.available ? el('dd', { text: c.lettings + ' past ' + (c.d1 ? 'TxDOT jobs (size-aware)'

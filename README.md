@@ -37,9 +37,10 @@ Or run it on your own machine (see [Running it](#running-it)), then open http://
    - Expected number of bidders: it is prefilled from similar past lettings, and you can change it.
    - The amounts of owner-set allowances; these are added at face value.
    - A contingency line (a lump sum worded as a contingency) has no item type and is not priced from history. Pick its size from a list: 5–25% of the subtotal (10% by default), or the owner's fixed amount when the bid form prints one.
+   - Choose Construction Contingency before selecting Estimate. It starts at 10%, or at 0% additional when the takeoff already includes a contingency.
    - Vendor quotes for specialty items the tool does not price (pumps, generators, prefabricated bridges, …).
 3. **Read the estimate.**
-   - P50 and P70 show the model's project estimates. The recent-bid subtotal adds up only the pay items with three qualifying project medians. Each worksheet row shows the available unit prices side by side. Select any of the three bases to fill automatic prices.
+   - P50 and P70 show the model's project estimates. The third figure shows the current worksheet total including contingency, entered prices and vendor quotes. Each worksheet row shows the available unit prices side by side. Select any of the three bases to fill automatic prices.
    - The items left out for a vendor quote, and the lump sums whose prices are uncertain.
    - Warnings are one short sentence each, with what to do and the lines involved. Tick a warning once you have checked it and it turns gray. A not-covered line stops being flagged once it has your number: a vendor quote, or your own price in the worksheet.
 4. **Check the evidence.**
@@ -50,7 +51,7 @@ Or run it on your own machine (see [Running it](#running-it)), then open http://
    - A new worksheet starts each eligible item at the median of three matching public projects' bidder medians, adjusted to the bid year. It favors the preceding year and searches back at most two years. Review the three sources or enter an engineer's price where the evidence is insufficient.
    - Keep the suggested unit price or pick one from the references, line by line: the newest item worded exactly like yours comes first, then averages, medians and lows. Add notes.
    - A not-covered line has one number: the vendor quote under Project details, the line's amount in the takeoff and its price on the worksheet stay the same whichever you type in. It needs no new estimate, since P50 and P80 leave the line out.
-   - Picked prices are rounded to a round number, in a step that grows with the price ($0.50 under $10, then $5, $10, $100, $500, $1,000). New worksheets use cents by default. You can choose to round up or to the nearest step. A price you type is never rounded.
+   - New worksheets default to **Up to a round number**. The rounding step grows with the price. A $33.50/CY reference becomes $35.00/CY in the worksheet. You can change the rounding option. Prices you type stay as entered.
    - Mobilization and temporary erosion control are left for you to fill in. Whether a job has mobilization, and what erosion control a site needs, are the engineer's call. The model's price stays in the quick picks.
    - The estimate is laid out as an OPCC: the items, then the **subtotal**, then the **contingency** below it, then the **total**. This holds for P50, for P80 and for your own OPCC. A contingency given as a percentage stays that percentage of the subtotal at P50 and at P80.
    - Pick your own construction contingency from a list (0–25% of the subtotal): 10% by default, 0% when the schedule already carries a contingency line (then it is an additional construction contingency). Its row stays at 0% too, so changing it changes numbers, not the layout. The User Manual includes historical contingency comparisons.
