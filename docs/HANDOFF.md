@@ -325,7 +325,7 @@ P80 accuracy figures as P70 or claim demonstrated 70% future coverage.
 | TxDOT engineers' own estimates | 451 | 21% | 14% | n/a | 19 / 22 / 23% |
 
   The goal: P80 below the actual low bid on at most 20% of lettings (met under the historical scope), and within that the smallest overshoot (13% is the aspiration; engineers reach about 25% at the same not-under rate; the project is at 34% for cities). The city gap is almost all in estimating the bidders' typical price per job, not in the step from the median bid to the low bid.
-- **Last deploy.** 2026-11-23 08:25 CST. Oracle Cloud serves commit `60b0ad2` with `bundle-2026-11-21` and its registered P70 calibration. See the deploy log at the end.
+- **Last deploy.** 2026-11-23 22:27 CST. Oracle Cloud serves commit `c0bbd20` with `bundle-2026-11-21` and its registered P70 calibration. See the deploy log at the end.
 
 ## 2. The first hour
 
@@ -488,3 +488,4 @@ To publish the whole pipeline, company-specific content left the code. No number
 | 2026-11-22 23:07 CST | `3ce350a` | `bundle-2026-11-21` with registered P70 calibration | All 400 package comparisons matched. The 43-line fixture on Oracle Cloud returned P50 $765,836.50, P70 $887,482.17 and P80 $1,043,089.75. The public page, manual and worksheet script matched the tested package. The live API preserved 45 units of 100 LF and priced 4,500 LF. |
 | 2026-11-22 23:57 CST | `6fafa0e` | `bundle-2026-11-21` with registered P70 calibration | Restored selectable P50 and P70 estimate cards. Public desktop and 390-pixel touch browser checks switched the worksheet from P50 to P70 and back. Six automatic unit prices changed and were restored. The public fixture matched all three known percentiles. All 400 package comparisons matched. |
 | 2026-11-23 08:25 CST | `60b0ad2` | `bundle-2026-11-21` with registered P70 calibration | Takeoff review and worksheet fields fit phone and tablet screens. The desktop worksheet wraps reference details. Browser checks covered 320, 390, 1024 and 1280 pixels. All 400 package comparisons matched. The six public web assets and the three known fixture totals matched after deployment. |
+| 2026-11-23 22:27 CST | `c0bbd20` | `bundle-2026-11-21` with registered P70 calibration | The worksheet shows recent bid medians and both model unit prices together. Historical bids explain the price adjustment and the middle of the three project medians. Export is the final section. Desktop and phone checks on the public site switched between all three bases and retained a typed price. All 400 package comparisons and all three public fixture totals matched. |
